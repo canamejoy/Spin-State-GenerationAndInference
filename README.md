@@ -1,4 +1,4 @@
-# End-to-End Magnetic State Generation Framework
+# Spin State Generation and Inference
 
 An end-to-end deep learning framework for **generating and inverting 2D magnetic domain images** of nanodots governed by the extended Heisenberg Hamiltonian.
 
