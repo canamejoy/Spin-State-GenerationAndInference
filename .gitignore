@@ -56,3 +56,9 @@ Thumbs.db
 
 papers/
 
+
+main/
+
+# ── WSL / tooling artefacts ───────────────────────────────────────────────────
+*:Zone.Identifier
+.atl/

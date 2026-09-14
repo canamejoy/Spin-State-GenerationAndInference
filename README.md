@@ -50,17 +50,20 @@ This project addresses both directions with a closed **cycle**:
 │   └── 07_metrics.md                  # All metrics: regression, image, physical
 │
 ├── notebooks/
-│   ├── inverse/
-│   │   ├── XceptionFullDataBaseV3100.ipynb   # Xception inverse model training ✅
-│   │   └── xception_inverse.md               # Notebook documentation
-│   ├── generative/
-│   │   ├── ddpm_spines_train.ipynb           # DDPM generative model training ✅
-│   │   └── ddpm_train.md                     # Notebook documentation
-│   └── cycle/
-│       ├── ciclo_completo_resultadosxclusters.ipynb  # Cycle on internal dataset ✅
-│       ├── ciclo_completo.md                          # Notebook documentation
-│       ├── ciclo_external_dataset.ipynb               # Cycle on external dataset 🔧
-│       └── ciclo_external.md                          # Notebook documentation
+│   ├── utils/metrics.py               # Shared metric module — single source of truth
+│   ├── inverse/                       # Xception inverse model (image → θ)
+│   ├── generative/                    # DDPM / CVAE / NCSN training
+│   ├── cycle/                         # θ → DDPM → Xception → θ̂ evaluation
+│   ├── evaluation/                    # Model comparisons, robustness, sweeps
+│   └── replaced/                      # Frozen archive — superseded runs, do not edit
+│
+├── integration_cycle/                 # Cycle closure (see its README)
+│   ├── 01_ddpm_cosine_frozen_encoder.ipynb
+│   ├── 02_ddpm_cosine_joint_finetune.ipynb
+│   └── 03_latent_guided_sampler.ipynb
+│
+├── papers/                            # Bibliography + PDFs      (gitignored)
+├── main/                              # LaTeX source of the article (gitignored)
 │
 ├── requirements.txt                   # Python dependencies
 └── README.md
@@ -106,7 +109,7 @@ See [notebooks/generative/ddpm_train.md](notebooks/generative/ddpm_train.md).
 
 ### 3. Complete Cycle — Internal Dataset — `notebooks/cycle/`
 
-Runs the full θ → DDPM → image → Xception → θ̂ pipeline on the internal test split. Evaluates with regression metrics (R², MAE), image metrics (MSE, SSIM, FFT-Corr), physical observables (M, χ, Cv, E), and per-magnetic-phase breakdowns.
+Runs the full θ → DDPM → image → Xception → θ̂ pipeline on the internal test split. Evaluates with regression metrics (R², MAE), image metrics (MSE, SSIM, FFT-Corr), three physical observables (M, C_nn, q_peak), and per-magnetic-phase breakdowns.
 
 See [notebooks/cycle/ciclo_completo.md](notebooks/cycle/ciclo_completo.md).
 
@@ -115,6 +118,41 @@ See [notebooks/cycle/ciclo_completo.md](notebooks/cycle/ciclo_completo.md).
 Same pipeline applied to the larger external dataset (218k). Currently under investigation for distribution shift issues.
 
 See [notebooks/cycle/ciclo_external.md](notebooks/cycle/ciclo_external.md).
+
+### 5. Integrated Cycle — `integration_cycle/`
+
+Three ways of closing the loop between the generator and the inverse model, using
+the 256-d Xception latent (the regression head removed) as the meeting point.
+The training loss is `denoise_MSE + λ·(1 − cos(z(x̂₀), z(x₀)))` — no physical term.
+
+| Notebook | Closure | Fine-tunes |
+|---|---|---|
+| `01_ddpm_cosine_frozen_encoder` | Latent cosine in the DDPM loss | DDPM only |
+| `02_ddpm_cosine_joint_finetune` | Same, encoder also trains | DDPM + encoder |
+| `03_latent_guided_sampler` | Latent guidance at sampling time | Neither |
+
+See [integration_cycle/README.md](integration_cycle/README.md).
+
+---
+
+## Physical Metrics — the canonical set
+
+Exactly three observables, all computed on the nanodot disk (R_d = 18.25 MUC,
+N = 1049 px) of the **cropped 39×39** image:
+
+| Observable | Symbol | Meaning |
+|---|---|---|
+| Average magnetisation | M | Net spin polarisation |
+| Nearest-neighbour spin correlation | C_nn | Local alignment of the s_z projection |
+| Peak wave vector | q_peak | Dominant spatial frequency of the texture |
+
+**Crop before mask.** The DDPM canvas is 40×40, reflect-padded on the right and
+bottom edges. `topleft_crop` recovers the original 39×39 pixels exactly; masking
+the canvas instead would average duplicated pixels on a half-pixel-displaced
+disk. `metrics.py` rejects a 40×40 array to make that mistake impossible.
+
+|M|, χ, C_v and E were removed — see [docs/07_metrics.md](docs/07_metrics.md)
+for the reasoning.
 
 ---
 
