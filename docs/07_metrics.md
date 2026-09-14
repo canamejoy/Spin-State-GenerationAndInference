@@ -1,6 +1,6 @@
 # Evaluation Metrics
 
-Three families of metrics are used to evaluate the complete cycle: **regression metrics** (parameter recovery quality), **image metrics** (pixel/spectral fidelity), and **physical metrics** (thermodynamic observables on the nanodot disk).
+Three families of metrics are used to evaluate the complete cycle: **regression metrics** (parameter recovery quality), **image metrics** (pixel/spectral fidelity), and **physical metrics** (three observables of the spin configuration on the nanodot disk).
 
 ---
 
@@ -37,7 +37,7 @@ $$
 
 ## 2. Image Metrics
 
-Applied to compare original $s_z$ images vs DDPM-generated images (both cropped to 39×39). All metrics are restricted to the **circular disk mask** $\mathcal{M}$ (radius $r_d = 18.3$ px).
+Applied to compare original $s_z$ images vs DDPM-generated images (both cropped to 39×39). All metrics are restricted to the **circular disk mask** $\mathcal{M}$ (radius $r_d = 18.25$ MUC).
 
 ### MSE Variance (Var-MSE)
 
@@ -86,77 +86,107 @@ $$
 
 ## 3. Physical Metrics
 
-Computed within the circular disk mask $\mathcal{M} = \{(y,x) \in \mathbb{Z}^2 : (y - c_y)^2 + (x - c_x)^2 \leq r_d^2\}$ with $r_d = 18.3$ px and $N_\mathcal{M} = |\mathcal{M}| \approx 1051$ pixels (39×39 image).
+The canonical set is **exactly three** observables. All are computed on the
+$39\times39$ physical image, restricted to the circular nanodot disk
 
-Physical metrics are evaluated in two regimes depending on the image origin:
+$$
+\mathcal{M} = \left\{(y, x) \in \mathbb{Z}^2 : (y - c_y)^2 + (x - c_x)^2 \leq r_d^2\right\},
+\qquad (c_y, c_x) = \left(\tfrac{H-1}{2}, \tfrac{W-1}{2}\right),
+\quad r_d = 18.25\ \text{MUC},
+$$
 
-| Regime | Source | Ensemble |
-|---|---|---|
-| **(a) Single-config** | Simulated / original images | Not available; use spatial proxies |
-| **(b) Ensemble** | Generated images ($K_{ens}$ samples per θ) | Direct thermodynamic formulas |
+which gives $N_\mathcal{M} = |\mathcal{M}| = 1049$ pixels.
+
+> **Crop precedes mask.** The DDPM works on a $40\times40$ canvas obtained by
+> reflect-padding the physical image on its *right and bottom* edges. Metrics
+> must be computed after `topleft_crop`, never on the canvas: the extra row and
+> column are duplicated pixels, and a $40\times40$ disk is centred at 19.5,
+> half a pixel off the physical centre. `metrics.py` raises `ValueError` if a
+> $40\times40$ array reaches a masked helper.
+
+> **Radius.** $r_d = 18.25$ magnetic unit cells is the nanodot radius used in
+> the predecessor paper. On the $39\times39$ grid it discretises to the same
+> 1049-pixel mask as 18.3. The inscribed
+> circle of the pixel grid ($r = 19$) admits 80 additional background pixels
+> that dilute every disk average; earlier revisions of `metrics.py` used it by
+> mistake.
 
 ### Average Magnetisation $M$
 
-**Regime (a):**
 $$M = \frac{1}{N_\mathcal{M}}\sum_{i \in \mathcal{M}} s_z(i)$$
 
-**Regime (b):**
-$$\langle M \rangle = \frac{1}{K_{ens}}\sum_{k=1}^{K_{ens}}\left[\frac{1}{N_\mathcal{M}}\sum_{i \in \mathcal{M}} s_z^{(k)}(i)\right]$$
+- Range $[-1, 1]$. $M \approx \pm 1$ is ferromagnetic or field-saturated;
+  $M \approx 0$ is chiral, helical or skyrmionic.
+- Net spin polarisation of the dot — the order parameter conjugate to $\tilde{H}_{ex}$.
 
-- $M \in [-1, 1]$: $M \approx \pm 1$ is ferromagnetic; $M \approx 0$ is chiral/AFM/skyrmion
+### Nearest-Neighbour Spin Correlation $C_{nn}$
 
-### Absolute Magnetisation $|M|$
+$$C_{nn} = \frac{1}{|\mathcal{B}|}\sum_{\langle i,j \rangle \in \mathcal{B}} s_z(i)\,s_z(j)$$
 
-**Regime (a):**
-$$|M| = \frac{1}{N_\mathcal{M}}\left|\sum_{i \in \mathcal{M}} s_z(i)\right|$$
+- $\mathcal{B}$: the set of row- and column-adjacent pairs with **both** ends
+  inside $\mathcal{M}$; each pair counted once.
+- Range $[-1, 1]$. $C_{nn} \to 1$ is aligned, $\approx 0$ disordered,
+  $< 0$ antiferromagnetic or short-period modulated.
+- Captures only the $s_z^i s_z^j$ projection of the exchange; transverse
+  components are not recoverable from a scalar $s_z$ image.
 
-**Regime (b):**
-$$\langle |M| \rangle = \frac{1}{K_{ens}}\sum_{k=1}^{K_{ens}}\left|\frac{1}{N_\mathcal{M}}\sum_{i \in \mathcal{M}} s_z^{(k)}(i)\right|$$
+### Peak Wave Vector $q_{\text{peak}}$
 
-Note: $\langle |M| \rangle \neq |\langle M \rangle|$ in general; the absolute value is taken **before** ensemble averaging.
+The structure factor is computed on the **fluctuation field** — disk mean
+removed, background zeroed — so that it describes the texture rather than the
+disk aperture:
 
-### Magnetic Susceptibility $\chi$
+$$
+\tilde{s}_z = \left(s_z - \bar{s}_z^{\,\mathcal{M}}\right)\cdot\mathbb{1}_\mathcal{M},
+\qquad
+S(\mathbf{q}) = \frac{\left|\mathcal{F}\{\tilde{s}_z\}\right|^2}{N}
+$$
 
-**Regime (a) — spatial proxy** (static fluctuation–dissipation sum rule):
-$$\chi = \frac{1}{T}\sum_{\mathbf{r}} G(\mathbf{r}), \quad G(\mathbf{r}) = \frac{1}{N_\mathcal{M}}\sum_{i \in \mathcal{M}} s_z(i)\,s_z(i+\mathbf{r}) - \bar{s}_z^2$$
+$S(\mathbf{q})$ is azimuthally averaged into integer radial bins, and
 
-$G(\mathbf{r})$ is the spatial connected correlation function, computed from the single configuration via the Wiener–Khinchin theorem.
+$$
+q_{\text{peak}} = \frac{2\pi}{L}\,r^{*},
+\qquad
+r^{*} = \arg\max_{r > 0}\ \big\langle S(\mathbf{q})\big\rangle_{|\mathbf{q}| = r},
+\qquad L = 39.
+$$
 
-**Regime (b) — ensemble:**
-$$\chi = \frac{N_\mathcal{M}}{T}\left(\langle M^2 \rangle_{ens} - \langle M \rangle_{ens}^2\right)$$
+- Units: rad per lattice site. A texture of wavelength $\ell$ sites peaks at
+  $q = 2\pi/\ell$.
+- The $r = 0$ bin is excluded, so a uniform (saturated) configuration has no
+  spectral power and returns `nan` — this is meaningful, not a failure.
+- Radial bins are integer, so $q_{\text{peak}}$ is quantised in steps of
+  $2\pi/39 \approx 0.161$ rad/site; a wavelength of 6 sites ($q = 1.047$) is
+  reported at the $r = 6$ bin, $q = 0.967$.
 
-### Exchange Energy Density $E$
+### What was removed, and why
 
-**Regime (a):**
-$$E = -\frac{1}{N_\mathcal{M}}\sum_{\substack{\langle i,j \rangle \\ i,j \in \mathcal{M}}} s_z(i)\,s_z(j)$$
+| Removed | Reason |
+|---|---|
+| $\lvert M \rvert$ | Redundant with $M$ for comparison purposes; $\langle\lvert M\rvert\rangle \neq \lvert\langle M\rangle\rangle$ made the ensemble and single-configuration regimes non-comparable. |
+| $\chi$ (susceptibility) | Requires either a $K$-sample ensemble or an Ornstein–Zernike proxy whose fit is valid only in disordered regimes. Not a uniform axis across the six magnetic phases. |
+| $C_v$ (specific heat) | Same objection as $\chi$, compounded by the block-subsystem estimator's sensitivity to block size near the disk boundary. |
+| $E$ (exchange energy density) | Monotonically tied to $C_{nn}$ under the $s_z$ projection, so it adds no independent information. |
 
-**Regime (b):**
-$$\langle E \rangle = -\frac{1}{K_{ens}}\sum_{k=1}^{K_{ens}}\left[\frac{1}{N_\mathcal{M}}\sum_{\substack{\langle i,j \rangle \\ i,j \in \mathcal{M}}} s_z^{(k)}(i)\,s_z^{(k)}(j)\right]$$
-
-- $\langle i,j \rangle$: nearest-neighbour pairs (row/column directions), each pair counted once; boundary pairs excluded
-- $E \approx -1$: fully aligned ferromagnetic; $E \approx 0$: fully disordered
-- **Captures only the $S_z^i S_z^j$ component** of the full Heisenberg exchange; transverse components and further-neighbour terms are not recoverable from the scalar $s_z$ image
-
-### Specific Heat $C_v$
-
-**Regime (a) — Binder's subsystem fluctuation method:**
-$$C_v = \frac{|\mathcal{M}|}{T^2}\left(\langle \varepsilon^2 \rangle_B - \langle \varepsilon \rangle_B^2\right)$$
-
-where $\varepsilon_k$ is the local energy density of non-overlapping $\ell \times \ell$ blocks ($\ell = 5$, retaining blocks with $|B_k \cap \mathcal{M}| \geq 4$, giving $K \approx 50$ valid blocks).
-
-**Regime (b) — ensemble:**
-$$C_v = \frac{N_\mathcal{M}}{T^2}\left(\langle E^2 \rangle_{ens} - \langle E \rangle_{ens}^2\right)$$
+The three retained observables are well defined on **every single
+configuration in every phase**, which is what makes them usable as a comparison
+axis between simulated and generated images.
 
 ---
 
-## Circular Disk Mask Definition
+## 4. Implementation Reference
 
-$$
-\mathcal{M} = \left\{(y, x) \in \mathbb{Z}^2 : (y - c_y)^2 + (x - c_x)^2 \leq r_d^2\right\}
-$$
+`notebooks/utils/metrics.py` is the single source of truth.
 
-- $(c_y, c_x) = \left(\frac{H-1}{2}, \frac{W-1}{2}\right)$: image centre
-- $r_d = 18.3$ px: physical nanodot radius
-- $N_\mathcal{M} = |\mathcal{M}| \approx 1051$ for a $40 \times 40$ image
+| Symbol | Function |
+|---|---|
+| $\mathcal{M}$ | `MASK` (39×39, $r_d$ = 18.25), `N_MASK` = 1049 |
+| — | `topleft_crop(img)` — 40→39, exact; alias `center_crop` kept for old notebooks |
+| $M$ | `magnetization(img)` |
+| $C_{nn}$ | `spin_correlation(img)` — alias `cnn_correlation` kept |
+| $q_{\text{peak}}$ | `peak_wave_vector(img)` |
+| all three | `physical_metrics(img)` → dict; `physical_metrics_batch(imgs)` → dict of arrays |
+| names / labels | `PHYSICAL_METRIC_NAMES`, `PHYSICAL_METRIC_LABELS` |
 
-All physical observables and FFT metrics are evaluated **only within** $\mathcal{M}$, setting background pixels to zero.
+Drive per-metric loops from `PHYSICAL_METRIC_NAMES` rather than hardcoding, so
+a future change to the set propagates to every figure automatically.

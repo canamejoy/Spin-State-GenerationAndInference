@@ -1,15 +1,257 @@
 """
 metrics.py — Shared metric functions for generative evaluation.
-All functions assume images in [-1, 1] range, shape (H, W).
+
+All image functions assume a single-channel magnetisation map ``s_z`` in the
+range ``[-1, 1]`` with shape ``(39, 39)`` — i.e. the *physical* image size,
+already cropped from the 40x40 DDPM canvas.
+
+Physical-metric contract
+------------------------
+The canonical set of physical observables is exactly three:
+
+    magnetization        M        mean s_z over the nanodot disk
+    spin_correlation     C_nn     nearest-neighbour s_z correlation
+    peak_wave_vector     q_peak   dominant spatial frequency of the texture
+
+Susceptibility (chi), specific heat (Cv) and exchange-energy density (E) were
+removed: they require either an ensemble or a single-configuration proxy whose
+validity is regime-dependent, which made them unusable as a uniform comparison
+axis across models.
+
+Mask / crop ordering (IMPORTANT)
+--------------------------------
+The DDPM works on a 40x40 canvas obtained by reflect-padding the 39x39 physical
+image on its *right and bottom* edges. Therefore:
+
+    1. crop   40x40 -> 39x39 with ``topleft_crop`` (exact, no interpolation)
+    2. then   apply ``MASK``
+
+``MASK`` is built at 39x39 and every masked helper asserts the shape, so a
+40x40 image can no longer be masked by accident.
 """
 import numpy as np
 from numpy.fft import fft2, fftshift
 from skimage.metrics import structural_similarity as skssim
-from scipy.optimize import curve_fit
-from sklearn.metrics import r2_score
 
 
-# Cluster-id → magnetic structure mapping (6 distinct phases)
+# ─────────────────────────────────────────────────────────────────────────────
+# Geometry
+# ─────────────────────────────────────────────────────────────────────────────
+IMG_SIZE = 39        # physical image side (pixels)
+DDPM_SIZE = 40       # DDPM canvas side (pixels), = IMG_SIZE + 1 reflect pad
+RD_PIXELS = 18.25    # nanodot radius R_d = 18.25 MUC (Mendez-Rondon et al. 2026)
+
+
+def topleft_crop(img, size=IMG_SIZE):
+    """
+    Crop a (40, 40) DDPM canvas back to the (39, 39) physical image.
+
+    The 39 -> 40 padding is applied to the RIGHT and BOTTOM edges only
+    (``F.pad(x, (0, 1, 0, 1), mode='reflect')``), so the top-left crop recovers
+    the original pixels exactly. This is NOT a centre crop.
+    """
+    return img[..., :size, :size]
+
+
+# Backwards-compatible alias: older notebooks import ``center_crop``.
+# The operation was always a top-left crop; only the name was wrong.
+center_crop = topleft_crop
+
+
+def circular_mask(h=IMG_SIZE, w=IMG_SIZE, rd=RD_PIXELS):
+    """
+    Binary disk mask of the nanodot: True inside radius ``rd`` of the image
+    centre ``((h-1)/2, (w-1)/2)``.
+
+    ``rd`` defaults to the physical nanodot radius R_d = 18.25 magnetic unit
+    cells, NOT the inscribed circle of the pixel grid (19 px). The inscribed
+    circle admits 80 background pixels that dilute every disk average.
+
+    On the 39x39 grid, rd = 18.25 and rd = 18.3 discretise to the identical
+    1049-pixel mask; 18.25 is used because it is the published value.
+    """
+    cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
+    Y, X = np.ogrid[:h, :w]
+    return ((Y - cy) ** 2 + (X - cx) ** 2) <= rd ** 2
+
+
+MASK = circular_mask()
+N_MASK = int(MASK.sum())
+
+
+def _check_physical_shape(img):
+    """Reject an image that has not been cropped to the physical size yet."""
+    if img.shape[-2:] != (IMG_SIZE, IMG_SIZE):
+        raise ValueError(
+            f"expected a {IMG_SIZE}x{IMG_SIZE} physical image, got {img.shape[-2:]}. "
+            f"Crop the DDPM canvas first: topleft_crop(img)."
+        )
+    return img
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Physical metrics — the canonical set of three
+# ─────────────────────────────────────────────────────────────────────────────
+def magnetization(img, mask=MASK):
+    """Mean s_z over the nanodot disk. Range [-1, 1]."""
+    _check_physical_shape(img)
+    return float(img[mask].mean())
+
+
+def spin_correlation(img, mask=MASK):
+    """
+    Nearest-neighbour spin correlation within the disk:
+
+        C_nn = <s_z(i) s_z(j)>  over row/column neighbour pairs i,j in MASK
+
+    Range [-1, 1]. C_nn -> 1 is ferromagnetic alignment, C_nn -> 0 disordered,
+    C_nn < 0 antiferromagnetic / short-period modulation.
+    """
+    _check_physical_shape(img)
+    total, count = 0.0, 0
+    for dy, dx in [(0, 1), (1, 0)]:
+        a = img[:-dy or None, :-dx or None]
+        b = img[dy:, dx:]
+        valid = mask[:-dy or None, :-dx or None] & mask[dy:, dx:]
+        total += float((a * b)[valid].sum())
+        count += int(valid.sum())
+    return total / count if count > 0 else 0.0
+
+
+# Backwards-compatible alias: older notebooks import ``cnn_correlation``.
+cnn_correlation = spin_correlation
+
+
+def structure_factor(img, mask=None, subtract_mean=False):
+    """
+    2D structure factor S(q) = |FFT(field)|^2 / N, zero-frequency centred.
+
+    Defaults reproduce the historical (raw-image) behaviour used by the FFT
+    *image* metrics. For *physical* use pass ``mask=MASK, subtract_mean=True``
+    so that S(q) describes spin fluctuations on the disk rather than the disk
+    aperture itself — this is what ``peak_wave_vector`` does.
+    """
+    field = np.asarray(img, dtype=np.float64)
+    if subtract_mean:
+        ref = field[mask] if mask is not None else field
+        field = field - ref.mean()
+    if mask is not None:
+        field = field * mask
+    return np.abs(fftshift(fft2(field))) ** 2 / field.size
+
+
+def azimuthal_average(sq_2d, n_bins=None):
+    """Azimuthally average S(q) into integer radial bins. Returns (r_bins, sq_avg)."""
+    h, w = sq_2d.shape
+    cy, cx = h // 2, w // 2
+    Y, X = np.ogrid[:h, :w]
+    R = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2).astype(int)
+    max_r = min(cy, cx)
+    r_bins, sq_avg = [], []
+    for r in range(1, max_r + 1):
+        ring = sq_2d[R == r]
+        if len(ring) > 0:
+            r_bins.append(float(r))
+            sq_avg.append(float(ring.mean()))
+    return np.array(r_bins), np.array(sq_avg)
+
+
+def peak_wave_vector(img, mask=MASK, normalize=False):
+    """
+    Dominant spatial frequency of the magnetic texture.
+
+    S(q) of the *fluctuation* field (disk mean removed, background zeroed) is
+    azimuthally averaged; q_peak is the radial bin carrying the most power,
+    excluding the q = 0 bin.
+
+    Returns the wavevector in rad per lattice site::
+
+        q_peak = 2*pi * r_peak / IMG_SIZE
+
+    so a helical texture of wavelength ``L`` sites peaks at ``q = 2*pi / L``.
+    With ``normalize=True`` the raw radial bin is returned scaled to [0, 1]
+    instead (``r_peak / max_r``) — the form used by the differentiable proxy.
+
+    Radial bins are integer, so q_peak is quantised in steps of
+    ``2*pi / IMG_SIZE`` ~ 0.161 rad/site; a texture of wavelength 6 sites
+    (q = 1.047) is reported at the r = 6 bin, q = 0.967.
+
+    Returns ``nan`` for a field with no spectral power (e.g. a saturated,
+    perfectly uniform image).
+    """
+    _check_physical_shape(img)
+    sq = structure_factor(img, mask=mask, subtract_mean=True)
+    r_bins, sq_avg = azimuthal_average(sq)
+    if len(sq_avg) == 0 or not np.isfinite(sq_avg).any() or sq_avg.max() <= 0:
+        return np.nan
+    r_peak = float(r_bins[int(np.argmax(sq_avg))])
+    if normalize:
+        return r_peak / float(r_bins[-1])
+    return 2.0 * np.pi * r_peak / float(IMG_SIZE)
+
+
+PHYSICAL_METRICS = {
+    "magnetization":    magnetization,
+    "spin_correlation": spin_correlation,
+    "peak_wave_vector": peak_wave_vector,
+}
+
+PHYSICAL_METRIC_NAMES = list(PHYSICAL_METRICS)
+
+PHYSICAL_METRIC_LABELS = {
+    "magnetization":    r"$M$",
+    "spin_correlation": r"$C_{nn}$",
+    "peak_wave_vector": r"$q_{\mathrm{peak}}$",
+}
+
+
+def physical_metrics(img, mask=MASK):
+    """Evaluate the full canonical physical set on one 39x39 image -> dict."""
+    return {name: fn(img, mask=mask) for name, fn in PHYSICAL_METRICS.items()}
+
+
+def physical_metrics_batch(imgs, mask=MASK):
+    """Evaluate the canonical set over ``(B, 39, 39)`` -> dict of (B,) arrays."""
+    rows = [physical_metrics(img, mask=mask) for img in imgs]
+    return {name: np.array([r[name] for r in rows], dtype=np.float64)
+            for name in PHYSICAL_METRIC_NAMES}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Image metrics
+# ─────────────────────────────────────────────────────────────────────────────
+def masked_mse(a, b, mask=MASK):
+    _check_physical_shape(a)
+    return float(((a - b) ** 2)[mask].mean())
+
+
+def masked_bce(a, b, mask=MASK, eps=1e-7):
+    _check_physical_shape(a)
+    a_ = (a[mask] + 1) / 2
+    b_ = (b[mask] + 1) / 2
+    return float(-np.mean(a_ * np.log(b_ + eps) + (1 - a_) * np.log(1 - b_ + eps)))
+
+
+def masked_ssim(a, b):
+    return float(skssim(a, b, data_range=2.0))
+
+
+def cosine_similarity_pair(z1, z2):
+    n1 = np.linalg.norm(z1) + 1e-8
+    n2 = np.linalg.norm(z2) + 1e-8
+    return float(np.dot(z1 / n1, z2 / n2))
+
+
+def cosine_similarity_batch(z1, z2):
+    """Cosine similarity between paired feature vectors, shape (B, D) -> (B,)."""
+    n1 = np.linalg.norm(z1, axis=-1, keepdims=True) + 1e-8
+    n2 = np.linalg.norm(z2, axis=-1, keepdims=True) + 1e-8
+    return np.sum((z1 / n1) * (z2 / n2), axis=-1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Magnetic-phase taxonomy
+# ─────────────────────────────────────────────────────────────────────────────
 STRUCTURE_MAP = {
     4:  "Helical",
     5:  "Helical",
@@ -35,13 +277,35 @@ STRUCTURE_NAMES = [
 ]
 
 STRUCTURE_COLORS = {
-    "Ferromagnetic":          "#1f77b4",   # blue
-    "Helical":                "#d62728",   # red
-    "Labyrinthine & Conical": "#2ca02c",   # green
-    "Bimeron":                "#9467bd",   # purple
-    "Skyrmions":              "#8c564b",   # brown
-    "Field-Saturated":        "#e377c2",   # pink
+    "Ferromagnetic":          "#1f77b4",
+    "Helical":                "#d62728",
+    "Labyrinthine & Conical": "#2ca02c",
+    "Bimeron":                "#9467bd",
+    "Skyrmions":              "#8c564b",
+    "Field-Saturated":        "#e377c2",
 }
+
+MODEL_COLORS = {
+    "DDPM":            "#2563EB",
+    "DDPM+cos":        "#7C3AED",
+    "DDPM+cos (joint)": "#DB2777",
+    "DDPM+guidance":   "#EA580C",
+    "CVAE-Xception":   "#16A34A",
+    "CVAE-ViT":        "#DC2626",
+}
+
+# Column order of ``data['params']`` — verified against README.md, docs/01_hamiltonian.md
+# and the notebook that actually trained on the array
+# (notebooks/inverse/XceptionFullDataBaseV3100.ipynb).
+# A previous revision of this file listed these in a different order, which
+# silently mislabelled every per-parameter table that imported PARAM_NAMES.
+PARAM_KEYS = ["T", "Jex2", "Jex3", "Jex4", "Kan1", "KanS", "Hex", "KDM"]
+
+PARAM_NAMES = ["T⁰", "J̃₂", "J̃₃", "J̃₄", "K̃an1", "K̃anS", "H̃ex", "K̃DM"]
+
+PARAM_UNITS = ["K", "meV", "meV", "meV", "meV/atom", "meV/atom", "meV/atom", "meV"]
+
+PARAM_INDEX = {k: i for i, k in enumerate(PARAM_KEYS)}
 
 
 def get_structure_label(cluster_id):
@@ -49,144 +313,17 @@ def get_structure_label(cluster_id):
     return STRUCTURE_MAP.get(int(cluster_id), f"Unknown({cluster_id})")
 
 
-MODEL_COLORS = {
-    "DDPM": "#2563EB",
-    "CVAE-Xception": "#16A34A",
-    "CVAE-ViT": "#DC2626",
-}
-PARAM_NAMES = ["T⁰", "J̃₂", "K̃DM", "H̃ex", "K̃anS", "K̃an1", "J̃₃", "J̃₄"]
+# ─────────────────────────────────────────────────────────────────────────────
+# Robustness helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def shift_image(img, px, axis=1):
+    """Shift image by px pixels along axis using np.roll."""
+    return np.roll(img, px, axis=axis)
 
 
-def circular_mask(h=39, w=39):
-    """Binary mask: True inside the inscribed circle of the h x w image."""
-    cy, cx = h // 2, w // 2
-    r = min(cy, cx)
-    Y, X = np.ogrid[:h, :w]
-    return (X - cx) ** 2 + (Y - cy) ** 2 <= r ** 2
-
-
-MASK = circular_mask()
-
-
-def masked_mse(a, b, mask=MASK):
-    return ((a - b) ** 2)[mask].mean()
-
-
-def masked_bce(a, b, mask=MASK, eps=1e-7):
-    a_ = (a[mask] + 1) / 2
-    b_ = (b[mask] + 1) / 2
-    return -np.mean(a_ * np.log(b_ + eps) + (1 - a_) * np.log(1 - b_ + eps))
-
-
-def masked_ssim(a, b):
-    return skssim(a, b, data_range=2.0)
-
-
-def cosine_similarity_pair(z1, z2):
-    n1 = np.linalg.norm(z1) + 1e-8
-    n2 = np.linalg.norm(z2) + 1e-8
-    return float(np.dot(z1 / n1, z2 / n2))
-
-
-def cosine_similarity_batch(z1, z2):
-    """Cosine similarity between paired feature vectors, shape (B, D) -> (B,)."""
-    n1 = np.linalg.norm(z1, axis=-1, keepdims=True) + 1e-8
-    n2 = np.linalg.norm(z2, axis=-1, keepdims=True) + 1e-8
-    return np.sum((z1 / n1) * (z2 / n2), axis=-1)
-
-
-def magnetization(img, mask=MASK):
-    """Mean sz over the disk mask. Range [-1, 1]."""
-    return img[mask].mean()
-
-
-def abs_magnetization(img, mask=MASK):
-    return np.abs(img[mask].mean())
-
-
-def cnn_correlation(img, mask=MASK):
-    """Vectorized nearest-neighbor spin correlation within the mask."""
-    shifts = [(0, 1), (1, 0)]
-    total, count = 0.0, 0
-    for dy, dx in shifts:
-        a = img[:-dy or None, :-dx or None] if (dy > 0 or dx > 0) else img
-        b = img[dy:, dx:]
-        ma = mask[:-dy or None, :-dx or None] if (dy > 0 or dx > 0) else mask
-        mb = mask[dy:, dx:]
-        valid = ma & mb
-        total += (a * b)[valid].sum()
-        count += valid.sum()
-    return total / count if count > 0 else 0.0
-
-
-def structure_factor(img):
-    """Compute 2D structure factor S(q) = |FFT(img)|^2 / N."""
-    N = img.size
-    ft = fftshift(fft2(img))
-    return np.abs(ft) ** 2 / N
-
-
-def azimuthal_average(sq_2d, n_bins=None):
-    """Azimuthally average S(q) into radial bins. Returns (q_bins, sq_avg)."""
-    h, w = sq_2d.shape
-    cy, cx = h // 2, w // 2
-    Y, X = np.ogrid[:h, :w]
-    R = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2).astype(int)
-    max_r = min(cy, cx)
-    q_bins, sq_avg = [], []
-    for r in range(1, max_r + 1):
-        ring = sq_2d[R == r]
-        if len(ring) > 0:
-            q_bins.append(float(r))
-            sq_avg.append(ring.mean())
-    return np.array(q_bins), np.array(sq_avg)
-
-
-def oz_fit(img, q_max_fraction=0.4):
-    """
-    Fit Ornstein-Zernike: 1/S(q) = a + b*q^2 in the low-q regime.
-    Returns: chi_proxy = 1/a, xi = sqrt(b/a), r2 of the fit.
-    Returns (nan, nan, nan) if the fit fails or is unphysical (a<=0 or b<=0).
-    The fit is physically meaningful only in disordered regimes — always
-    report r2 alongside chi and xi.
-    """
-    sq_2d = structure_factor(img)
-    q, sq = azimuthal_average(sq_2d)
-    q_max = q_max_fraction * q.max()
-    mask_q = (q > 0) & (q <= q_max) & (sq > 0)
-    q_fit, sq_fit = q[mask_q], sq[mask_q]
-    if len(q_fit) < 4:
-        return np.nan, np.nan, np.nan
-    inv_sq = 1.0 / sq_fit
-    try:
-        popt, _ = curve_fit(lambda q, a, b: a + b * q ** 2, q_fit, inv_sq,
-                            p0=[1.0, 1.0], maxfev=5000)
-        a, b = popt
-        if a <= 0 or b <= 0:
-            return np.nan, np.nan, np.nan
-        r2 = r2_score(inv_sq, a + b * q_fit ** 2)
-        return 1.0 / a, np.sqrt(b / a), r2
-    except Exception:
-        return np.nan, np.nan, np.nan
-
-
-def chi_ensemble(ensemble_imgs, mask=MASK, temperature=1.0):
-    """
-    Fluctuation-dissipation estimate of susceptibility from a K-sample ensemble.
-    chi = N/T * Var(m), where m_k = mean sz over mask for sample k.
-    """
-    ms = np.array([img[mask].mean() for img in ensemble_imgs])
-    N = int(mask.sum())
-    return N * float(ms.var()) / temperature
-
-
-def center_crop(img, size=39):
-    """
-    Crop a (40, 40) DDPM output to (size, size) using top-left crop.
-    No interpolation — preserves original pixel values.
-    img: numpy array of shape (H, W) or (H, W, C), H >= size, W >= size.
-    """
-    return img[:size, :size]
+def reflect_image(img):
+    """Horizontal flip (left-right reflection)."""
+    return img[:, ::-1]
 
 
 def normalize_metrics(scores_dict, reference_key="E0", worst_key="E2"):
@@ -197,17 +334,9 @@ def normalize_metrics(scores_dict, reference_key="E0", worst_key="E2"):
         Normalized E0 = 1.0. Degraded conditions < 1.0.
 
     Error metrics (mse, bce): divided by mean of worst condition (E2).
-        Normalized E2 = 1.0. Reference E0 ≈ 0.0.
+        Normalized E2 = 1.0. Reference E0 ~ 0.0.
 
-    Args:
-        scores_dict: dict mapping condition keys (e.g. "E0","E1","E2","E3") to
-                     sub-dicts {"mse": array, "bce": array, "ssim": array, "cosine": array}
-        reference_key: condition key used as denominator for similarity metrics
-        worst_key: condition key used as denominator for error metrics
-
-    Returns:
-        norm_dict: same structure as scores_dict with normalized values
-        denominators: dict of the actual denominator values used
+    Returns ``(norm_dict, denominators)``.
     """
     sim_metrics   = ["ssim", "cosine"]
     error_metrics = ["mse", "bce"]
@@ -227,16 +356,9 @@ def normalize_metrics(scores_dict, reference_key="E0", worst_key="E2"):
     return norm_dict, denominators
 
 
-def shift_image(img, px, axis=1):
-    """Shift image by px pixels along axis using np.roll."""
-    return np.roll(img, px, axis=axis)
-
-
-def reflect_image(img):
-    """Horizontal flip (left-right reflection)."""
-    return img[:, ::-1]
-
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Figures
+# ─────────────────────────────────────────────────────────────────────────────
 def save_figure(fig, path_no_ext, dpi=300):
     """Save figure in both PNG (300 dpi) and SVG formats."""
     fig.savefig(f"{path_no_ext}.png", dpi=dpi, bbox_inches="tight")
