@@ -62,3 +62,7 @@ main/
 # ── WSL / tooling artefacts ───────────────────────────────────────────────────
 *:Zone.Identifier
 .atl/
+
+# Kaggle API tokens — NUNCA versionar
+.json/
+*.json:Zone.Identifier
