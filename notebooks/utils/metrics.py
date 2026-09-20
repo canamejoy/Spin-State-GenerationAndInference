@@ -190,6 +190,83 @@ def peak_wave_vector(img, mask=MASK, normalize=False):
     return 2.0 * np.pi * r_peak / float(IMG_SIZE)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Topology of the s_z level sets
+# ─────────────────────────────────────────────────────────────────────────────
+def topological_descriptors(img, mask=MASK, threshold=0.25):
+    """
+    Counts and Euler characteristic of the s_z level sets inside the disk.
+
+    The true skyrmion number, Q = (1/4pi) * integral n . (d_x n x d_y n), needs the full
+    three-component spin field. This dataset stores only the s_z projection, so Q is not
+    computable from it and nothing here should be called a skyrmion number. What IS
+    computable — and is what separates a skyrmion lattice from a helical stripe in the
+    s_z projection — is the topology of the level sets: how many separate domains of each
+    sign, and whether those domains enclose holes.
+
+    Why this matters next to the scalar observables: these numbers are DISCRETE. The
+    perturbation that latent guidance writes is about 1% of the image range and lives near
+    the Nyquist frequency; it shifts every scalar average a little and changes a domain
+    count not at all. A generator that reproduces M, C_nn and q_peak while producing the
+    wrong number of domains is matching the statistics with the wrong structures, and only
+    a discrete descriptor will say so.
+
+    ``threshold`` is deliberately well away from zero. At threshold 0 the level set of a
+    disordered configuration fragments into hundreds of single-pixel specks and the count
+    measures noise; 0.25 keeps only domains with real amplitude.
+
+    Returns a dict with:
+      n_pos, n_neg   number of connected domains above +threshold and below -threshold
+      euler_pos      Euler characteristic of the positive set (components minus holes)
+      wall_frac      fraction of in-disk neighbour pairs that straddle zero, i.e. the
+                     domain-wall density
+      largest_frac   area of the largest domain over the disk area
+    """
+    from scipy import ndimage
+    from skimage.measure import euler_number
+
+    _check_physical_shape(img)
+    a = np.asarray(img, dtype=np.float64)
+
+    pos = (a > threshold) & mask
+    neg = (a < -threshold) & mask
+    # 8-connectivity: two domains touching only at a corner are one domain, which is what
+    # a physical texture does.
+    conn = np.ones((3, 3), dtype=bool)
+    n_pos = int(ndimage.label(pos, structure=conn)[1])
+    n_neg = int(ndimage.label(neg, structure=conn)[1])
+
+    lab, _ = ndimage.label(pos, structure=conn)
+    largest = int(np.bincount(lab.ravel())[1:].max()) if n_pos else 0
+
+    # Domain walls: neighbour pairs inside the disk whose product is negative.
+    walls = 0
+    total = 0
+    for dy, dx in ((0, 1), (1, 0)):
+        u = a[:-dy or None, :-dx or None]
+        v = a[dy:, dx:]
+        ok = mask[:-dy or None, :-dx or None] & mask[dy:, dx:]
+        walls += int(((u * v) < 0)[ok].sum())
+        total += int(ok.sum())
+
+    return {
+        "n_pos": n_pos,
+        "n_neg": n_neg,
+        "euler_pos": int(euler_number(pos, connectivity=2)),
+        "wall_frac": walls / total if total else 0.0,
+        "largest_frac": largest / int(mask.sum()),
+    }
+
+
+TOPOLOGY_NAMES = ["n_pos", "n_neg", "euler_pos", "wall_frac", "largest_frac"]
+
+
+def topological_batch(imgs, mask=MASK, threshold=0.25):
+    """Evaluate the topological descriptors over ``(B, 39, 39)`` -> dict of (B,) arrays."""
+    rows = [topological_descriptors(im, mask=mask, threshold=threshold) for im in imgs]
+    return {k: np.array([r[k] for r in rows], dtype=np.float64) for k in TOPOLOGY_NAMES}
+
+
 PHYSICAL_METRICS = {
     "magnetization":    magnetization,
     "spin_correlation": spin_correlation,
