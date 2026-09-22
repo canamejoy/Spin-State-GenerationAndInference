@@ -56,8 +56,32 @@ Thumbs.db
 
 papers/
 
+# ── LaTeX article (main/) ─────────────────────────────────────────────────────
+# The article source IS versioned. Byproducts are listed by extension on purpose:
+# a bare `main/` or `main/report/` rule excludes the directory, git never descends
+# into an excluded directory, and every `!` rule below would become inert — the
+# article would silently vanish from git again. Do not "simplify" this.
+main/*.aux
+main/*.bbl
+main/*.blg
+main/*.fdb_latexmk
+main/*.fls
+main/*.log
+main/*.out
+main/*.pdf
+main/*.spl
+main/*.synctex.gz
+main/report/*.aux
+main/report/*.bbl
+main/report/*.blg
+main/report/*.log
+main/report/*.out
+main/report/*.pdf
 
-main/
+# Result figures embedded in the article ARE versioned.
+# Must stay AFTER the blanket `*.png` above — last match wins.
+!main/report/*.png
+!main/figures/*.png
 
 # ── WSL / tooling artefacts ───────────────────────────────────────────────────
 *:Zone.Identifier
