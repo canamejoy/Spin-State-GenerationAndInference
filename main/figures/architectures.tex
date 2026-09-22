@@ -1,0 +1,140 @@
+% =============================================================================
+%  architectures.tex -- the four evaluated architectures on one comparison axis
+%
+%  Requires, in the preamble:
+%    \usepackage{tikz}
+%    \usetikzlibrary{positioning, fit, calc, arrows.meta, backgrounds}
+%    \pgfdeclarelayer{background}\pgfsetlayers{background,main}
+%    \definecolor{inputgreen}{HTML}{C8E6C9}
+%    \definecolor{processblue}{HTML}{BBDEFB}
+%    \definecolor{metricgray}{HTML}{E0E0E0}
+%    \definecolor{outputorange}{HTML}{FFE0B2}
+%    \definecolor{midpurple}{HTML}{D1C4E9}
+%    \definecolor{arrowgray}{HTML}{616161}
+%    \definecolor{frozenslate}{HTML}{CFD8DC}
+%
+%  Every variant is scored on the SAME three axes -- physical observables,
+%  parameter recovery and diversity -- under one protocol, so the four rows of
+%  the results table are comparable by construction.
+% =============================================================================
+\begin{tikzpicture}[
+  basebox/.style={draw, thick, rounded corners=4pt, minimum width=3.2cm, minimum height=1.05cm, text width=3.0cm, align=center, font=\small, inner sep=4pt},
+  inputbox/.style={basebox, fill=inputgreen},
+  modelbox/.style={basebox, fill=processblue},
+  metricbox/.style={basebox, fill=metricgray},
+  imgbox/.style={basebox, fill=outputorange},
+  refbox/.style={basebox, fill=midpurple},
+  frozenbox/.style={basebox, fill=frozenslate, dashed},
+  arr/.style={thick, ->, >=Stealth, color=arrowgray},
+  darr/.style={thick, ->, >=Stealth, color=arrowgray, dashed},
+  gradarr/.style={very thick, ->, >=Stealth, color=red!65},
+  lbl/.style={font=\scriptsize\itshape, color=arrowgray},
+  seclbl/.style={font=\small\bfseries, color=black!55},
+  vlbl/.style={font=\small\bfseries, color=black!70}
+]
+
+% =============================================================================
+%  Layout
+%  Col1=0  |  Col2=6.4  |  Col3=11.0  |  Col4=15.2  |  Col5=20.4
+%  Row A=0 (base)  |  Row B=-6.2 (frozen)  |  Row C=-12.4 (joint)  |  Row D=-18.6 (guided)
+% =============================================================================
+
+% ══ VARIANT A -- baseline DDPM ══════════════════════════════════════════════
+\node[inputbox]  (Atheta) at (0, 0)    {\textbf{Parameters}\\[2pt]$\boldsymbol{\theta}\in\mathbb{R}^{8}$};
+\node[modelbox]  (Agm)    at (6.4, 0)  {\textbf{DDPM} ($g_\psi$)\\[2pt]$\mathbb{R}^{8}\!\to\!\mathbb{R}^{39\times39}$};
+\node[imgbox]    (Axhat)  at (11.0, 0) {\textbf{Generated} ($\hat{\mathbf{X}}$)\\[2pt]$K=32$ draws};
+\node[frozenbox] (Aim)    at (15.2, 0) {\textbf{Xception} ($f_\phi$)\\[2pt]frozen};
+\node[metricbox] (Amet)   at (20.4, 0) {\textbf{Three axes}\\[2pt]physical, $\hat{\boldsymbol{\theta}}$, diversity};
+
+\draw[arr] (Atheta.east) -- (Agm.west);
+\draw[arr] (Agm.east)    -- (Axhat.west);
+\draw[arr] (Axhat.east)  -- (Aim.west);
+\draw[arr] (Aim.east)    -- (Amet.west);
+
+% ══ VARIANT B -- cosine loss, frozen encoder ════════════════════════════════
+\node[inputbox]  (Btheta) at (0, -6.2)    {\textbf{Parameters}\\[2pt]$\boldsymbol{\theta}\in\mathbb{R}^{8}$};
+\node[modelbox]  (Bgm)    at (6.4, -6.2)  {\textbf{DDPM} ($g_\psi$)\\[2pt]\emph{fine-tuned}};
+\node[imgbox]    (Bxhat)  at (11.0, -6.2) {\textbf{Generated} ($\hat{\mathbf{X}}$)\\[2pt]$\hat{\mathbf{x}}_0$ at $t<t_{\max}$};
+\node[frozenbox] (Bim)    at (15.2, -6.2) {\textbf{Xception} ($f_\phi$)\\[2pt]frozen};
+\node[metricbox] (Bmet)   at (20.4, -6.2) {\textbf{Three axes}};
+
+\draw[arr] (Btheta.east) -- (Bgm.west);
+\draw[arr] (Bgm.east)    -- (Bxhat.west);
+\draw[arr] (Bxhat.east)  -- (Bim.west);
+\draw[arr] (Bim.east)    -- (Bmet.west);
+% cosine gradient flows back through the frozen encoder into the DDPM
+\draw[gradarr] (Bim.south) -- ++(0,-1.0) -| (Bgm.south)
+  node[lbl, pos=0.25, below, color=red!65] {$\nabla\,\lambda_{\cos}\bigl(1-\cos(\mathbf{z},\mathbf{z}^{\dagger})\bigr)$};
+
+% ══ VARIANT C -- cosine loss, joint fine-tune ═══════════════════════════════
+\node[inputbox]  (Ctheta) at (0, -12.4)    {\textbf{Parameters}\\[2pt]$\boldsymbol{\theta}\in\mathbb{R}^{8}$};
+\node[modelbox]  (Cgm)    at (6.4, -12.4)  {\textbf{DDPM} ($g_\psi$)\\[2pt]\emph{fine-tuned}};
+\node[imgbox]    (Cxhat)  at (11.0, -12.4) {\textbf{Generated} ($\hat{\mathbf{X}}$)};
+\node[modelbox]  (Cim)    at (15.2, -12.4) {\textbf{Xception} ($f_\phi$)\\[2pt]\emph{also trained}};
+\node[metricbox] (Cmet)   at (20.4, -12.4) {\textbf{Three axes}};
+
+\draw[arr] (Ctheta.east) -- (Cgm.west);
+\draw[arr] (Cgm.east)    -- (Cxhat.west);
+\draw[arr] (Cxhat.east)  -- (Cim.west);
+\draw[arr] (Cim.east)    -- (Cmet.west);
+\draw[gradarr] (Cim.south) -- ++(0,-1.0) -| (Cgm.south)
+  node[lbl, pos=0.25, below, color=red!65] {$\nabla\,\lambda_{\cos}(1-\cos)$};
+% the anchor that makes the joint objective well-posed
+\node[metricbox, fill=inputgreen!60, minimum height=0.8cm] (Canchor) at (15.2, -14.6)
+  {\scriptsize$\lambda_{\mathrm{inv}}\lVert f_\phi(\mathbf{X})-\boldsymbol{\theta}\rVert^{2}$};
+\draw[gradarr] (Canchor.north) -- (Cim.south);
+
+% ══ VARIANT D -- latent guidance at sampling time ═══════════════════════════
+\node[inputbox]  (Dtheta) at (0, -18.6)    {\textbf{Parameters}\\[2pt]$\boldsymbol{\theta}\in\mathbb{R}^{8}$};
+\node[modelbox]  (Dpred)  at (3.2, -20.8)  {\textbf{$\mathbf{z}^{\star}$ predictor}\\[2pt]$\mathbb{R}^{8}\!\to\!\mathbb{R}^{256}$};
+\node[frozenbox] (Dgm)    at (6.4, -18.6)  {\textbf{DDPM} ($g_\psi$)\\[2pt]frozen};
+\node[imgbox]    (Dxhat)  at (11.0, -18.6) {\textbf{Generated} ($\hat{\mathbf{X}}$)};
+\node[frozenbox] (Dim)    at (15.2, -18.6) {\textbf{Xception} ($f_\phi$)\\[2pt]frozen};
+\node[metricbox] (Dmet)   at (20.4, -18.6) {\textbf{Three axes}};
+
+\draw[arr] (Dtheta.east) -- (Dgm.west);
+\draw[arr] (Dtheta.south) |- (Dpred.west);
+\draw[arr] (Dgm.east)    -- (Dxhat.west);
+\draw[arr] (Dxhat.east)  -- (Dim.west);
+\draw[arr] (Dim.east)    -- (Dmet.west);
+% per-step guidance: nudges the noise prediction, changes no weight
+\draw[gradarr] (Dim.south) -- ++(0,-1.0) -| (Dxhat.south)
+  node[lbl, pos=0.25, below, color=red!65] {$\hat{\boldsymbol{\epsilon}}\leftarrow\hat{\boldsymbol{\epsilon}}+s\sqrt{1-\bar{\alpha}_t}\,\frac{\nabla_{\mathbf{x}_t}(1-\cos)}{\lVert\nabla\rVert}$};
+\draw[darr] (Dpred.east) -| (Dxhat.south west)
+  node[lbl, pos=0.3, above] {$\mathbf{z}^{\star}$};
+
+% ══ SHARED REFERENCE COLUMN ════════════════════════════════════════════════
+% Placed once, below the four variants. Deliberately NOT wired with arrows: a
+% connector to each of the four metric boxes draws a vertical line straight through
+% every panel and makes the figure unreadable. The shared inputs are stated in the
+% label instead.
+\node[refbox, minimum width=9cm, text width=8.6cm] (ref) at (11.0, -23.4)
+  {\textbf{Shared reference and protocol}\\[3pt]
+   ground-truth $\mathbf{X}$ and $\boldsymbol{\theta}$;\;
+   $K=32$ draws per $\boldsymbol{\theta}$;\;
+   $N=1000$ stratified by magnetic structure;\;
+   $100$ sampling steps};
+
+% =============================================================================
+%  BACKGROUND PANELS
+% =============================================================================
+\begin{pgfonlayer}{background}
+  \node[draw=processblue!70, fill=processblue!7, rounded corners=10pt, thick,
+        fit=(Atheta)(Agm)(Axhat)(Aim)(Amet), inner sep=16pt] (panelA) {};
+  \node[draw=processblue!70, fill=processblue!7, rounded corners=10pt, thick,
+        fit=(Btheta)(Bgm)(Bxhat)(Bim)(Bmet), inner sep=16pt] (panelB) {};
+  \node[draw=processblue!70, fill=processblue!7, rounded corners=10pt, thick,
+        fit=(Ctheta)(Cgm)(Cxhat)(Cim)(Cmet)(Canchor), inner sep=16pt] (panelC) {};
+  \node[draw=processblue!70, fill=processblue!7, rounded corners=10pt, thick,
+        fit=(Dtheta)(Dpred)(Dgm)(Dxhat)(Dim)(Dmet), inner sep=16pt] (panelD) {};
+  \node[draw=midpurple!70, fill=midpurple!10, rounded corners=10pt, thick,
+        fit=(ref), inner sep=12pt] (panelR) {};
+\end{pgfonlayer}
+
+\node[vlbl, above=6pt of panelA] {(a) Baseline DDPM --- no coupling to the inverse model};
+\node[vlbl, above=6pt of panelB] {(b) Cosine loss, frozen encoder --- gradients reach the DDPM only};
+\node[vlbl, above=6pt of panelC] {(c) Cosine loss, joint fine-tune --- degenerate without the anchor};
+\node[vlbl, above=6pt of panelD] {(d) Latent guidance --- no weight changes at all};
+\node[seclbl, below=6pt of panelR] {Shared across all four variants};
+
+\end{tikzpicture}

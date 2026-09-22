@@ -1,0 +1,419 @@
+%% ===========================================================================
+%%  Image-Driven Estimation of Magnetic Configurations in Nanodots
+%%  Companion (direct-problem) article to Mendez-Rondon et al., Mater. Des. 2026
+%%
+%%  Target journal : Materials & Design (Elsevier)
+%%  Class          : elsarticle
+%%  Build          : latexmk -pdf main.tex      (or: make)
+%% ===========================================================================
+\documentclass[preprint,5p,times,twocolumn]{elsarticle}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{subcaption}
+\usepackage{siunitx}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+
+\graphicspath{{figures/}}
+
+%% --- Draft-note macro: \todo{...} -------------------------------------------
+%% Comment out the coloured definition before submission.
+%% NOTE: neither \textcolor nor \textbf may wrap the note. Both grab it as an
+%% argument through a SHORT internal (\@textcolor, \text@command), so a blank
+%% line inside a note aborts the run with "Paragraph ended before ... was
+%% complete". \color and \bfseries are declarations: they take no argument and
+%% never scan for \par, so multi-paragraph notes are safe.
+%% The math branch exists for notes sitting inside equations, e.g.
+%% "\mathcal{H} = \todo{full Hamiltonian}", where \bfseries is illegal.
+%% Only the TODO label is bold. Setting a whole multi-paragraph note in bold
+%% makes an unreadable block in a narrow two-column measure and wrecks the
+%% justification, so the body stays at normal weight.
+\newcommand{\todo}[1]{%
+  \ifmmode
+    \text{\color{red}\textbf{[TODO:} #1\textbf{]}}%
+  \else
+    {\color{red}\textbf{[TODO:} #1\textbf{]}}%
+  \fi}
+
+%% --- Notation ---------------------------------------------------------------
+\newcommand{\sz}{s_z}                        % magnetisation component
+\newcommand{\bth}{\bm{\theta}}               % Hamiltonian parameter vector
+\newcommand{\bthhat}{\hat{\bm{\theta}}}      % recovered parameters
+\newcommand{\Jt}[1]{\tilde{J}_{#1}}          % exchange constants
+\newcommand{\Kdm}{\tilde{K}_{\mathrm{DM}}}   % DMI
+\newcommand{\Kan}[1]{\tilde{K}_{\mathrm{an}#1}}
+\newcommand{\Hex}{\tilde{H}_{\mathrm{ex}}}
+\newcommand{\Tzero}{T^{(0)}}
+\newcommand{\Mdisk}{\mathcal{M}}             % nanodot disk mask
+\newcommand{\qpeak}{q_{\mathrm{peak}}}
+\newcommand{\Cnn}{C_{nn}}
+\newcommand{\zvec}{\mathbf{z}}               % Xception latent
+\newcommand{\Ecal}{\mathcal{E}}              % encoder
+
+\journal{Materials \& Design}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{Image-Driven Estimation of Magnetic Configurations in Nanodots\\
+       \todo{final title}}
+
+%% --- Authors -----------------------------------------------------------------
+%% Author list and order confirmed. Affiliations a/b/c are taken verbatim from
+%% the predecessor paper (Mendez-Rondon et al., Mater. Des. 2026).
+\author[a]{Juan Sebasti\'an M\'endez-Rond\'on}
+\author[a]{Carlos Andr\'es Canamejoy-Alegr\'ia}
+\author[a]{Andr\'es Marino \'Alvarez-Meza\corref{cor1}}
+\ead{amalvarezme@unal.edu.co}
+\author[a]{Jorge Iv\'an Montes-Monsalve}
+\author[b,c]{Jose Dar\'io Agudelo-Giraldo}
+\cortext[cor1]{Corresponding author.}
+
+\address[a]{AI-Lab, Signal Processing and Recognition Group, Universidad Nacional
+de Colombia, Sede Manizales, 170003 Manizales, Colombia}
+\address[b]{Grupo de Investigaci\'on en F\'isica y Matem\'aticas con \'Enfasis en la
+Formaci\'on de Ingenieros, Departamento de F\'isica y Matem\'aticas, Facultad de
+Ingenier\'ia, Universidad Aut\'onoma de Manizales, 170002 Manizales, Colombia}
+\address[c]{Departamento de F\'isica, Facultad de Ciencias Exactas y Naturales,
+Universidad de Caldas, 170002 Manizales, Colombia}
+
+%% --- Highlights: 3-5 bullets, <= 85 characters each (Elsevier limit) --------
+\begin{highlights}
+\item Conditional DDPM generates relaxed magnetic nanodot textures from Hamiltonian parameters.
+\item A latent cosine term closes the generation--regression cycle during training.
+\item Latent guidance steers sampling without fine-tuning either network.
+\item Three disk observables quantify physical fidelity beyond pixel similarity.
+\end{highlights}
+
+\begin{abstract}
+\todo{Write last. Mirror the predecessor's arc: (i) physical setting and why the
+direct problem matters; (ii) the gap --- generative models reproduce texture but
+are never held to the inverse model that must read them back; (iii) what we do
+--- a conditional DDPM closed against an Xception regressor through a latent
+cosine term, in three variants (frozen encoder, joint fine-tune, guidance-only);
+(iv) the headline numbers; (v) what it buys the field.}
+\end{abstract}
+
+\begin{keyword}
+Magnetic nanodots \sep Denoising diffusion probabilistic models \sep
+Inverse problems \sep Cycle consistency \sep Latent guidance \sep Spin textures
+\end{keyword}
+
+\end{frontmatter}
+
+%% ===========================================================================
+%%  SECTION HIERARCHY MIRRORS THE PREDECESSOR PAPER EXACTLY.
+%%  See PREDECESSOR_OUTLINE.md for the extracted original structure.
+%%    1. Introduction        2. Related work        3. Materials and methods
+%%    4. Experimental set-up 5. Results and discussion  6. Conclusions
+%% ===========================================================================
+
+\section{Introduction}
+\label{sec:intro}
+
+\todo{Four movements, matching the predecessor's introduction.
+
+(1) Magnetic nanodots and their topological spin textures; the extended
+Heisenberg Hamiltonian with symmetric exchange, DMI, magnetocrystalline
+anisotropy and the Zeeman field \cite{mendezrondon2026regression}.
+
+(2) The inverse problem and its resolution by regression
+\cite{kwon2020hamiltonian,mendezrondon2026regression}: an Xception regressor
+recovers $\Kdm$, $\Jt{2}$ and $\Tzero$ with $R^2$ of 0.95, 0.91 and 0.84, while
+the higher-order exchange constants stay bounded by the identifiability limits
+of the $\sz$ projection.
+
+(3) The direct problem. Atomistic Monte Carlo is the ground truth but is slow;
+learned generators are fast. Diffusion models \cite{ho2020ddpm,nichol2021improved}
+now dominate conditional image synthesis.
+
+(4) The gap this paper closes: a generator judged only by pixel or perceptual
+similarity is never held to the inverse model that has to read its output back.
+We make that requirement part of the objective. End with the contribution list.}
+
+\subsection{Contributions}
+\label{sec:contributions}
+\begin{enumerate}
+  \item \todo{A cycle-closing objective --- DDPM denoising loss plus a cosine
+        term on the 256-d Xception latent --- restricted to a low-noise
+        timestep window.}
+  \item \todo{Three integration regimes (frozen encoder, joint fine-tune,
+        sampling-time latent guidance with no fine-tuning) and the cost of each.}
+  \item \todo{A reduced, defensible set of three disk observables
+        ($M$, $\Cnn$, $\qpeak$) and the measurement protocol that makes
+        simulated and generated configurations comparable.}
+\end{enumerate}
+
+%% ===========================================================================
+\section{Related work}
+\label{sec:related}
+
+\todo{Three strands, in this order.
+
+\emph{Hamiltonian parameter estimation from magnetic images.}
+\cite{kwon2020hamiltonian} established the regression formulation;
+\cite{mendezrondon2026regression} added the atomistic nanodot setting and RAM
+interpretability. Both are inverse-only.
+
+\emph{Generative models for magnetic textures.} \cite{lee2024twisted} is the
+closest prior art and the paper to position against: fully-connected generative
+kernels producing magnetic domain images of twisted bilayer CrI$_3$ from
+Hamiltonian parameters. State plainly what is different here --- a diffusion
+backbone on an atomistic nanodot, and, crucially, a generator that is evaluated
+and trained against the inverse model rather than in isolation.
+
+\emph{Guidance and conditioning in diffusion models.} Classifier guidance
+\cite{dhariwal2021beat} versus classifier-free guidance \cite{ho2022cfg}; why
+the former fits here (a pretrained, frozen inverse model already exists and
+retraining it would forfeit the published result).}
+
+%% ===========================================================================
+\section{Materials and methods}
+\label{sec:methods}
+
+\subsection{Atomistic Hamiltonian framework}
+\label{sec:hamiltonian}
+\todo{Reproduce the Hamiltonian of \cite{mendezrondon2026regression} with
+identical notation so the two papers read as one programme.}
+
+\begin{equation}
+  \label{eq:hamiltonian}
+  \mathcal{H} = \todo{full Hamiltonian}
+\end{equation}
+
+\todo{Table 1 analogue: the eight free parameters with sampling ranges, with
+$\Jt{1} = \SI{1.0}{\milli\electronvolt}$ fixed as the energy reference ---
+$\Tzero$ [K], $\Jt{2}$, $\Jt{3}$, $\Jt{4}$ [meV], $\Kan{1}$, $\Kan{S}$,
+$\Hex$ [meV/atom], $\Kdm$ [meV].}
+
+\subsection{GPU-accelerated image dataset generation}
+\label{sec:dataset}
+\todo{Metropolis--Hastings Monte Carlo with simulated annealing, GPU-accelerated
+through the matrix decomposition of \cite{mendezrondon2026regression}. Cylindrical
+geometry, $R_d = 18.25$ MUC, thickness $\breve{L} = 5$ MUC, $\sim$5200 localised
+spins. The $\sz$ field of the central layer $z = \lfloor \breve{L}/2 \rfloor$ is
+projected onto a $39\times39$ pixel grid. Dataset size for this study,
+splits 70/15/15, seed 42, and the separate min--max scalers for the generator and
+the regressor.}
+
+\subsection{Conditional diffusion framework}
+\label{sec:ddpm}
+\todo{Forward and reverse processes \cite{ho2020ddpm}; cosine $\beta$-schedule
+\cite{nichol2021improved}; U-Net backbone with parameter conditioning injected
+through a time--condition embedding; EMA; min-SNR-$\gamma$ weighting
+\cite{hang2023minsnr} with $\gamma = 5$.}
+
+\paragraph{Canvas convention.}
+The physical image is $39\times39$, which no power-of-two U-Net accepts without
+resampling. We reflect-pad the \emph{right and bottom} edges to a $40\times40$
+canvas and crop the top-left $39\times39$ block back out at inference. The crop
+is exact --- it returns the original pixels --- so the pipeline introduces no
+interpolation anywhere. This matters because the annealing temperature $\Tzero$
+is encoded in fine-grained texture that bilinear resampling destroys.
+
+\subsection{Cycle integration via the inverse latent}
+\label{sec:integration}
+
+\todo{Opening paragraph: the inverse model of
+\cite{mendezrondon2026regression} is an Xception \cite{chollet2017xception}
+with the shared head
+$\mathrm{BN} \to \mathrm{Drop}(0.4) \to \mathrm{Dense}(256,\mathrm{ReLU})
+\to \mathrm{BN} \to \mathrm{Drop}(0.3) \to \mathrm{Dense}(8)$.
+Removing the final linear layer exposes
+$\zvec = \Ecal(x) \in \mathbb{R}^{256}$. Argue why the latent and not the
+regression output: the 8-d output is a lossy, task-saturated projection, and
+matching it directly would optimise the generator against the regressor's
+residual error rather than against the texture information the regressor uses.}
+
+\subsubsection{Latent cosine objective}
+\label{sec:cosine}
+Let $\hat{x}_0$ be the denoised estimate at timestep $t$ and $x_0$ the reference
+configuration, both cropped to $39\times39$. The training objective is
+
+\begin{equation}
+  \label{eq:loss}
+  \mathcal{L} \;=\; \mathcal{L}_{\text{denoise}}
+    \;+\; \lambda_{\cos}\,
+    \mathbb{E}\!\left[\mathbb{1}[t < t_{\max}]
+    \left(1 - \cos\!\big(\Ecal(\hat{x}_0),\,
+    \mathrm{sg}[\Ecal(x_0)]\big)\right)\right],
+\end{equation}
+
+where $\mathrm{sg}[\cdot]$ is the stop-gradient and $\mathbb{1}[t < t_{\max}]$
+restricts the term to the low-noise window.
+
+\paragraph{Why the timestep window.}
+\todo{The methodological point worth defending. At large $t$, $\hat{x}_0$ is a
+clamped reconstruction from near-pure noise: its latent carries no usable signal
+and the clamp zeroes the gradient. Applying the cosine term across all $t$ spends
+compute on a term that is simultaneously uninformative and non-differentiable.
+Report the ablation over $t_{\max}$.}
+
+\subsubsection{Frozen encoder and joint fine-tuning}
+\label{sec:variants}
+\todo{Variant A freezes $\Ecal$: gradients reach $\hat{x}_0$ but no encoder
+weight moves. Variant B lets $\Ecal$ train at a reduced learning rate. State the
+two guardrails B requires --- latent-collapse monitoring and per-epoch $R^2$ of
+the full regressor --- and why: a jointly trained encoder can minimise the cosine
+term by degenerating towards a constant embedding, and fidelity bought by
+damaging the inverse model is not a gain.}
+
+\subsubsection{Latent-guided sampling}
+\label{sec:guidance}
+\todo{Variant C changes no weights in either network. A small
+$\bth \mapsto \zvec^\star$ head supplies the target embedding, and sampling
+follows classifier guidance \cite{dhariwal2021beat} on the cosine objective:
+
+\begin{equation*}
+  \hat{\epsilon} \leftarrow \epsilon_\vartheta(x_t, t, \bth)
+    + s\,\sqrt{1-\bar\alpha_t}\,
+      \nabla_{x_t}\big(1 - \cos(\Ecal(\hat{x}_0), \zvec^\star)\big).
+\end{equation*}
+
+Contrast with classifier-free guidance \cite{ho2022cfg}, which would have
+required retraining. Report the held-out cosine of the $\bth \mapsto \zvec^\star$
+head --- it upper-bounds what guidance can achieve.}
+
+%% ===========================================================================
+\section{Experimental set-up}
+\label{sec:setup}
+
+\subsection{Atomistic simulation details}
+\label{sec:setup-sim}
+\todo{Annealing schedule, Monte Carlo sweeps, convergence criterion, and the
+number of parameter points. Reuse the predecessor's settings verbatim so the
+datasets are identical.}
+
+\subsection{Deep learning training}
+\label{sec:setup-training}
+\todo{DDPM: $T = 1000$ steps, cosine schedule, base width 80, conditioning
+embedding 128, dropout 0.1, EMA 0.999, AdamW $2.26\times10^{-4}$, weight decay
+$4.28\times10^{-5}$, batch 128, 3 warm-up epochs, gradient clipping at 0.5,
+min-SNR $\gamma = 5$. Cycle terms: $\lambda_{\cos}$, $t_{\max}$, and for the
+joint variant the encoder learning rate $10^{-5}$. Hardware and wall-clock cost.}
+
+\subsection{Evaluation protocol}
+\label{sec:setup-eval}
+
+\subsubsection{Physical observables}
+\label{sec:physical}
+All observables are computed on the $39\times39$ crop, restricted to the nanodot
+disk $\Mdisk$ of radius $R_d = 18.25$ MUC centred on the image
+($N_{\Mdisk} = 1049$ pixels). \emph{The crop precedes the mask}: applying the
+disk to the $40\times40$ canvas would average reflected duplicate pixels on a
+mask displaced by half a pixel.
+
+\begin{align}
+  M      &= \frac{1}{N_\Mdisk}\sum_{i \in \Mdisk} \sz(i),
+  \label{eq:magnetization}\\[2pt]
+  \Cnn   &= \big\langle \sz(i)\,\sz(j) \big\rangle_{\langle i,j\rangle \in \Mdisk},
+  \label{eq:correlation}\\[2pt]
+  \qpeak &= \frac{2\pi}{L}\,
+            \arg\max_{r>0} \; \big\langle S(\mathbf{q}) \big\rangle_{|\mathbf{q}|=r},
+            \qquad L = 39.
+  \label{eq:qpeak}
+\end{align}
+
+\todo{Justify the reduction to three. Susceptibility and specific heat require
+either an ensemble or a single-configuration proxy whose validity is
+regime-dependent, so neither is a uniform comparison axis across the magnetic
+phases; the exchange energy density is monotonically tied to $\Cnn$ under the
+$\sz$ projection. $M$, $\Cnn$ and $\qpeak$ are well defined on every single
+configuration in every phase. $S(\mathbf{q})$ is computed on the fluctuation
+field --- disk mean removed, background zeroed --- so $\qpeak$ describes the
+texture rather than the aperture.}
+
+\subsubsection{Image and regression metrics}
+\label{sec:othermetrics}
+\todo{SSIM \cite{wang2004ssim} and masked MSE for image fidelity; $R^2$, MAE and
+RMSE in physical units for cycle closure, reported per parameter as in the
+predecessor's Table 3. Note the known limitation: a phase-shifted texture is
+energetically equivalent but penalised by SSIM, which is why the physical
+observables and the latent cosine are reported alongside it.}
+
+%% ===========================================================================
+\section{Results and discussion}
+\label{sec:results}
+
+\subsection{Generative fidelity of the baseline DDPM}
+\label{sec:res-baseline}
+\todo{Establishes the reference. Figure: generated vs simulated panels across
+the six magnetic phases, in the predecessor's phase-diagram style. Table:
+per-parameter cycle $R^2$/MAE.}
+
+\subsection{Effect of the latent cosine term}
+\label{sec:res-cosine}
+\todo{Frozen-encoder variant against baseline. Sweep $\lambda_{\cos}$ and
+$t_{\max}$. Report the three observables, SSIM, and cycle $R^2$.}
+
+\subsection{Cost of joint fine-tuning}
+\label{sec:res-joint}
+\todo{Variant B. Report generative gain \emph{and} inverse-model degradation on
+the same axes, plus the latent-collapse diagnostic. If the inverse model
+degrades, say so --- that is the result.}
+
+\subsection{Guidance without fine-tuning}
+\label{sec:res-guidance}
+\todo{Variant C. Sweep $s \in \{0, 0.5, 1, 2, 4, 8\}$; $s = 0$ must reproduce the
+baseline exactly. Show where guidance starts trading texture realism for latent
+agreement.}
+
+\subsection{Per-phase behaviour}
+\label{sec:res-phases}
+\todo{Breakdown across the magnetic phases, mirroring the predecessor's Table 4.
+That paper showed degenerate textures dominate the inverse error; test whether
+the same phases dominate the generative error, and whether the cycle terms help
+precisely there.}
+
+\subsection{Limitations}
+\label{sec:limitations}
+\todo{Be explicit, as the predecessor's Section 5.5 is: $\sz$ projection only,
+single-dot geometry, the $\qpeak$ radial-bin quantisation of
+$2\pi/39 \approx 0.16$ rad/site, and the fact that the cosine term is bounded by
+the encoder's own fidelity.}
+
+%% ===========================================================================
+\section{Conclusions}
+\label{sec:conclusions}
+\todo{Three to five paragraphs. What was built, what the numbers show, which of
+the three integration regimes is the recommendation and under what constraint,
+and the next step.}
+
+%% ===========================================================================
+\section*{CRediT authorship contribution statement}
+\todo{Match the predecessor's CRediT block.}
+
+\section*{Declaration of Generative AI and AI-assisted technologies in the writing process}
+\todo{The predecessor carries this declaration; Elsevier requires it. State the
+tools used and confirm the authors reviewed and take responsibility for the
+content.}
+
+\section*{Declaration of competing interest}
+The authors declare that they have no known competing financial interests or
+personal relationships that could have appeared to influence the work reported
+in this paper.
+
+\section*{Acknowledgements}
+This work was supported by Hermes 62642, Universidad Nacional de Colombia, and
+by Code 111908, Minciencias (951-2024).
+
+\appendix
+\section{Supplementary data}
+\label{app:supp}
+\todo{Additional per-phase tables and the full guidance-scale sweep.}
+
+\section*{Data availability}
+The datasets are publicly available on Kaggle
+(\texttt{carloscanamejoy/dataset-spines-united-v2}). Code is available at
+\url{https://github.com/canamejoy/Spin-State-GenerationAndInference}.
+
+\bibliographystyle{elsarticle-num}
+\bibliography{refs}
+
+\end{document}
