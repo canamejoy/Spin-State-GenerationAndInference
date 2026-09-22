@@ -267,6 +267,174 @@ def topological_batch(imgs, mask=MASK, threshold=0.25):
     return {k: np.array([r[k] for r in rows], dtype=np.float64) for k in TOPOLOGY_NAMES}
 
 
+# Superlevel-set threshold grid for the Euler characteristic curve: 19 values,
+# -0.9 .. 0.9 in steps of 0.1. This replaces the single free threshold of
+# ``topological_descriptors`` with a full sweep (see docs/07_metrics.md, 4.7).
+THRESHOLD_GRID = np.round(np.arange(-0.9, 0.95, 0.1), 2)
+
+
+def euler_characteristic_curve(img, mask=MASK, thresholds=THRESHOLD_GRID):
+    """
+    Euler characteristic curve (ECC) of the s_z superlevel-set filtration.
+
+    For every threshold u on ``thresholds`` the superlevel set
+
+        S_u = {i in disk : s_z(i) > u}
+
+    is formed under 8-connectivity, and three curves are evaluated over it:
+    the number of connected components b0(u), the Euler characteristic
+    chi(u) = euler_number(S_u), and the number of holes b1(u) = b0(u) - chi(u)
+    (valid in 2D, where chi = b0 - b1 by the Betti-number decomposition of
+    Hadwiger's theorem — see docs/07_metrics.md 4.2).
+
+    Sweeping u removes the single free threshold of ``topological_descriptors``
+    (u = 0.25): no one value has to be defended, and every summary below is a
+    functional of the whole curve rather than a reading at one point.
+
+    Returns a dict of four 1-D float arrays, all the same length as
+    ``thresholds``: ``"u"``, ``"chi"``, ``"b0"``, ``"b1"``.
+    """
+    from scipy import ndimage
+    from skimage.measure import euler_number
+
+    _check_physical_shape(img)
+    a = np.asarray(img, dtype=np.float64)
+    conn = np.ones((3, 3), dtype=bool)
+
+    u = np.asarray(thresholds, dtype=np.float64)
+    b0 = np.empty(len(u), dtype=np.float64)
+    chi = np.empty(len(u), dtype=np.float64)
+    for i, thr in enumerate(u):
+        s_u = (a > thr) & mask
+        b0[i] = float(ndimage.label(s_u, structure=conn)[1])
+        chi[i] = float(euler_number(s_u, connectivity=2))
+    b1 = b0 - chi
+
+    return {"u": u, "chi": chi, "b0": b0, "b1": b1}
+
+
+ECC_SUMMARY_NAMES = ["chi_min", "chi_max", "u_chi_min", "b0_max", "ecc_l1", "b1_total"]
+
+
+def ecc_summary(img, mask=MASK, thresholds=THRESHOLD_GRID):
+    """
+    Threshold-free scalar summaries of the Euler characteristic curve.
+
+    Each summary is a functional of the whole curve, not a reading at one
+    threshold:
+
+      chi_min    min of chi(u) over the grid (most negative = most bubble-like,
+                 i.e. a majority phase riddled with holes)
+      chi_max    max of chi(u) over the grid (most positive = unbranched
+                 stripes or a saturated domain)
+      u_chi_min  the u at which chi attains chi_min (first occurrence)
+      b0_max     max of b0(u) over the grid — the threshold-free replacement
+                 for ``n_pos``: the peak domain count over ALL thresholds
+                 instead of one fixed one
+      ecc_l1     integral of |chi(u)| over u — total topological activity
+      b1_total   integral of b1(u) over u — total loop content
+
+    Returns a dict of six plain Python floats, keys given by
+    ``ECC_SUMMARY_NAMES``.
+    """
+    curve = euler_characteristic_curve(img, mask=mask, thresholds=thresholds)
+    u, chi, b0, b1 = curve["u"], curve["chi"], curve["b0"], curve["b1"]
+    i_chi_min = int(np.argmin(chi))
+
+    return {
+        "chi_min": float(chi.min()),
+        "chi_max": float(chi.max()),
+        "u_chi_min": float(u[i_chi_min]),
+        "b0_max": float(b0.max()),
+        "ecc_l1": float(np.trapezoid(np.abs(chi), u)),
+        "b1_total": float(np.trapezoid(b1, u)),
+    }
+
+
+def ecc_summary_batch(imgs, mask=MASK, thresholds=THRESHOLD_GRID):
+    """Evaluate ``ecc_summary`` over ``(B, 39, 39)`` -> dict of (B,) arrays."""
+    rows = [ecc_summary(im, mask=mask, thresholds=thresholds) for im in imgs]
+    return {k: np.array([r[k] for r in rows], dtype=np.float64) for k in ECC_SUMMARY_NAMES}
+
+
+DEFECT_NAMES = ["n_terminals", "n_junctions", "n_isolated", "skeleton_len", "defect_density"]
+
+
+def stripe_defects(img, mask=MASK, threshold=0.0, margin=2):
+    """
+    Junction and terminal density of the s_z domain skeleton.
+
+    This is a descriptor of the STRIPE MORPHOLOGY, not the skyrmion number:
+    it says nothing about the in-plane winding of the spin field, only about
+    how the domain boundary of the s_z projection branches. It answers a
+    question the Euler characteristic curve cannot: the ECC counts components
+    and holes, but says nothing about whether the domain boundary branches.
+
+    Method, grounded in Okubo, Shimizu, Shivaram & Kim, IEEE Access 12,
+    92419-92430 (2024), doi:10.1109/ACCESS.2024.3422259, who detect junctions
+    and terminals in magnetic labyrinthine patterns with a TM-CNN because
+    their microscopy images are noisy. Our simulated fields are clean, so a
+    morphological skeleton is exact and needs no learned detector:
+
+      1. threshold the domain: ``dom = (img > threshold) & mask``
+      2. skeletonize ``dom`` to a 1-pixel-wide morphological skeleton
+      3. count, per skeleton pixel, its 8-neighbour skeleton neighbours
+      4. classify: 1 neighbour = terminal, >= 3 = junction, 0 = isolated
+         (a degenerate single-pixel bubble)
+
+    Boundary exclusion (mandatory, and the whole correctness point): a stripe
+    that is cut by the edge of the dot produces a spurious terminal at the
+    cut. Counts are restricted to ``skel & inner``, where ``inner`` is
+    ``mask`` eroded by ``margin`` pixels, so a domain that merely exits the
+    disk does not register a false terminal there. This is a correctness
+    requirement, not a tuning knob.
+
+    Returns a dict with:
+      n_terminals     skeleton pixels (inside ``inner``) with exactly 1
+                       neighbour
+      n_junctions      skeleton pixels (inside ``inner``) with >= 3 neighbours
+      n_isolated       skeleton pixels (inside ``inner``) with 0 neighbours
+      skeleton_len     number of skeleton pixels inside ``inner``
+      defect_density   (n_terminals + n_junctions) / skeleton_len, or 0.0
+                       when skeleton_len == 0
+    """
+    from scipy import ndimage
+    from skimage.morphology import skeletonize
+
+    _check_physical_shape(img)
+    a = np.asarray(img, dtype=np.float64)
+
+    dom = (a > threshold) & mask
+    skel = skeletonize(dom)
+
+    kernel = np.ones((3, 3), dtype=int)
+    kernel[1, 1] = 0
+    neighbor_count = ndimage.convolve(skel.astype(int), kernel, mode="constant", cval=0)
+
+    inner = ndimage.binary_erosion(mask, structure=np.ones((3, 3), dtype=bool), iterations=margin)
+    region = skel & inner
+
+    n_terminals = int(np.sum(region & (neighbor_count == 1)))
+    n_junctions = int(np.sum(region & (neighbor_count >= 3)))
+    n_isolated = int(np.sum(region & (neighbor_count == 0)))
+    skeleton_len = int(np.sum(region))
+    defect_density = (n_terminals + n_junctions) / skeleton_len if skeleton_len > 0 else 0.0
+
+    return {
+        "n_terminals": n_terminals,
+        "n_junctions": n_junctions,
+        "n_isolated": n_isolated,
+        "skeleton_len": skeleton_len,
+        "defect_density": float(defect_density),
+    }
+
+
+def stripe_defects_batch(imgs, mask=MASK, threshold=0.0, margin=2):
+    """Evaluate ``stripe_defects`` over ``(B, 39, 39)`` -> dict of (B,) arrays."""
+    rows = [stripe_defects(im, mask=mask, threshold=threshold, margin=margin) for im in imgs]
+    return {k: np.array([r[k] for r in rows], dtype=np.float64) for k in DEFECT_NAMES}
+
+
 PHYSICAL_METRICS = {
     "magnetization":    magnetization,
     "spin_correlation": spin_correlation,
