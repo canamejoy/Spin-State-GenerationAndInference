@@ -55,15 +55,11 @@ This project addresses both directions with a closed **cycle**:
 │   ├── generative/                    # DDPM / CVAE / NCSN training
 │   ├── cycle/                         # θ → DDPM → Xception → θ̂ evaluation
 │   ├── evaluation/                    # Model comparisons, robustness, sweeps
-│   └── replaced/                      # Frozen archive — superseded runs, do not edit
-│
-├── integration_cycle/                 # Cycle closure (see its README)
-│   ├── 01_ddpm_cosine_frozen_encoder.ipynb
-│   ├── 02_ddpm_cosine_joint_finetune.ipynb
-│   └── 03_latent_guided_sampler.ipynb
+│   ├── integration/                   # Cycle closure — training + evaluation (see its README)
+│   └── archive/                       # Frozen archive — superseded runs, do not edit
 │
 ├── papers/                            # Bibliography + PDFs      (gitignored)
-├── main/                              # LaTeX source of the article (gitignored)
+├── main/                              # LaTeX source of the article
 │
 ├── requirements.txt                   # Python dependencies
 └── README.md
@@ -111,15 +107,15 @@ See [notebooks/generative/ddpm_train.md](notebooks/generative/ddpm_train.md).
 
 Runs the full θ → DDPM → image → Xception → θ̂ pipeline on the internal test split. Evaluates with regression metrics (R², MAE), image metrics (MSE, SSIM, FFT-Corr), three physical observables (M, C_nn, q_peak), and per-magnetic-phase breakdowns.
 
-See [notebooks/cycle/ciclo_completo.md](notebooks/cycle/ciclo_completo.md).
+See [notebooks/archive/ciclo_completo.md](notebooks/archive/ciclo_completo.md).
 
 ### 4. Complete Cycle — External Dataset — `notebooks/cycle/` 🔧
 
 Same pipeline applied to the larger external dataset (218k). Currently under investigation for distribution shift issues.
 
-See [notebooks/cycle/ciclo_external.md](notebooks/cycle/ciclo_external.md).
+See [notebooks/archive/ciclo_external.md](notebooks/archive/ciclo_external.md).
 
-### 5. Integrated Cycle — `integration_cycle/`
+### 5. Integrated Cycle — `notebooks/integration/`
 
 Three ways of closing the loop between the generator and the inverse model, using
 the 256-d Xception latent (the regression head removed) as the meeting point.
@@ -131,7 +127,7 @@ The training loss is `denoise_MSE + λ·(1 − cos(z(x̂₀), z(x₀)))` — no 
 | `02_ddpm_cosine_joint_finetune` | Same, encoder also trains | DDPM + encoder |
 | `03_latent_guided_sampler` | Latent guidance at sampling time | Neither |
 
-See [integration_cycle/README.md](integration_cycle/README.md).
+See [notebooks/integration/README.md](notebooks/integration/README.md).
 
 ---
 

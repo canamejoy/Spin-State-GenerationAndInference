@@ -1,4 +1,7 @@
 import json, ast, builtins, sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
 
 def collect(tree):
     """(definidos_en_la_celda, leidos_en_top_level, leidos_dentro_de_funciones)"""
@@ -18,8 +21,25 @@ def collect(tree):
     walk(tree, False)
     return d, top, infn
 
-for NB in sys.argv[1:]:
-    nb=json.load(open(f'integration_cycle/{NB}.ipynb',encoding='utf-8'))
+def discover(filters):
+    nbs = sorted(p for p in ROOT.rglob('*.ipynb')
+                 if '.ipynb_checkpoints' not in p.parts)
+    if filters:
+        nbs = [p for p in nbs
+               if any(f in p.relative_to(ROOT).as_posix() for f in filters)]
+    return nbs
+
+notebooks = discover(sys.argv[1:])
+if not notebooks:
+    print(f'_nbcheck: FATAL: no notebooks found under {ROOT}'
+          f'{" matching " + repr(sys.argv[1:]) if len(sys.argv) > 1 else ""}',
+          file=sys.stderr)
+    sys.exit(2)
+print(f'_nbcheck: {len(notebooks)} notebook(s) under {ROOT}')
+
+for path in notebooks:
+    label = path.relative_to(ROOT).as_posix()
+    nb = json.loads(path.read_text(encoding='utf-8'))
     cells=[''.join(c['source']) for c in nb['cells'] if c['cell_type']=='code']
     known=set(dir(builtins)); errs=[]; warns=[]
     for ci,src in enumerate(cells):
@@ -40,6 +60,6 @@ for NB in sys.argv[1:]:
                     if 'no_grad' in src_dec and ('score' in node.name or 'vendi' in node.name):
                         warns.append((ci,f'decorador {src_dec} sobre {node.name} (?)'))
         for n in sorted(infn-known): warns.append((ci,n))
-    print(f'{NB[:2]}:')
+    print(f'{label}:')
     print(f'   ERRORES (top-level, nombre inexistente): {sorted(set(n for _,n in errs)) or "ninguno"}')
     print(f'   AVISOS  (en cuerpo de función, definido más tarde): {sorted(set(n for _,n in warns)) or "ninguno"}')

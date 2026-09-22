@@ -1,9 +1,14 @@
 # Integration cycle
 
-Three Kaggle notebooks that integrate the Xception inverse-model's latent space into the
+Eight Kaggle notebooks that integrate the Xception inverse-model's latent space into the
 conditional DDPM, replacing the earlier physical-loss experiment. **No notebook computes a
 physical loss term** — the only new loss ingredient is a cosine-similarity term between
 encoder latents.
+
+- `training/` — three notebooks that produce the three integrated architectures (fine-tune
+  or sampling-time guidance).
+- `evaluation/` — five notebooks that evaluate those architectures, plus the unguided
+  baseline and a cross-encoder sanity check, against the shared Section-3 protocol.
 
 ## Kaggle datasets (attach all four to every notebook)
 
@@ -42,7 +47,9 @@ Both notebooks **warm-start from the published DDPM checkpoint** (`ddpm_spines_f
 and continue training with this loss added — they do not train the diffusion model from
 scratch.
 
-## Notebook 01 — `01_ddpm_cosine_frozen_encoder.ipynb`
+## Training notebooks (`training/`)
+
+### Notebook 01 — `training/01_ddpm_cosine_frozen_encoder.ipynb`
 
 DDPM fine-tunes with the cosine loss above; the encoder is **frozen**
 (`requires_grad_(False)` + `.eval()`) and asserted to have zero trainable parameters.
@@ -58,7 +65,7 @@ below) reports physical-metric R², SSIM, masked MSE, and full-cycle R²/MAE/RMS
 `DDPM+cos` model — compare these against the plain DDPM baseline and against the joint
 fine-tune in notebook 02.
 
-## Notebook 02 — `02_ddpm_cosine_joint_finetune.ipynb`
+### Notebook 02 — `training/02_ddpm_cosine_joint_finetune.ipynb`
 
 Same loss, but the encoder's weights **also** train, with a separate optimizer param group
 (`lr_encoder = 1e-5` vs `lr = 2.26e-4` for the DDPM), the same linear warmup (scaled to its own
@@ -82,7 +89,7 @@ inverse-task R² curve. If R² falls noticeably vs. notebook 01/the published 0.
 0.8430 reference, joint fine-tuning is trading inverse-model accuracy for generative
 fidelity, and that trade should be reported explicitly, not hidden.
 
-## Notebook 03 — `03_latent_guided_sampler.ipynb`
+### Notebook 03 — `training/03_latent_guided_sampler.ipynb`
 
 **No fine-tuning of anything.** DDPM and encoder are both frozen and loaded from their
 published checkpoints, unchanged.
@@ -110,6 +117,22 @@ mode — texture artefacts with a *rising* latent cosine at high scale (the imag
 physical even as it moves closer to `z*`) — is the headline result to look for, not an
 error. The canonical evaluation block at the end runs the full shared protocol at
 `DEFAULT_EVAL_SCALE` for a single representative parity plot and per-phase breakdown.
+
+## Evaluation notebooks (`evaluation/`)
+
+Each notebook loads the published DDPM checkpoint and the Xception encoder, rebuilds the
+same `LatentPredictor` guidance path as `training/03_latent_guided_sampler.ipynb`, and runs
+the shared Section-3 protocol below (`## Comparison of the four architectures` cell) so that
+every row — unguided baseline, frozen-encoder cosine, joint-fine-tune cosine, and latent
+guidance — is evaluated on the same stratified thetas, same seed, same code path.
+
+| Notebook | Architecture evaluated |
+|---|---|
+| `evaluation/01_ddpm_base.ipynb` | Plain DDPM, no integration (`GUIDANCE_SCALE=0` baseline) |
+| `evaluation/02_cos_frozen.ipynb` | `training/01_ddpm_cosine_frozen_encoder.ipynb` output |
+| `evaluation/03_cos_joint.ipynb` | `training/02_ddpm_cosine_joint_finetune.ipynb` output |
+| `evaluation/04_latent_guidance.ipynb` | `training/03_latent_guided_sampler.ipynb` output, guidance-scale sweep |
+| `evaluation/05_cross_encoder_test.ipynb` | Same four-architecture comparison, plus a cross-encoder sanity check: physical parameters are also read back with an independent ViT model (`vit_model.keras`) on the same generated images, and per-parameter `|Pearson r|` is compared between the Xception and ViT readings |
 
 ## Shared evaluation protocol (every notebook)
 

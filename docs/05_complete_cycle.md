@@ -135,13 +135,13 @@ The internal cycle notebook additionally computes metrics broken down by **magne
 | [cycle_complete_newmetrics](../notebooks/cycle/cycle_complete_newmetrics.ipynb) | Internal test split | ✅ Complete |
 | [ciclo_texture_fidelity](../notebooks/cycle/ciclo_texture_fidelity.ipynb) | Internal, texture/saturation split | ✅ Complete |
 
-Superseded runs live in `notebooks/replaced/` and are kept only as an archive —
+Superseded runs live in `notebooks/archive/` and are kept only as an archive —
 they predate the crop-before-mask fix and the three-metric set, so their physical
 numbers are not comparable with current results.
 
 ### Integrated cycle (training-time and sampling-time closure)
 
-See [`integration_cycle/README.md`](../integration_cycle/README.md).
+See [`notebooks/integration/README.md`](../notebooks/integration/README.md).
 
 | Notebook | What it closes | Fine-tunes |
 |---|---|---|

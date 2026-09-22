@@ -118,5 +118,5 @@ The external cycle currently shows lower performance than the internal cycle. Li
 
 - Cycle theory: [docs/05_complete_cycle.md](../../docs/05_complete_cycle.md)
 - Metrics: [docs/07_metrics.md](../../docs/07_metrics.md)
-- Internal cycle: [notebooks/cycle/ciclo_completo.md](ciclo_completo.md)
+- Internal cycle: [notebooks/archive/ciclo_completo.md](ciclo_completo.md)
 - Datasets: [docs/06_datasets.md](../../docs/06_datasets.md)

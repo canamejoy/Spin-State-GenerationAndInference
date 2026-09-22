@@ -149,5 +149,5 @@ See [05_complete_cycle.md](05_complete_cycle.md) for the full cycle evaluation m
 ## Notebooks
 
 - DDPM training: [notebooks/generative/ddpm_train.md](../notebooks/generative/ddpm_train.md)
-- Cycle evaluation (internal): [notebooks/cycle/ciclo_completo.md](../notebooks/cycle/ciclo_completo.md)
-- Cycle evaluation (external): [notebooks/cycle/ciclo_external.md](../notebooks/cycle/ciclo_external.md)
+- Cycle evaluation (internal): [notebooks/archive/ciclo_completo.md](../notebooks/archive/ciclo_completo.md)
+- Cycle evaluation (external): [notebooks/archive/ciclo_external.md](../notebooks/archive/ciclo_external.md)
