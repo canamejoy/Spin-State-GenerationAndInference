@@ -193,6 +193,191 @@ def peak_wave_vector(img, mask=MASK, normalize=False):
 # ─────────────────────────────────────────────────────────────────────────────
 # Topology of the s_z level sets
 # ─────────────────────────────────────────────────────────────────────────────
+# Orientational order and correlation range
+#
+# The three canonical observables answer "how much" (M), "how locally aligned"
+# (C_nn) and "at what scale" (q_peak). They do not answer "with what symmetry"
+# or "over what range". A helical stripe phase, a skyrmion lattice and a
+# labyrinth can share a q_peak and be told apart only by the angular content of
+# S(q), which ``azimuthal_average`` discards.
+# ─────────────────────────────────────────────────────────────────────────────
+ORIENTATION_NAMES = ["psi2", "psi6", "aniso", "theta2"]
+
+
+def _peak_annulus(sq_2d, rel_width=0.25):
+    """
+    Radial coordinates of ``sq_2d`` and a boolean annulus around its peak ring.
+
+    The peak ring is located on the azimuthally averaged profile, so a strongly
+    uniaxial pattern (two Bragg spots) and an isotropic one (a full ring) with
+    the same characteristic wavelength select the same annulus.
+    """
+    h, w = sq_2d.shape
+    cy, cx = h // 2, w // 2
+    Y, X = np.ogrid[:h, :w]
+    r = np.sqrt((Y - cy) ** 2 + (X - cx) ** 2)
+
+    r_bins, sq_avg = azimuthal_average(sq_2d)
+    # azimuthal_average starts at r = 1, so there is no DC bin to skip.
+    if sq_avg.size == 0 or sq_avg.max() <= 0:
+        return r, np.zeros(sq_2d.shape, dtype=bool)
+    r_peak = float(r_bins[int(np.argmax(sq_avg))])
+    half = max(1.0, rel_width * r_peak)
+    return r, (np.abs(r - r_peak) <= half) & (r > 0)
+
+
+def orientational_order(img, mask=MASK, n_sectors=36, rel_width=0.25):
+    """
+    Bond-orientational order parameters of the dominant spatial mode.
+
+    ``S(q)`` is restricted to an annulus around its peak ring and its angular
+    power ``P(phi)`` is accumulated over ``n_sectors`` bins spanning ``[0, pi)``
+    — the half circle, because ``S(q)`` of a real field is centrosymmetric and
+    ``phi`` and ``phi + pi`` are the same axis.
+
+    Returns a dict with:
+
+    ``psi2``   |<e^{2 i phi}>| — uniaxial order. Near 1 for helical stripes and
+               for any single-axis pattern; near 0 for an isotropic ring.
+    ``psi6``   |<e^{6 i phi}>| — six-fold order. **Read it together with**
+               ``psi2``, never alone: angular power concentrated on a single
+               axis gives |psi_n| ~ 1 for EVERY n, so a stripe pattern scores
+               high on psi6 too. A triangular lattice is the case where psi6
+               is high AND psi2 collapses (measured: stripes 0.98/0.91,
+               hexagonal 0.00/0.89).
+    ``aniso``  Angular concentration ``1 - H/H_max`` of ``P(phi)``, where ``H``
+               is its Shannon entropy. Model-free: it does not assume any
+               symmetry. A max/min contrast was tried first and rejected --
+               it saturates at 1.0 for both clean stripes and isotropic
+               noise, because some angular sector is always near-empty.
+    ``theta2`` arg(<e^{2 i phi}>) / 2, in radians on ``[0, pi)`` — the
+               orientation of the uniaxial axis. Meaningless when ``psi2`` is
+               small, and reported regardless so the caller can gate on it.
+
+    These are ORIENTATIONAL ORDER PARAMETERS, not topological charges. The
+    topological charge of a spin texture needs the full three-component field;
+    the ``s_z`` projection cannot supply it (see section 4.1 of docs/07_metrics.md).
+    What links them to topology is KTHNY theory, where the orientational
+    correlation length is set by the density of disclinations.
+    """
+    _check_physical_shape(img)
+    sq = structure_factor(img, mask=mask, subtract_mean=True)
+    r, ring = _peak_annulus(sq, rel_width=rel_width)
+
+    h, w = sq.shape
+    cy, cx = h // 2, w // 2
+    Y, X = np.mgrid[:h, :w]
+    phi = np.arctan2(Y - cy, X - cx) % np.pi          # half circle
+
+    weights = sq[ring]
+    angles = phi[ring]
+    # S(q) is a power spectrum and is non-negative up to rounding; clamp so a
+    # tiny negative value cannot flip the sign of a sector's weight.
+    weights = np.clip(weights, 0.0, None)
+    total = weights.sum()
+    if total <= 0:
+        return {"psi2": 0.0, "psi6": 0.0, "aniso": 0.0, "theta2": 0.0}
+
+    z2 = np.sum(weights * np.exp(2j * angles)) / total
+    z6 = np.sum(weights * np.exp(6j * angles)) / total
+
+    idx = np.minimum((angles / np.pi * n_sectors).astype(int), n_sectors - 1)
+    power = np.bincount(idx, weights=weights, minlength=n_sectors)
+    counts = np.bincount(idx, minlength=n_sectors)
+    occupied = counts > 0
+    if occupied.sum() < 2:
+        aniso = 0.0
+    else:
+        dens = power[occupied] / counts[occupied]
+        tot = dens.sum()
+        if tot <= 0:
+            aniso = 0.0
+        else:
+            pk = dens / tot
+            nz = pk[pk > 0]
+            entropy = -np.sum(nz * np.log(nz))
+            aniso = float(1.0 - entropy / np.log(occupied.sum()))
+
+    # theta2 lives on the half-open interval [0, pi). A bare modulo is not
+    # enough: np.angle returns a tiny negative value for a real-positive z2,
+    # and (-1e-16) % (2*pi) rounds up to exactly 2*pi, putting theta2 on pi.
+    theta2 = (np.angle(z2) % (2.0 * np.pi)) / 2.0
+    if not (theta2 < np.pi):
+        theta2 = 0.0
+
+    return {
+        "psi2": float(np.abs(z2)),
+        "psi6": float(np.abs(z6)),
+        "aniso": float(aniso),
+        "theta2": float(theta2),
+    }
+
+
+def orientational_batch(imgs, mask=MASK, n_sectors=36, rel_width=0.25):
+    """``orientational_order`` over a stack, as an (N, 4) array."""
+    out = [orientational_order(im, mask=mask, n_sectors=n_sectors,
+                               rel_width=rel_width) for im in imgs]
+    return np.array([[d[k] for k in ORIENTATION_NAMES] for d in out])
+
+
+def correlation_length(img, mask=MASK, threshold=1.0 / np.e):
+    """
+    Range over which the ``s_z`` texture stays correlated, in pixels.
+
+    The masked, mean-subtracted field is autocorrelated through the
+    Wiener-Khinchin theorem, then divided by the autocorrelation of the mask
+    itself. That division is what makes the estimate honest: without it the
+    finite disk aperture alone would make ``C(r)`` decay even for a perfectly
+    uniform texture.
+
+    ``xi`` is the first radius where the azimuthally averaged ``C(r)`` crosses
+    ``threshold`` (default ``1/e``), linearly interpolated between bins. A
+    texture that never decays that far returns the largest measurable radius —
+    a censored value, not a failure, so callers comparing distributions should
+    know the scale is bounded by the disk.
+
+    ``q_peak`` says WHICH length scale dominates; this says HOW FAR that order
+    actually survives. A clean stripe pattern and a glassy one can share a
+    ``q_peak`` and differ here.
+    """
+    _check_physical_shape(img)
+    field = np.where(mask, img - img[mask].mean(), 0.0)
+
+    f = np.abs(fft2(field)) ** 2
+    ac = np.real(fftshift(np.fft.ifft2(f)))
+    m = np.abs(fft2(mask.astype(float))) ** 2
+    norm = np.real(fftshift(np.fft.ifft2(m)))
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        c2d = np.where(norm > 1e-9, ac / np.maximum(norm, 1e-9), 0.0)
+
+    h, w = c2d.shape
+    c0 = c2d[h // 2, w // 2]
+    if not np.isfinite(c0) or c0 <= 0:
+        return 0.0
+
+    r_bins, prof = azimuthal_average(c2d)
+    if prof.size == 0:
+        return 0.0
+    # r = 0 is the centre pixel, which azimuthal_average omits; prepend it so
+    # the curve starts at C(0) = 1 and the crossing search has a left edge.
+    radii = np.concatenate(([0.0], r_bins))
+    prof = np.concatenate(([c0], prof)) / c0
+
+    below = np.nonzero(prof < threshold)[0]
+    if below.size == 0:
+        return float(radii[-1])              # censored at the disk scale
+    i = int(below[0])
+    if i == 0:
+        return 0.0
+    hi, lo = prof[i - 1], prof[i]
+    if hi == lo:
+        return float(radii[i])
+    frac = (hi - threshold) / (hi - lo)
+    return float(radii[i - 1] + frac * (radii[i] - radii[i - 1]))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 def topological_descriptors(img, mask=MASK, threshold=0.25):
     """
     Counts and Euler characteristic of the s_z level sets inside the disk.
