@@ -90,3 +90,13 @@ main/report/*.pdf
 # Kaggle API tokens — NUNCA versionar
 .json/
 *.json:Zone.Identifier
+
+# CodeGraph runtime state (machine-local, changes every session)
+.codegraph/daemon.pid
+
+# pytest cache
+.pytest_cache/
+
+# LaTeX byproducts in figure subdirectories
+main/figures/*.log
+main/figures/*.aux

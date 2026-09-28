@@ -1,0 +1,57 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Research repository (physics + ML paper), not a software product.
+  Stack: Python + Jupyter notebooks, PyTorch/TensorFlow, run on Kaggle/Colab GPUs.
+  Single importable module: notebooks/utils/metrics.py (~620 lines).
+  Rest of the codebase is 32 tracked .ipynb notebooks.
+  Tests: tests/conftest.py + tests/test_topology.py (14 tests), untracked in git.
+  No pyproject.toml/setup.py; dependencies pinned only in requirements.txt.
+
+strict_tdd: true  # explicit marker from user global config; local runner verified working 2026-09-21
+
+testing:
+  test_command: ".venv/bin/python -m pytest tests/ -q"
+  test_runner_available: true
+  test_runner_blocker: ""  # resolved 2026-09-21: repo-local .venv created with numpy 2.5.3, scipy 1.18.1, scikit-image 0.26.0, pytest 9.1.1; 14/14 tests pass. torch/tensorflow are NOT installed locally and are not needed by the test suite — notebooks run on Kaggle.
+  projects:
+    - path: "."
+      stack: "Python (unpackaged, requirements.txt-pinned)"
+      test_command: ".venv/bin/python -m pytest tests/ -q"
+      framework: "pytest"
+      unit_tests: true
+      integration_tests: false
+      e2e_tests: false
+      coverage_command: ""
+      linter: ""
+      type_checker: ""
+      formatter: ""
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Flag any change that touches notebooks/utils/metrics.py physical-metric definitions as high-risk (affects every downstream figure/table)
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Document architecture decisions with rationale
+    - Call out numerical/physical assumptions explicitly (units, masking radius, normalization)
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - A task that requires running tests uses the repo-local .venv (see testing.test_command). Anything needing torch, tensorflow or a GPU cannot run locally and must be verified on Kaggle; say so explicitly rather than claiming a local pass.
+  apply:
+    guidelines:
+      - Follow existing code patterns in notebooks/utils/metrics.py
+      - Do not modify notebook outputs/cell IDs unnecessarily; prefer editing notebooks/utils/*.py helpers over inline notebook code when logic is reusable
+    tdd: true
+    test_command: ".venv/bin/python -m pytest tests/ -q"
+  verify:
+    test_command: ".venv/bin/python -m pytest tests/ -q"
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
+    - main/ (LaTeX article) and papers/ are gitignored; never assume archived changes touch them

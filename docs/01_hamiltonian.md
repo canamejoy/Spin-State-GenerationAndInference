@@ -91,16 +91,28 @@ The cubic anisotropy form $s^2_{i\hat{x}}s^2_{i\hat{y}} + s^2_{i\hat{y}}s^2_{i\h
 
 ## Free Parameter Sampling Ranges
 
-| Parameter | Physical Role | Min | Max |
-|---|---|---|---|
-| $T^{(0)}$ [K] | Annealing temperature | 0.2 | 20.0 |
-| $\tilde{J}_2$ [meV] | 2nd-shell exchange | −0.66 | 0.66 |
-| $\tilde{J}_3$ [meV] | 3rd-shell exchange | −0.29 | 0.29 |
-| $\tilde{J}_4$ [meV] | 4th-shell exchange | −0.23 | 0.23 |
-| $\tilde{K}_{an1}$ [meV/atom] | Bulk anisotropy | 0.0 | 0.2 |
-| $\tilde{K}_{anS}$ [meV/atom] | Surface anisotropy | 0.0 | 0.2 |
-| $\tilde{H}_{ex}$ [meV/atom] | External Zeeman field | 0.0 | 0.05 |
-| $\tilde{K}_{DM}$ [meV] | DMI strength | 0.0 | 1.2 |
+| Parameter | Physical Role | Min | Max | Median |
+|---|---|---|---|---|
+| $T^{(0)}$ [K] | Annealing temperature | 0.000 | 20.000 | 3.400 |
+| $\tilde{J}_2$ [meV] | 2nd-shell exchange | -0.286 | 0.659 | 0.000 |
+| $\tilde{J}_3$ [meV] | 3rd-shell exchange | -0.290 | 0.290 | 0.000 |
+| $\tilde{J}_4$ [meV] | 4th-shell exchange | -0.234 | 0.235 | 0.000 |
+| $\tilde{K}_{an1}$ [meV/atom] | Bulk anisotropy | 0.000 | 0.600 | 0.082 |
+| $\tilde{K}_{anS}$ [meV/atom] | Surface anisotropy | 0.000 | 0.200 | 0.070 |
+| $\tilde{H}_{ex}$ [meV/atom] | External Zeeman field | 0.000 | 1.199 | 0.022 |
+| $\tilde{K}_{DM}$ [meV] | DMI strength | 0.000 | 1.200 | 0.665 |
+
+> **Measured, not specified.** These are the actual minimum, maximum and median
+> of each column of `params` in `dataset_unificado_v2.npz` (169,671 samples),
+> read off the released dataset rather than copied from the generation script.
+> An earlier version of this table quoted a nominal sampling design in which
+> $\tilde{H}_{ex}$ reached only 0.05 and $\tilde{K}_{an1}$ only 0.2. Both are
+> wrong by a wide margin -- the field reaches 1.199 and the bulk anisotropy
+> 0.600 -- and the error is not cosmetic: a parameter search bounded by the old
+> table cannot reach the skyrmion phase at all, because the field never becomes
+> strong enough to collapse stripe domains into isolated skyrmions. Note also
+> that $\tilde{J}_2$ is sampled asymmetrically ($-0.286$ to $+0.659$), not over
+> the symmetric interval the old table implied.
 
 $\tilde{J}_1 = 1.0$ meV is **fixed** as the energy reference unit.
 
