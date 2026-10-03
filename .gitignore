@@ -100,3 +100,7 @@ main/report/*.pdf
 # LaTeX byproducts in figure subdirectories
 main/figures/*.log
 main/figures/*.aux
+
+# Excel/LibreOffice lock files
+~$*
+.~lock.*

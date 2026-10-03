@@ -8,10 +8,13 @@ involved and they are easy to confuse:
 | `Spin-State-GenerationAndInference` | generative models, the inverse model, the cycle, and all image-space metrics |
 | `Diffusion-Accelerated-MCMC` | the `damcmc` Monte Carlo simulator and the device-scaling benchmark |
 
-`01_baseline_simulation.ipynb` at the root of this repository is a copy
-downloaded from Windows. It imports `src/damcmc`, which exists only in the other
-repository, so it cannot run here; the maintained version is
-`notebooks/01_baseline_benchmark.ipynb` over there.
+That copy of the baseline notebook which used to sit at this repository's root
+was byte-identical to `notebooks/01_baseline_benchmark.ipynb` in the other
+repository and imported `src/damcmc`, which does not exist here. It has been
+deleted; the maintained version is the one over there.
+
+The planned work is transcribed in [09_test_plan.md](09_test_plan.md), with each
+item marked against what has actually been run.
 
 ---
 
