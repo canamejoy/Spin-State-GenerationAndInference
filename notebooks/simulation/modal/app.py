@@ -1593,6 +1593,38 @@ def param_form(batch: int = 100, repeats: int = 3, n_temps: int = 40,
 # enough to leave the shape of the curve intact and the only reason this is
 # affordable at eleven points.
 
+def device_identity():
+    """Which physical GPU this container got, as far as it can be established.
+
+    Modal does not pin a run to a specific device: `gpu="H100"` yields *an*
+    H100, and a later container may land on another host. That is fine for the
+    shape of a curve, since one container measures every batch size on the same
+    device, but it is exactly the thing a reader should be able to check rather
+    than take on trust -- so record it. `str(jax.devices()[0])` returns only
+    "cuda:0" and was not enough.
+
+    nvidia-smi may be unavailable under the sandbox, so its absence is recorded
+    rather than raised.
+    """
+    import subprocess
+    import jax
+    d = jax.devices()[0]
+    out = dict(repr=str(d), kind=getattr(d, "device_kind", "?"),
+               platform=getattr(d, "platform", "?"),
+               n_devices=jax.local_device_count())
+    try:
+        q = ("name,uuid,memory.total,clocks.max.sm,driver_version,"
+             "pcie.link.gen.max")
+        r = subprocess.run(["nvidia-smi", f"--query-gpu={q}",
+                            "--format=csv,noheader"],
+                           capture_output=True, text=True, timeout=20)
+        out["smi"] = (r.stdout.strip().splitlines() if r.returncode == 0
+                      else f"exit {r.returncode}")
+    except Exception as e:
+        out["smi"] = f"unavailable: {type(e).__name__}"
+    return out
+
+
 F_GRID = [10, 16, 25, 32, 40, 50, 64, 75, 80, 100, 128]
 
 
@@ -1611,6 +1643,7 @@ def _fcurve(batches, repeats, n_temps, n_therm, n_meas, tag,
     sweeps = int(n_temps) * (n_therm + n_meas)
     theta = PA.load_thetas("/root/theta4.json")[0]     # the ladders' own theta
     n_active = int(np.asarray(geo["disco"]).sum())
+    print(f"gpu={device_identity()}", flush=True)
     print(f"device={jax.devices()[0]}  columns form  Rd={Rd} L={L} "
           f"N={geo['N']} n_active={n_active}  {sweeps} sweeps/cell  "
           f"B grid {batches}", flush=True)
@@ -1648,7 +1681,7 @@ def _fcurve(batches, repeats, n_temps, n_therm, n_meas, tag,
     res = dict(rows=rows, form="columns", sweeps=sweeps, n_temps=int(n_temps),
                n_therm=n_therm, n_meas=n_meas, theta=theta, Rd=float(Rd),
                L=int(L), N=int(geo["N"]), n_active=n_active,
-               device=str(jax.devices()[0]), aot_compiled=True)
+               device=device_identity(), aot_compiled=True)
     with open(f"/out/{tag}.json", "w") as f:
         json.dump(res, f, indent=1)
     vol.commit()
