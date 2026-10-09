@@ -1,0 +1,577 @@
+<title>Réplicas contra barridos</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; charts and the s_z strip span its full width. */
+:root{
+  --bg:#f7f5f2; --surface:#fffefc; --ink:#1c1a17; --muted:#6b645b; --rule:#e2ddd5;
+  --armA:#b8651b; --armB:#1a7a6a; --warn:#c0392b; --dead:#9a9289;
+  --display:"Spectral",Georgia,serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#16161a; --surface:#1f1f24; --ink:#eceae6; --muted:#9d968c; --rule:#34343c;
+  --armA:#dc9346; --armB:#39b8a2; --warn:#e8604f; --dead:#6a6560; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#16161a; --surface:#1f1f24; --ink:#eceae6; --muted:#9d968c; --rule:#34343c;
+  --armA:#dc9346; --armB:#39b8a2; --warn:#e8604f; --dead:#6a6560; color-scheme:dark;}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);
+     font-size:16px;line-height:1.6;margin:0}
+.wrap{max-width:980px;margin:0 auto;padding-inline:20px;padding-block:48px 72px}
+h1{font-family:var(--display);font-size:clamp(2rem,5vw,3rem);line-height:1.1;
+   margin:0 0 .4em;text-wrap:balance;font-weight:600}
+h2{font-family:var(--display);font-size:clamp(1.3rem,3vw,1.75rem);line-height:1.2;
+   margin:2.6em 0 .5em;text-wrap:balance;font-weight:600}
+h3{font-size:1.02rem;margin:1.8em 0 .4em;font-weight:600}
+p{margin:0 0 1em;max-width:66ch}
+.lede{font-size:1.12rem;color:var(--muted);max-width:60ch}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.12em;
+         text-transform:uppercase;color:var(--armB);margin:0 0 .6em}
+code,.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.n{font-weight:500}
+hr{border:0;border-top:1px solid var(--rule);margin:3rem 0}
+.note{border-left:3px solid var(--armB);padding:.1rem 0 .1rem 1rem;margin:1.5em 0;
+      color:var(--muted);max-width:62ch}
+.note strong{color:var(--ink)}
+.note.warn{border-left-color:var(--warn)}
+
+.arms{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+      gap:14px;margin:1.6em 0}
+.arm{border:1px solid var(--rule);border-radius:10px;padding:16px;
+     background:var(--surface);min-width:0;border-top:3px solid var(--rule)}
+.arm.a{border-top-color:var(--armA)} .arm.b{border-top-color:var(--armB)}
+.arm h4{margin:0 0 .3em;font-size:1.05rem;font-family:var(--mono);font-weight:500}
+.arm.a h4{color:var(--armA)} .arm.b h4{color:var(--armB)}
+.arm dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:10px 0 0;
+        font-size:.88rem}
+.arm dt{color:var(--muted)} .arm dd{margin:0;font-family:var(--mono);text-align:right}
+
+.chart{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+       padding:16px;margin:1.4em 0}
+.chart canvas{width:100%;height:auto;display:block;max-width:100%}
+.cap{font-size:.84rem;color:var(--muted);margin:10px 0 0}
+.leg{display:flex;flex-wrap:wrap;gap:16px;font-size:.84rem;margin-bottom:10px}
+.leg i{display:inline-block;width:18px;height:3px;border-radius:2px;
+       margin-right:6px;vertical-align:3px}
+
+.seg{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px}
+.seg button{font-family:var(--body);font-size:.86rem;padding:7px 12px;cursor:pointer;
+            background:transparent;color:var(--ink);border:1px solid var(--rule);
+            border-radius:6px}
+.seg button:hover{border-color:var(--armB)}
+.seg button[aria-pressed="true"]{background:var(--armB);border-color:var(--armB);color:#fff}
+.seg button:focus-visible{outline:2px solid var(--armB);outline-offset:2px}
+
+.strip{display:grid;gap:10px;margin:1.2em 0}
+.strip .row{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;
+            -webkit-overflow-scrolling:touch}
+.frame{flex:0 0 auto;text-align:center;min-width:0}
+.frame img{width:104px;height:104px;display:block;border-radius:5px;
+           border:1px solid var(--rule);image-rendering:pixelated}
+.frame span{display:block;font-family:var(--mono);font-size:.7rem;
+            color:var(--muted);margin-top:4px}
+.rowlab{font-family:var(--mono);font-size:.74rem;letter-spacing:.06em;
+        text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.scale{display:flex;align-items:center;gap:10px;font-family:var(--mono);
+       font-size:.74rem;color:var(--muted);margin-top:4px;flex-wrap:wrap}
+.scale .bar{width:180px;height:11px;border-radius:3px;border:1px solid var(--rule);
+  background:linear-gradient(90deg,#00007f,#0000ff,#0080ff,#7cff79,#ff9400,#ff0000,#7f0000)}
+
+table{border-collapse:collapse;width:100%;font-size:.9rem;margin:1em 0}
+th,td{text-align:right;padding:7px 9px;border-bottom:1px solid var(--rule)}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--mono);font-size:.7rem;letter-spacing:.07em;
+   text-transform:uppercase;color:var(--muted);font-weight:500}
+td.n{font-variant-numeric:tabular-nums}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.bad{color:var(--warn);font-weight:600}
+.ok{color:var(--armB);font-weight:600}
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">Monte Carlo · nanodiscos magnéticos</p>
+<h1>Réplicas contra barridos</h1>
+<p class="lede">Dos cronogramas con el mismo número de muestras efectivas. Uno
+cuesta 30 % menos y mide mejor la susceptibilidad; el otro determina las medias
+√2 más fino. El motivo tardó cuatro experimentos en aparecer, y estaba en un
+solo estado.</p>
+
+<hr>
+
+<h2>La pregunta</h2>
+<p>El estándar de producción corre <b class="n">100 réplicas</b> por estado con
+<b class="n">10 000</b> barridos de termalización y <b class="n">5 000</b> de
+medición. La alternativa: <b class="n">50 réplicas</b> con
+<b class="n">10 000 + 10 000</b>. Las dos acumulan exactamente
+<b class="n">500 000</b> muestras de medición por estado.</p>
+<p>Pero las muestras dentro de una réplica están correlacionadas y las de
+réplicas distintas no. Así que el mismo conteo no significa la misma
+información, y cuál de los dos gana no se puede razonar: hay que medirlo.</p>
+
+<div class="arms">
+  <div class="arm a"><h4>Brazo A</h4>
+    <p style="margin:0;color:var(--muted);font-size:.9rem">El estándar actual</p>
+    <dl>
+      <dt>réplicas</dt><dd>4 × 100</dd>
+      <dt>cronograma</dt><dd>10k + 5k</dd>
+      <dt>lanzamientos</dt><dd>2 × 200</dd>
+      <dt>muestras</dt><dd>500 000</dd>
+      <dt>reloj</dt><dd>12.13 min</dd>
+      <dt>costo</dt><dd>$3.19</dd>
+      <dt>muestras efectivas</dt><dd>27 473</dd>
+      <dt>error en Q, T=3</dt><dd><b class="ok">8.2 %</b></dd>
+    </dl></div>
+  <div class="arm b"><h4>Brazo B</h4>
+    <p style="margin:0;color:var(--muted);font-size:.9rem">La propuesta</p>
+    <dl>
+      <dt>réplicas</dt><dd>4 × 50</dd>
+      <dt>cronograma</dt><dd>10k + 10k</dd>
+      <dt>lanzamientos</dt><dd>1 × 200</dd>
+      <dt>muestras</dt><dd>500 000</dd>
+      <dt>reloj</dt><dd><b class="ok">8.52 min</b></dd>
+      <dt>costo</dt><dd><b class="ok">$2.24</b></dd>
+      <dt>muestras efectivas</dt><dd>27 473</dd>
+      <dt>error en Q, T=3</dt><dd>11.6 %</dd>
+    </dl></div>
+</div>
+
+<p>Todo lo demás fijo: los mismos cuatro estados, las mismas 200 temperaturas, la
+misma semilla, las mismas cuatro GPUs, el mismo contenedor y
+<b class="n">B = 50</b> réplicas por dispositivo en los dos brazos — para que
+nada de esto sea el efecto del tamaño de lote disfrazado.</p>
+
+<div class="note"><strong>B es 29.6 % más barato, no 33 %.</strong> El trabajo
+baja un tercio, pero el costo por barrido sube <b class="n">5.6 %</b>: los
+barridos de medición también calculan energía, magnetización y carga topológica,
+y en B pasan de ser un tercio a la mitad del total.</div>
+
+<div class="note"><strong>Y las dos corridas entregan lo mismo.</strong> Las
+réplicas existen para la estadística de las métricas, no para cosechar
+configuraciones, así que cada corrida produce un juego de curvas por estado.
+Ese 29.6 % es un ahorro real sobre el mismo producto.</div>
+
+<h2>Qué coincide y qué no</h2>
+<div class="tw"><table>
+  <thead><tr><th>observable</th><th>diferencia máxima</th><th>mediana</th>
+    <th>veredicto</th></tr></thead>
+  <tbody>
+    <tr><td>Energía</td><td class="n">0.02 %</td><td class="n">0.00 %</td><td class="ok">idénticas</td></tr>
+    <tr><td>Magnetización</td><td class="n">0.35 %</td><td class="n">0.06 %</td><td class="ok">idénticas</td></tr>
+    <tr><td>M<sub>z</sub></td><td class="n">0.37 %</td><td class="n">0.07 %</td><td class="ok">idénticas</td></tr>
+    <tr><td>Carga topológica</td><td class="n">2.71 %</td><td class="n">0.84 %</td><td class="ok">compatibles</td></tr>
+    <tr><td>Calor específico C<sub>v</sub></td><td class="n">12.43 %</td><td class="n">0.48 %</td><td class="ok">pico idéntico</td></tr>
+    <tr><td>Susceptibilidad χ</td><td class="n bad">84.83 %</td><td class="n bad">4.34 %</td><td class="bad">pico corrido 0.7 K</td></tr>
+  </tbody>
+</table></div>
+
+<div class="chart">
+  <div class="seg" id="segObs" role="group" aria-label="Observable"></div>
+  <div class="leg">
+    <span><i style="background:var(--armA)"></i>A · 100 réplicas × 15k</span>
+    <span><i style="background:var(--armB)"></i>B · 50 réplicas × 20k</span>
+  </div>
+  <canvas id="plot" width="900" height="420" aria-label="Observable contra temperatura para los dos cronogramas"></canvas>
+  <p class="cap" id="plotcap"></p>
+</div>
+
+<h2>Cuatro experimentos para explicar un corrimiento</h2>
+
+<h3>1 · ¿Es ruido de semilla?</h3>
+<p>Primera sospecha: el pico de χ es ancho y ruidoso, y su posición podría variar
+de corrida a corrida sin que el cronograma tenga nada que ver. Se repitió todo
+con otra semilla.</p>
+<div class="tw"><table>
+  <thead><tr><th>comparación</th><th>corrimiento del pico de χ</th></tr></thead>
+  <tbody>
+    <tr><td>A semilla 42 contra A semilla 777 <span style="color:var(--muted)">— mismo cronograma</span></td><td class="n">0.10 K</td></tr>
+    <tr><td>B semilla 42 contra B semilla 777 <span style="color:var(--muted)">— mismo cronograma</span></td><td class="n">0.30 K</td></tr>
+    <tr class="bad"><td>A contra B, semilla 42 <span style="color:var(--muted)">— distinto cronograma</span></td><td class="n">0.70 K</td></tr>
+    <tr class="bad"><td>A contra B, semilla 777 <span style="color:var(--muted)">— distinto cronograma</span></td><td class="n">0.50 K</td></tr>
+  </tbody>
+</table></div>
+<p>El efecto del cronograma es de dos a siete veces el ruido de semilla.
+<b>No es ruido.</b> Y el pico de C<sub>v</sub> se queda en 14.30–14.40 K en las
+cuatro corridas.</p>
+
+<h3>2 · ¿Es el tiempo de autocorrelación?</h3>
+<p>Si 5 000 barridos no alcanzan a recorrer la función de correlación, el brazo A
+subestimaría la varianza. Se midió τ, el tiempo de autocorrelación integrado, con
+ventana automática de Madras–Sokal, descendiendo desde 20 K como lo hace una
+corrida real.</p>
+<p>Para el estado <code>uniform</code>, τ en el pico de χ es
+<b class="n">9.1</b> barridos: la ventana de 5 000 da <b class="n">549</b>
+muestras independientes. Amplísima. <b>Hipótesis descartada</b> — o eso parecía.</p>
+
+<h3>3 · τ no es una propiedad de la temperatura</h3>
+<p>El error fue medir τ en un solo estado, y resultó ser el más rápido de los
+cuatro por un factor de cincuenta.</p>
+
+<div class="chart">
+  <canvas id="tauplot" width="900" height="380" aria-label="Tiempo de autocorrelación por estado y temperatura"></canvas>
+  <p class="cap">τ<sub>M</sub> contra temperatura, mediana sobre 50 réplicas,
+  escala logarítmica. Las líneas punteadas marcan dónde la ventana de medición de
+  cada brazo da 20 muestras independientes — por debajo de ellas, la varianza
+  deja de ser estimable.</p>
+</div>
+
+<div class="tw"><table>
+  <thead><tr><th>T</th><th>uniform</th><th>helical</th><th>points</th><th>lines</th></tr></thead>
+  <tbody>
+    <tr><td class="n">20.00</td><td class="n">5.6</td><td class="n">7.6</td><td class="n">7.5</td><td class="n">7.1</td></tr>
+    <tr><td class="n">14.20</td><td class="n">7.8</td><td class="n">39.5</td><td class="n">32.3</td><td class="n">74.0</td></tr>
+    <tr><td class="n">12.70</td><td class="n">9.1</td><td class="n">97.6</td><td class="n">45.2</td><td class="n bad">209.3</td></tr>
+    <tr><td class="n">11.00</td><td class="n">10.7</td><td class="n">86.7</td><td class="n">51.5</td><td class="n bad">481.7</td></tr>
+    <tr><td class="n">3.00</td><td class="n">63.5</td><td class="n">202.3</td><td class="n">231.3</td><td class="n bad">577.4</td></tr>
+    <tr><td class="n">0.50</td><td class="n bad">384.2</td><td class="n bad">684.2</td><td class="n bad">835.5</td><td class="n bad">1001.1</td></tr>
+  </tbody>
+</table></div>
+
+<p>Para <code>lines</code> en T = 11.0, la ventana de 5 000 barridos da
+<b class="n">10</b> muestras independientes. Diez.</p>
+
+<h3>4 · El número cuadra</h3>
+<p>Una varianza muestral sobre una serie correlacionada de longitud
+<em>n</em> está sesgada hacia abajo en aproximadamente
+<code>2τ/n</code>. Con los τ medidos:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>estado</th><th>T</th><th>τ<sub>M</sub></th>
+    <th>sesgo con 5k</th><th>sesgo con 10k</th><th>diferencia</th></tr></thead>
+  <tbody>
+    <tr class="bad"><td>lines</td><td class="n">11.0</td><td class="n">481.7</td>
+        <td class="n">19.3 %</td><td class="n">9.6 %</td><td class="n">11.9 %</td></tr>
+    <tr><td>lines</td><td class="n">12.7</td><td class="n">209.3</td>
+        <td class="n">8.4 %</td><td class="n">4.2 %</td><td class="n">4.6 %</td></tr>
+    <tr><td>helical</td><td class="n">12.7</td><td class="n">97.6</td>
+        <td class="n">3.9 %</td><td class="n">2.0 %</td><td class="n">2.0 %</td></tr>
+    <tr><td>uniform</td><td class="n">12.7</td><td class="n">9.1</td>
+        <td class="n">0.4 %</td><td class="n">0.2 %</td><td class="n">0.2 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>La altura del pico de χ difiere en <b class="n">8.75 %</b> entre los dos
+brazos, que cae justo en ese rango.</p>
+
+<div class="note"><strong>Conclusión, y es la contraria a la que parecía.</strong>
+El brazo B no degrada χ: <b>la mide mejor</b>. El brazo A la subestima
+sistemáticamente donde τ es largo, y eso corre el pico. El cronograma propuesto
+es 29.6 % más barato <em>y</em> más correcto.</div>
+
+<div class="note warn"><strong>Y es un defecto del estándar actual.</strong> La
+ventana de 5 000 barridos submuestrea χ para el estado <code>lines</code> en toda
+la región de transición, no solo en la comparación. Eso vale para cualquier
+corrida hecha con el cronograma de hoy.</div>
+
+<h2>Las barras de error</h2>
+<p>Partir las réplicas a la mitad tiene un precio, y es exactamente el que dice
+la teoría. La dispersión <em>entre</em> réplicas mide variación física y su valor
+esperado no depende de cuántas réplicas la midan; lo que empeora es el error
+sobre la media, <code>sd/√N</code>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>dispersión B/A</th><th>error sobre la media B/A</th></tr></thead>
+  <tbody>
+    <tr><td>Energía</td><td class="n">1.000</td><td class="n">1.414</td></tr>
+    <tr><td>Magnetización</td><td class="n">1.000</td><td class="n">1.415</td></tr>
+    <tr><td>Carga topológica</td><td class="n">0.995</td><td class="n">1.407</td></tr>
+  </tbody>
+</table></div>
+<p>√2 = 1.414. Clavado en las tres.</p>
+
+<h2>Cómo se forma la textura</h2>
+<p>Mapas de <code>s_z</code> de la capa media, réplica 0, a lo largo del
+descenso. Mismos estados, mismas temperaturas, los dos cronogramas.</p>
+
+<div class="seg" id="segArm" role="group" aria-label="Brazo"></div>
+<div class="strip" id="strip"></div>
+<div class="scale">
+  <span>s<sub>z</sub> = −1</span><span class="bar"></span><span>+1</span>
+  <span style="margin-left:auto">jet, escala fija en [−1, 1]; el verde de
+  afuera es s<sub>z</sub> = 0, fuera del nanodisco</span>
+</div>
+
+<p>La escala está <b>fijada</b>, nunca autoescalada por imagen:
+<code>s_z</code> es un coseno director y no puede salir de [−1, 1], así que el
+mismo color significa el mismo valor en todos los fotogramas. Es la única forma
+de que la secuencia muestre una textura formándose en vez de una perilla de
+contraste girando.</p>
+
+<div class="note">Los dos cronogramas llegan a las mismas fases. Las posiciones
+concretas de los skyrmiones difieren — son realizaciones distintas de la misma
+distribución — pero el tipo de textura, su escala y el orden en que aparecen al
+bajar la temperatura son los mismos.</div>
+
+<h2>Veredicto</h2>
+<p>La ventana el doble de larga <b>compensa exactamente</b> las réplicas a la
+mitad: el conteo de muestras efectivas —réplicas × ventana / 2τ— sale idéntico
+punto por punto. Por eso el ruido estadístico de χ es el mismo en los dos brazos
+(1.69 % contra 1.51 % del pico) y lo que los separa es otra cosa.</p>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>A · 15k × 100</th><th>B · 20k × 50</th><th>B vs A</th></tr></thead>
+  <tbody>
+    <tr><td>reloj por corrida</td><td class="n">12.13 min</td><td class="n ok">8.52 min</td><td class="n ok">−29.8 %</td></tr>
+    <tr><td>costo por corrida</td><td class="n">$3.19</td><td class="n ok">$2.24</td><td class="n ok">−29.8 %</td></tr>
+    <tr><td><b>muestras efectivas</b> <span style="color:var(--muted)">(repl. × ventana / 2τ)</span></td>
+        <td class="n">27 473</td><td class="n">27 473</td><td class="n ok">idénticas</td></tr>
+    <tr><td>ruido estadístico de χ</td><td class="n">1.69 %</td><td class="n">1.51 %</td><td class="n ok">igual</td></tr>
+    <tr><td>error sobre la media (E, M, Q)</td><td class="n ok">1.000×</td><td class="n bad">1.414×</td><td class="n bad">+41.4 %</td></tr>
+    <tr><td>sesgo de χ en <code>lines</code>, T = 11</td><td class="n bad">19.3 %</td><td class="n ok">9.6 %</td><td class="n ok">−50 %</td></tr>
+    <tr><td>pico de C<sub>v</sub></td><td class="n">14.2 K</td><td class="n">14.2 K</td><td class="n">idéntico</td></tr>
+  </tbody>
+</table></div>
+
+<p><b>Para C<sub>v</sub> y χ, que marcan la transición, gana B sin
+discusión.</b> Mismo ruido estadístico, la mitad del sesgo, y 30 % más barato. El
+sesgo pesa unas cinco veces más que el ruido: 8.75 % del pico contra 1.6 %.</p>
+
+<p><b>Para las medias, A las determina √2 mejor</b>, y cuánto importa depende de
+la observable:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>observable</th><th>T</th><th>error A</th><th>error B</th></tr></thead>
+  <tbody>
+    <tr><td>Energía</td><td class="n">14.2</td><td class="n">0.89 %</td><td class="n">1.26 %</td></tr>
+    <tr><td>Magnetización</td><td class="n">14.2</td><td class="n">3.91 %</td><td class="n">5.54 %</td></tr>
+    <tr><td>Carga topológica</td><td class="n">14.2</td><td class="n">4.86 %</td><td class="n">6.90 %</td></tr>
+    <tr class="bad"><td>Carga topológica</td><td class="n">3.0</td><td class="n">8.23 %</td><td class="n">11.57 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>En energía la diferencia es irrelevante. En carga topológica a baja
+temperatura el error pasa de 8.2 % a 11.6 %, y esa sí es una cifra que iría a un
+paper.</p>
+
+<div class="note warn"><strong>Por qué la ventana no compensa ahí.</strong> La
+dispersión entre réplicas <em>no se encoge</em> con la ventana más larga: la
+razón B/A es <b class="n">1.000</b> exacta en E y M. Si fuera ruido estadístico
+debería bajar √2. Que no baje significa que es dispersión <b>física</b> —
+réplicas distintas caen en texturas metaestables distintas. Las réplicas no
+miden lo mismo con más precisión: <b>muestrean un paisaje</b>, y para eso el
+número de réplicas no se puede cambiar por ventana.</div>
+
+<div class="note"><strong>Recomendación.</strong> B, 50 réplicas × 20k, para
+todo lo que sea termodinámica: más barato y con χ menos sesgado. A, 100 réplicas
+× 15k, solo si la carga topológica por réplica es un resultado central, porque
+ahí el muestreo del paisaje metaestable no se compensa.</div>
+
+<h2>Qué falta</h2>
+<p>τ se midió en ocho temperaturas por estado con 50 réplicas, y la mediana entre
+réplicas es estable, pero el percentil 90 llega a <b class="n">2 983</b> para
+<code>helical</code> en T = 0.5: a baja temperatura algunas réplicas quedan
+atrapadas y τ deja de estar bien definido. Ahí <b>ninguno de los dos
+cronogramas</b> tiene estadística — 13 y 26 muestras independientes
+respectivamente para <code>uniform</code>, menos para los otros.</p>
+<p>Lo que esto sugiere y no se midió: un cronograma con la ventana de medición
+creciendo al bajar la temperatura, en vez de fija. Con τ ya medido por estado y
+por temperatura, ese perfil se puede calcular en vez de adivinar.</p>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var D=null, OBS="chi", ARM="A";
+  var SERIES=[["chi","Susceptibilidad χ"],["Cv","Calor específico Cᵥ"],
+              ["E","Energía por espín"],["M","Magnetización"],
+              ["Q","Carga topológica"]];
+  var TAU={uniform:[[20,5.6],[16,7.1],[14.2,7.8],[12.7,9.1],[11,10.7],[8,17.7],[3,63.5],[0.5,384.2]],
+           helical:[[20,7.6],[16,17.9],[14.2,39.5],[12.7,97.6],[11,86.7],[8,62.1],[3,202.3],[0.5,684.2]],
+           points: [[20,7.5],[16,19.3],[14.2,32.3],[12.7,45.2],[11,51.5],[8,67.4],[3,231.3],[0.5,835.5]],
+           lines:  [[20,7.1],[16,29.2],[14.2,74.0],[12.7,209.3],[11,481.7],[8,243.7],[3,577.4],[0.5,1001.1]]};
+  var TCOL={uniform:"#7a4fb5",helical:"#2471a3",points:"#1a7a6a",lines:"#c0392b"};
+
+  function tok(n){return getComputedStyle(document.documentElement)
+    .getPropertyValue(n).trim();}
+
+  function seg(host,vals,label,get,set){
+    host.innerHTML="";
+    vals.forEach(function(v){
+      var b=document.createElement("button");
+      b.textContent=label(v); b.setAttribute("data-v",String(v[0]!==undefined&&v.length===2?v[0]:v));
+      b.setAttribute("aria-pressed",String(get()===b.getAttribute("data-v")));
+      host.appendChild(b);
+    });
+    host.onclick=function(e){
+      var b=e.target.closest("button"); if(!b) return;
+      set(b.getAttribute("data-v"));
+      Array.prototype.forEach.call(host.querySelectorAll("button"),function(x){
+        x.setAttribute("aria-pressed",String(x===b));});
+      draw(); strip();
+    };
+  }
+
+  // ---- the observable chart ------------------------------------------
+  var cv=document.getElementById("plot"), ctx=cv.getContext("2d");
+  var cap=document.getElementById("plotcap");
+  var PAD={l:66,r:14,t:16,b:44};
+
+  function draw(){
+    if(!D) return;
+    var dpr=Math.min(window.devicePixelRatio||1,2);
+    var w=cv.clientWidth||900, h=Math.max(260,Math.min(420,w*0.46));
+    cv.width=w*dpr; cv.height=h*dpr; cv.style.height=h+"px";
+    ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
+    var ink=tok("--ink"),muted=tok("--muted"),rule=tok("--rule"),
+        cA=tok("--armA"),cB=tok("--armB");
+    var T=D.T, a=D.arms.A[OBS], b=D.arms.B[OBS];
+    var all=a.concat(b), lo=Math.min.apply(null,all), hi=Math.max.apply(null,all);
+    var pad=(hi-lo)*0.08||1; lo-=pad; hi+=pad;
+    var tmin=Math.min.apply(null,T), tmax=Math.max.apply(null,T);
+    function X(t){return PAD.l+(t-tmin)/(tmax-tmin)*(w-PAD.l-PAD.r);}
+    function Y(v){return PAD.t+(hi-v)/(hi-lo)*(h-PAD.t-PAD.b);}
+
+    ctx.font="11px "+(tok("--mono")||"monospace");
+    ctx.textAlign="right"; ctx.textBaseline="middle"; ctx.lineWidth=1;
+    for(var i=0;i<=5;i++){
+      var v=lo+(hi-lo)*i/5, y=Y(v);
+      ctx.strokeStyle=rule; ctx.globalAlpha=.7;
+      ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(w-PAD.r,y); ctx.stroke();
+      ctx.globalAlpha=1; ctx.fillStyle=muted;
+      ctx.fillText(Math.abs(v)<0.01?v.toExponential(1):v.toPrecision(3),PAD.l-8,y);
+    }
+    ctx.textAlign="center"; ctx.textBaseline="top";
+    for(var t=0;t<=20;t+=4){
+      if(t<tmin||t>tmax) continue;
+      ctx.fillStyle=muted; ctx.fillText(String(t),X(t),h-PAD.b+8);
+    }
+    ctx.fillText("temperatura (K)",(PAD.l+w-PAD.r)/2,h-PAD.b+26);
+
+    [[a,cA],[b,cB]].forEach(function(p){
+      ctx.strokeStyle=p[1]; ctx.lineWidth=1.8; ctx.globalAlpha=.9;
+      ctx.beginPath();
+      p[0].forEach(function(v,i){
+        var x=X(T[i]), y=Y(v);
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke(); ctx.globalAlpha=1;
+    });
+
+    // Mark each arm's peak where the observable has one worth marking.
+    if(OBS==="chi"||OBS==="Cv"){
+      [[a,cA,"A"],[b,cB,"B"]].forEach(function(p){
+        var m=0; p[0].forEach(function(v,i){if(v>p[0][m])m=i;});
+        ctx.strokeStyle=p[1]; ctx.globalAlpha=.45; ctx.setLineDash([3,4]);
+        ctx.beginPath(); ctx.moveTo(X(T[m]),Y(p[0][m])); ctx.lineTo(X(T[m]),h-PAD.b);
+        ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1;
+        ctx.fillStyle=p[1]; ctx.beginPath();
+        ctx.arc(X(T[m]),Y(p[0][m]),4,0,2*Math.PI); ctx.fill();
+        ctx.textAlign="center"; ctx.textBaseline="bottom";
+        ctx.fillText(p[2]+" "+T[m].toFixed(1)+" K",X(T[m]),Y(p[0][m])-7);
+      });
+    }
+    var name=SERIES.filter(function(s){return s[0]===OBS;})[0][1];
+    cap.textContent = (OBS==="chi")
+      ? name+" contra temperatura. Los picos marcados difieren 0.7 K; el control de semilla dio 0.10 y 0.30 K para el mismo cronograma."
+      : (OBS==="Cv")
+      ? name+" contra temperatura. Los dos picos caen en el mismo punto, 14.2 K."
+      : name+" contra temperatura. Las dos curvas se superponen.";
+  }
+
+  // ---- the tau chart --------------------------------------------------
+  var tc=document.getElementById("tauplot"), tx=tc.getContext("2d");
+  function drawTau(){
+    var dpr=Math.min(window.devicePixelRatio||1,2);
+    var w=tc.clientWidth||900, h=Math.max(250,Math.min(380,w*0.42));
+    tc.width=w*dpr; tc.height=h*dpr; tc.style.height=h+"px";
+    tx.setTransform(dpr,0,0,dpr,0,0); tx.clearRect(0,0,w,h);
+    var muted=tok("--muted"), rule=tok("--rule"), warn=tok("--warn");
+    var P={l:58,r:96,t:16,b:42};
+    var lo=Math.log(4), hi=Math.log(1300);
+    function X(t){return P.l+(20-t)/(20-0.5)*(w-P.l-P.r);}
+    function Y(v){return P.t+(hi-Math.log(v))/(hi-lo)*(h-P.t-P.b);}
+
+    tx.font="11px "+(tok("--mono")||"monospace");
+    tx.textAlign="right"; tx.textBaseline="middle";
+    [10,100,1000].forEach(function(v){
+      var y=Y(v);
+      tx.strokeStyle=rule; tx.globalAlpha=.7;
+      tx.beginPath(); tx.moveTo(P.l,y); tx.lineTo(w-P.r,y); tx.stroke();
+      tx.globalAlpha=1; tx.fillStyle=muted; tx.fillText(String(v),P.l-8,y);
+    });
+    tx.save(); tx.translate(14,(P.t+h-P.b)/2); tx.rotate(-Math.PI/2);
+    tx.textAlign="center"; tx.fillStyle=muted;
+    tx.fillText("τ (barridos)",0,0); tx.restore();
+    tx.textAlign="center"; tx.textBaseline="top";
+    [20,16,12,8,4,0.5].forEach(function(t){
+      tx.fillStyle=muted; tx.fillText(String(t),X(t),h-P.b+8);});
+    tx.fillText("temperatura (K)",(P.l+w-P.r)/2,h-P.b+26);
+
+    // 20 independent samples is the floor below which a variance is not
+    // estimable; each arm reaches it at a different tau.
+    [[250,"A: 5k / 20 muestras"],[500,"B: 10k / 20 muestras"]].forEach(function(g){
+      var y=Y(g[0]);
+      tx.strokeStyle=warn; tx.globalAlpha=.5; tx.setLineDash([4,4]);
+      tx.beginPath(); tx.moveTo(P.l,y); tx.lineTo(w-P.r,y); tx.stroke();
+      tx.setLineDash([]); tx.globalAlpha=1;
+      tx.fillStyle=warn; tx.textAlign="left"; tx.textBaseline="bottom";
+      tx.font="10px "+(tok("--mono")||"monospace");
+      tx.fillText(g[1],P.l+4,y-2);
+      tx.font="11px "+(tok("--mono")||"monospace");
+    });
+
+    Object.keys(TAU).forEach(function(k){
+      var pts=TAU[k];
+      tx.strokeStyle=TCOL[k]; tx.lineWidth=2; tx.beginPath();
+      pts.forEach(function(p,i){
+        var x=X(p[0]), y=Y(p[1]);
+        if(i===0) tx.moveTo(x,y); else tx.lineTo(x,y);
+      });
+      tx.stroke();
+      pts.forEach(function(p){
+        tx.fillStyle=TCOL[k]; tx.beginPath();
+        tx.arc(X(p[0]),Y(p[1]),3,0,2*Math.PI); tx.fill();});
+      var last=pts[pts.length-1];
+      tx.fillStyle=TCOL[k]; tx.textAlign="left"; tx.textBaseline="middle";
+      tx.fillText(k,w-P.r+8,Y(last[1]));
+    });
+  }
+
+  // ---- the s_z strip ---------------------------------------------------
+  function strip(){
+    if(!D) return;
+    var host=document.getElementById("strip");
+    var rows=D.sz.filter(function(r){return r.arm===ARM;});
+    var launches=[];
+    rows.forEach(function(r){if(launches.indexOf(r.launch)<0) launches.push(r.launch);});
+    host.innerHTML="";
+    launches.forEach(function(L){
+      var mine=rows.filter(function(r){return r.launch===L;})
+                   .sort(function(a,b){return b.T-a.T;});
+      var wrap=document.createElement("div");
+      var lab=document.createElement("div"); lab.className="rowlab";
+      lab.textContent=mine[0].states.join(" + ");
+      wrap.appendChild(lab);
+      var row=document.createElement("div"); row.className="row";
+      mine.forEach(function(r){
+        var f=document.createElement("div"); f.className="frame";
+        var im=document.createElement("img");
+        im.src=r.file; im.alt="s_z a "+r.T+" K"; im.loading="lazy";
+        var sp=document.createElement("span"); sp.textContent=r.T.toFixed(2)+" K";
+        f.appendChild(im); f.appendChild(sp); row.appendChild(f);
+      });
+      wrap.appendChild(row); host.appendChild(wrap);
+    });
+  }
+
+  seg(document.getElementById("segObs"),SERIES,function(v){return v[1];},
+      function(){return OBS;},function(v){OBS=v;});
+  seg(document.getElementById("segArm"),
+      [["A","Brazo A · 100 réplicas × 15k"],["B","Brazo B · 50 réplicas × 20k"]],
+      function(v){return v[1];},function(){return ARM;},function(v){ARM=v;});
+
+  drawTau();
+  window.addEventListener("resize",function(){draw();drawTau();});
+  if(window.matchMedia) window.matchMedia("(prefers-color-scheme:dark)")
+    .addEventListener("change",function(){draw();drawTau();});
+
+  fetch("sched.json").then(function(r){return r.json();}).then(function(j){
+    D=j; draw(); strip();
+  }).catch(function(){
+    cap.textContent="No se pudieron cargar los datos de las curvas.";
+  });
+})();
+</script>

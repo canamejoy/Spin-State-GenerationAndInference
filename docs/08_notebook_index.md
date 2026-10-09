@@ -107,6 +107,34 @@ Raw outputs are in `results/kaggle/*.json`.
 Superseded cycle notebooks kept for provenance: `ciclo_completo_resultadosxclusters`,
 `ciclo_external_dataset`, `ciclo_external_fixes`, `diagnostico-ciclo-externo`.
 
+## 6b. Simulation — `notebooks/simulation/`
+
+Derived from notebook `00`, which is the project's reference and is not edited.
+Compute runs on Modal (`notebooks/simulation/modal/`); the notebooks load the
+result JSON from `notebooks/simulation/results/` and present it.
+
+| Notebook | What it does |
+|---|---|
+| `00_benchmark_mc_observables.ipynb` | **The reference, verbatim, do not edit** (md5 `d704a6ec4e8bdc65392a771ef22372c2`). Three modes: CPU site-by-site, 1 GPU `jit`, 2x T4 `pmap`. Fixes the project's conventions -- interfacial DMI on in-plane bonds with `-kDM`, uniform-sphere proposal, checkerboard `(x+y+z) % 2`, bulk/surface anisotropy split. |
+| `01_validation_gpu_vs_prof_dario.ipynb` | Validation against the tutor's released states (`jdarioagudelog/nanodiskrandomkdmhexzkan`) at matched parameters: `\|M\|` 0.8318 vs 0.8302 (0.19%), `\|Q\|` 3.846 vs 3.630, same skyrmion count. Criterion met, so the timing study only has to establish rates. |
+| `02_cpu_rate.ipynb` | Test plan cell `CPU CON DP + CON BP`. The CPU rate and the ladder it implies. Warm steady state **62.4 ± 4.0 ms/sweep** -> the 200-point ladder is **52 ± 3 h**; 1x H100 is **206x** the CPU. Shows that a container's first measurement is biased ~1.6x high, and that unlike the H100 (flat per-replica cost from 25 replicas) the CPU keeps improving to 200. |
+| `04_timing_summary.ipynb` | All twelve arms in one table and one set of bar charts, in every comparable unit: ns per single-spin attempt, ms/sweep, ms per sweep per replica, s per temperature point, **s per finished state**, full ladder, M lattice-updates/s, device-hours per 1,000 states, and time to regenerate the 169,671-state dataset. The GPU ladders are measured wall clock; CPU ladders are extrapolated from a measured per-sweep cost. Key result: **more GPUs buy latency, not cost** — device-hours per 1,000 states is flat at 2.2-2.8 across 1x/2x/4x. On Kaggle: `carloscanamejoy/04-timing-summary` + dataset `carloscanamejoy/nanodisk-timing-results`. |
+| `05_parallel_axes.ipynb` | Where the parallelism should go: replicas, states, or both, on CPU and 1/2/4 H100 at 4 states x 100 replicas. Six cells measured end to end. **Device count is free** (0.9% over 1-4 GPUs at fixed per-device batch); **per-device batch has an optimum near 50 chains** (27% penalty at 25 or 100). Contains a retraction: an earlier 154/301-sigma finding was an artefact of timing the bare update loop instead of a production ladder. On Kaggle: `carloscanamejoy/05-parallel-axes`. |
+| `06_physics_across_runs.ipynb` | The observables those six runs produced: E, M, Mz, Cv, chi, Q against T for each of four states, six panels side by side, plus the middle-layer s_z transition. Energy agrees to **0.07%** across all six parallelisations. On Kaggle: `carloscanamejoy/06-physics-across-runs`. |
+| `03_ablation_dp_bp.ipynb` | Test plan cells 1, 2, 3, 5. The `DP x BP` ablation at production geometry, complete sweeps in every cell. **The checkerboard contributes no speed (0.98x)** -- it is a correctness requirement, and dropping it shifts the Berg-Luscher charge by up to a full unit. Matrix decomposition gives **8.6x**, not the 65x estimated. **An H100 without the decomposition is 302x slower than the CPU.** |
+
+Supporting code in `notebooks/simulation/modal/`: `sim_core.py` (the engine),
+`app.py` (Modal functions `sim_1/sim_2/sim_4`, `cpu_rate`, `ablate`,
+`gpu_sitewise`), `ablation.py` (the four cells), `run_ablation.py` (local runner).
+
+Write-ups: `09_test_plan.md` (the plan, with its superseded estimates marked),
+`10_ablation_and_cpu_rate.md` (the MD x BP measurements),
+`11_parallel_axes.md` (where the parallelism goes, the retraction, the batch
+scan and the costs) and `12_handoff_state.md` (state of the study, what is
+uncommitted, work in flight, open questions).
+
+---
+
 ## 7. Monte Carlo benchmark — the other repository
 
 `Diffusion-Accelerated-MCMC/notebooks/`
@@ -127,7 +155,11 @@ Superseded cycle notebooks kept for provenance: `ciclo_completo_resultadosxclust
 Shared configuration for all four arms: `Rd = 18.30`, 5 layers (39x39), 200
 temperature points from 20.0 K to 0.1 K in 0.1 K steps, 100 replicas,
 10,000 + 5,000 sweeps. Measured cost is 143 ms per sweep, so the CPU arm is
-about 119 h.
+about 119 h. That figure is `damcmc`'s own engine and is **not** the Spin-State
+number: the engine in `notebooks/simulation/modal/sim_core.py` measures 62.4
+ms/sweep warm on a Modal 8-core container (`02_cpu_rate.ipynb`). The two are
+different code on different hardware and should not be quoted
+interchangeably.
 
 ---
 

@@ -1,0 +1,490 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-noquoting]{babel}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
+\sisetup{group-separator={,},group-minimum-digits=4}
+
+\title{Aceleraci\'on y paralelizaci\'on de simulaciones Monte Carlo\\
+       de nanodiscos magn\'eticos}
+\author{Estudio de simulaci\'on --- Parte 1 del plan de pruebas}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Se mide qu\'e aporta cada mecanismo de aceleraci\'on en una simulaci\'on Monte
+Carlo de un nanodisco magn\'etico, y d\'onde conviene poner el paralelismo una
+vez que el algoritmo es correcto. Las dos aceleraciones del m\'etodo ---
+descomposici\'on matricial (MD) y actualizaci\'on bipartita (BP) --- se ablacionan
+por separado sobre CPU y sobre 1, 2 y 4 GPU H100. Se encuentra que BP no es un
+acelerador sino un requisito de correctitud que \emph{cuesta} un factor 2 en la
+implementaci\'on vectorizada, y que MD solo acelera \emph{porque} BP vuelve legal
+la actualizaci\'on simult\'anea: aplicada a una cadena secuencial la empeora 348
+veces. Una GPU sin MD resulta 438 veces m\'as lenta que una CPU. Sobre el eje de
+paralelizaci\'on se comparan tres agrupaciones del mismo trabajo ---sobre
+r\'eplicas, sobre estados, o ambas--- y se establece que el n\'umero de
+dispositivos es gratuito a lote fijo (0.9\,\% entre 1 y 4 GPU) mientras que el
+lote por dispositivo tiene un \'optimo cercano a 50 cadenas con 27\,\% de castigo
+en los extremos. Finalmente se verifica que ninguna de estas decisiones altera la
+f\'isica: seis paralelizaciones distintas concuerdan en la energ\'ia al
+0.07\,\%, aunque produzcan realizaciones espacialmente no correlacionadas.
+\end{abstract}
+
+\tableofcontents
+
+\section{El sistema y el m\'etodo}
+
+\subsection{Hamiltoniano}
+
+Se simula un nanodisco magn\'etico sobre una red c\'ubica simple, con
+$R_d = 18.30$ en unidades de red, $L = 5$ capas y $N = 39$ sitios por lado, lo
+que deja \num{5245} sitios activos dentro del disco. El Hamiltoniano extendido es
+\begin{equation}
+\mathcal{H} = -J_{\mathrm{ex}}\!\!\sum_{\langle ij\rangle}\! \mathbf{S}_i\cdot\mathbf{S}_j
+ \; - \; \mathcal{H}_{\mathrm{DM}} \; + \; \mathcal{H}_{\mathrm{an}}
+ \; - \; H_{\mathrm{ex}}\!\sum_i \left(S_i^x\cos\gamma + S_i^z\sin\gamma\right),
+\end{equation}
+con intercambio a primeros vecinos, interacci\'on Dzyaloshinskii--Moriya
+interfacial, anisotrop\'ia c\'ubica y t\'ermino Zeeman.
+
+\paragraph{DMI interfacial.} El t\'ermino DM act\'ua \textbf{solo sobre los
+enlaces en el plano} ($x$ e $y$) y con signo negativo:
+\begin{equation}
+\mathcal{H}_{\mathrm{DM}} = K_{\mathrm{DM}}\sum_i
+ \Big[ S_i^y S_{i+\hat x}^z - S_i^z S_{i+\hat x}^y
+     + S_i^z S_{i+\hat y}^x - S_i^x S_{i+\hat y}^z \Big].
+\end{equation}
+Esto no es una omisi\'on: en una pel\'icula delgada el vector DM proviene de la
+interfaz y act\'ua sobre enlaces en el plano. Incluir el enlace en $z$
+modelar\'ia DMI de volumen, que es otra clase de material. La diferencia es
+medible y grande: sobre la misma configuraci\'on de espines, usar los tres ejes
+con signo $+$ cambia la energ\'ia total en un \textbf{50\,\%}.
+
+\paragraph{Anisotrop\'ia c\'ubica.} $K_1$ es el coeficiente de primer orden y
+$K_2$ el de segundo, multiplicando combinaciones de los cosenos directores
+$\alpha_i = S_i/S_o$ que definen la direcci\'on del momento:
+\begin{equation}
+E_{\mathrm{an}} = K_1\left(\alpha_1^2\alpha_2^2 + \alpha_1^2\alpha_3^2
+ + \alpha_2^2\alpha_3^2\right) + K_2\,\alpha_1^2\alpha_2^2\alpha_3^2 .
+\end{equation}
+La implementaci\'on usa $K_1/S_o^4$ y $K_2/S_o^6$, que es exactamente lo que
+convierte componentes de esp\'in en cosenos directores; la equivalencia se
+verific\'o num\'ericamente a precisi\'on de m\'aquina. $K_1$ toma el valor de
+superficie $K_{\mathrm{anS}}$ en los sitios con menos de seis vecinos dentro del
+disco.
+
+\subsection{Protocolo}
+
+Recocido simulado desde \SI{20.0}{\kelvin} hasta \SI{0.1}{\kelvin} en
+\textbf{200 puntos de temperatura}, con \num{10000} barridos de termalizaci\'on y
+\num{5000} de medici\'on en cada uno: \num{3000000} barridos por escalera
+completa. Un \textbf{barrido} (equivalentemente, un paso Monte Carlo, MCS) es un
+intento de actualizaci\'on por cada uno de los \num{5245} espines.
+
+\subsection{Una trampa num\'erica: la varianza en \texttt{float32}}
+
+$C_v$ y $\chi$ son varianzas, y acumular $E$ y $E^2$ directamente las destruye en
+precisi\'on simple. A \SI{0.2}{\kelvin} una corrida tiene
+$\langle E\rangle \approx -1.7\times10^4$, de modo que
+$\langle E^2\rangle \approx 2.9\times10^8$, donde un ulp de \texttt{float32} vale
+unos 34 --- mayor que la varianza misma. La diferencia
+$\langle E^2\rangle - \langle E\rangle^2$ sale \textbf{negativa} y $C_v$ marca
+$-437$. La soluci\'on es acumular la fluctuaci\'on respecto de una referencia
+tomada una vez por temperatura: un corrimiento constante deja la varianza
+intacta, as\'i que es exacto.
+
+\section{Las dos aceleraciones}
+
+\subsection{Por qu\'e es necesaria la bipartidad}
+
+Cada esp\'in decide si cambia mirando a sus vecinos. Si dos vecinos deciden
+simult\'aneamente, cada uno observa el valor \emph{viejo} del otro: el cambio de
+energ\'ia conjunto no es la suma de los individuales y la cadena deja de muestrear
+la distribuci\'on de Boltzmann.
+
+La soluci\'on es colorear la red con la paridad $(x+y+z)\bmod 2$. Ning\'un sitio
+par toca a otro par, de modo que \textbf{todos los pares pueden decidir a la vez}
+sin inconsistencia. Un barrido son entonces \textbf{dos pasadas}, una por color,
+y cada esp\'in recibe exactamente una oportunidad: los mismos \num{5245} intentos.
+
+Que esto sea un reordenamiento \emph{exacto} del Metropolis secuencial no se
+asume: se demuestra. Alimentando ambos lazos con propuestas id\'enticas y
+uniformes id\'enticas, el resultado coincide bit a bit; y a lo largo de una
+escalera completa de 200 puntos la energ\'ia por esp\'in del brazo secuencial por
+color coincide con la del tablero vectorizado con desviaci\'on
+\textbf{m\'axima de 0.000\,\%}.
+
+\paragraph{Lo que cuesta.} La bipartidad \textbf{no es gratis}, y la medici\'on
+depende de la implementaci\'on:
+
+\begin{table}[h]\centering
+\begin{tabular}{lrrr}
+\toprule
+implementaci\'on & con BP & sin BP & costo de BP \\
+\midrule
+escalar, sitio por sitio & 12.77 & 13.03 & \textbf{0.98$\times$} \\
+numpy vectorizado        & 156.69 & 66.68 & \textbf{2.35$\times$} \\
+JAX (el n\'ucleo que se usa) & 65.16 & 32.23 & \textbf{2.02$\times$} \\
+\bottomrule
+\end{tabular}
+\caption{Costo de la actualizaci\'on bipartita, en ms por barrido a 100 cadenas.
+La versi\'on ``sin BP'' actualiza todo el disco en una sola pasada: es el doble de
+r\'apida y muestrea la distribuci\'on equivocada.}
+\end{table}
+
+En una implementaci\'on escalar el coloreado es gratis porque solo cambia el
+orden de visita. En una vectorizada cuesta un factor 2, y la raz\'on est\'a en el
+lazo: cada pasada calcula $\Delta E$ sobre \emph{toda} la red y descarta la mitad
+que no le corresponde. Mismos \num{5245} intentos, el doble de aritm\'etica.
+
+\paragraph{Qu\'e se rompe sin ella.} La versi\'on de una pasada no es una cadena
+m\'as r\'apida, es \emph{otra} cadena. La energ\'ia se desplaza menos de 1\,\% y
+sola habr\'ia ocultado el problema; lo que se mueve es $|M|$ entre 2 y 5\,\% y la
+carga topol\'ogica de Berg--L\"uscher de la capa central \textbf{hasta una unidad
+completa}. Esa es precisamente la cantidad con la que est\'an etiquetados los
+estados del conjunto de datos liberado.
+
+\subsection{Por qu\'e es necesaria la descomposici\'on matricial}
+
+La descomposici\'on matricial expresa la energ\'ia de prueba de muchos sitios
+como operaciones sobre arreglos en lugar de aritm\'etica sitio por sitio. Es lo
+que \textbf{crea el ancho} de trabajo paralelo.
+
+\begin{table}[h]\centering
+\begin{tabular}{lrrr}
+\toprule
+m\'etodo & pasos en serie & cuentas & ms/barrido \\
+\midrule
+sitio por sitio        & \num{5245} & $1\times$ & 352.3 \\
+con BP (dos pasadas)   & 2          & $2\times$ & \textbf{65.0} \\
+sin BP (una pasada)    & 1          & $1\times$ & 31.9 \\
+\bottomrule
+\end{tabular}
+\caption{Misma m\'aquina, 100 cadenas. La fila de una pasada es incorrecta y se
+incluye solo como cota.}
+\end{table}
+
+El resultado parece contradictorio ---el m\'etodo con \emph{m\'as} cuentas es
+cinco veces m\'as r\'apido--- y no lo es: lo que cuesta tiempo no es la cantidad
+de operaciones sino cu\'antas veces hay que detenerse a esperar un resultado.
+Hacer el doble de aritm\'etica en 2 esperas le gana por lejos a hacer la mitad en
+\num{5245}.
+
+\paragraph{MD y BP no son separables.} Medido a 100 cadenas sobre CPU:
+\begin{itemize}
+  \item BP sola: $0.98\times$ --- no acelera en implementaci\'on escalar.
+  \item MD con BP presente: $\mathbf{5.87\times}$.
+  \item MD \emph{sin} BP: $0.0029\times$, es decir \textbf{348 veces m\'as lenta}.
+\end{itemize}
+Aplicar la descomposici\'on a una cadena secuencial es una \emph{pesimizaci\'on}:
+construye el campo de vecinos de toda la red y descarta todo menos un elemento.
+MD acelera \emph{porque} BP vuelve legal la actualizaci\'on simult\'anea.
+
+\paragraph{Una GPU sin MD es peor que no tener GPU.} Sin descomposici\'on la
+cadena es secuencial y cada sitio se convierte en un despacho independiente al
+dispositivo: \num{5245} despachos por barrido, cada uno con su latencia de
+lanzamiento y sincronizaci\'on, para calcular unas pocas docenas de flotantes.
+Medido, una H100 corre a \SI{146315}{\milli\second} por barrido contra
+\SI{334}{\milli\second} de la CPU: \textbf{438 veces m\'as lenta}. Y empeora al
+agregar dispositivos, porque cada despacho debe alcanzar y sincronizar $N$ de
+ellos.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{figures/ablation_grid.pdf}
+\caption{Ablaci\'on MD $\times$ BP sobre cuatro configuraciones de hardware, a
+100 cadenas y geometr\'ia de producci\'on. Escala logar\'itmica. Solo la celda
+MD\,+\,BP se beneficia de una GPU; las otras tres corren m\'as lento en GPU que en
+CPU, y peor cuantas m\'as GPU.}
+\end{figure}
+
+\section{D\'onde poner el paralelismo}
+
+Fijado el algoritmo, queda decidir c\'omo repartir el trabajo. Se comparan tres
+agrupaciones de un mismo total de \textbf{4 estados $\times$ 100 r\'eplicas = 400
+cadenas independientes}, cada una recorriendo la escalera completa de 200 puntos.
+
+\begin{table}[h]\centering
+\begin{tabular}{llp{6.0cm}}
+\toprule
+modo & agrupaci\'on & eje que usa \\
+\midrule
+BP solo                & 400 lanzamientos de 1 cadena   & solo la actualizaci\'on bipartita \\
+BP + r\'eplicas        & 4 lanzamientos de 100 cadenas  & lote sobre semillas, un estado por vez \\
+BP + estados           & 100 lanzamientos de 4 cadenas  & lote sobre par\'ametros, una semilla por vez \\
+BP + r\'epl. + estados & 1 lanzamiento de 400 cadenas & ambos ejes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Los cuatro estados son las medianas de cuatro c\'umulos de fase del conjunto de
+datos liberado ---\texttt{uniform}, \texttt{helical}, \texttt{points}
+(skyrmiones) y \texttt{lines} (laberinto)--- de modo que son configuraciones que
+existen y no esquinas inventadas. Los cuatro tienen $J_2=J_3=J_4=0$, lo que hace
+que el coloreado bipartito sea exacto para todos; el c\'odigo lo verifica con una
+aserci\'on en lugar de confiar.
+
+\subsection{Resultados}
+
+\begin{table}[h]\centering
+\begin{tabular}{lrrrr}
+\toprule
+modo & CPU & 1$\times$H100 & 2$\times$H100 & 4$\times$H100 \\
+\midrule
+BP solo                   & 79.4 d$^*$ & 5.8 h$^*$ & 5.8 h$^*$ & 5.8 h$^*$ \\
+\textbf{BP + r\'eplicas}  & 10.3 d$^*$ & \textbf{51.7 min} & \textbf{27.6 min} & \textbf{16.9 min} \\
+BP + estados              & 45.4 d$^*$ & 1.8 h$^*$ & 1.8 h$^*$ & 1.7 h$^*$ \\
+\textbf{BP + r\'epl. + est.} & 7.6 d$^*$ & \textbf{1.0 h} & \textbf{30.1 min} & \textbf{16.4 min} \\
+\midrule
+\multicolumn{5}{l}{\small escalado $1\to4$ dispositivos:}\\
+BP solo & \multicolumn{4}{l}{$0.99\times$} \\
+BP + r\'eplicas & \multicolumn{4}{l}{$3.06\times$} \\
+BP + estados & \multicolumn{4}{l}{$1.06\times$} \\
+BP + r\'epl. + est. & \multicolumn{4}{l}{$3.80\times$ \quad (ideal $4.00\times$)} \\
+\bottomrule
+\end{tabular}
+\caption{Tiempo total de ejecuci\'on. Las celdas sin asterisco son escaleras
+completas medidas de punta a punta; las marcadas con $^*$ se extrapolan de un
+ritmo por barrido medido.}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{figures/total_time_all.pdf}\\[1ex]
+\includegraphics[width=\textwidth]{figures/total_time_gpu.pdf}
+\caption{Tiempo total de ejecuci\'on por dispositivo. Arriba, escala
+logar\'itmica incluyendo CPU; abajo, solo GPU en escala lineal. Las barras
+rayadas son extrapolaciones.}
+\end{figure}
+
+\subsection{Por qu\'e paralelizar por experimento casi no ayuda}
+
+\textbf{$1.06\times$ con cuatro GPU.} La agrupaci\'on por estados lanza un lote de
+\textbf{4 cadenas}, cien veces. Cuatro cadenas no se acercan a llenar una H100
+---la saturaci\'on llega alrededor de 25--- y agregar dispositivos lo
+\emph{empeora}, porque esas cuatro cadenas se reparten en una por dispositivo: se
+pasa de una GPU casi ociosa a cuatro completamente ociosas.
+
+La penalizaci\'on contra el mejor modo \emph{crece} con el hardware: $2.07\times$
+con una GPU, $3.83\times$ con dos, $6.19\times$ con cuatro. Es lo contrario de
+para lo que se compra hardware.
+
+Esto importa de forma directa porque \textbf{es la agrupaci\'on que el instinto
+elige para generar un conjunto de datos}: un conjunto de datos var\'ia el estado,
+no la semilla. La recomendaci\'on es juntar \emph{muchos} estados en un lote
+ancho; al dispositivo le da casi igual de d\'onde viene el ancho, con tal de que
+lo haya.
+
+\subsection{Por qu\'e el paralelismo por r\'eplicas rinde bien}
+
+Las r\'eplicas son cadenas de Markov \emph{independientes}: no hay ninguna
+operaci\'on colectiva entre ellas, nada que sincronizar hasta el final. El eje de
+r\'eplicas produce lotes de 100 cadenas, muy por encima de la saturaci\'on, y
+escala $3.06\times$ sobre cuatro dispositivos. Agrupar ambos ejes a la vez da
+$3.80\times$, cerca del ideal.
+
+Entre esas dos la elecci\'on apenas importa: 16.9 contra 16.4 minutos sobre cuatro
+GPU. \textbf{Lo que importa es tener un lote ancho}, no de qu\'e eje provenga.
+
+\subsection{Lote por dispositivo contra n\'umero de dispositivos}
+
+Las seis escaleras suger\'ian un costo por multi-dispositivo. Dos barridos, cada
+uno dentro de un mismo contenedor y con tres repeticiones por celda, lo separan.
+Se descarta siempre la primera repetici\'on: carga la compilaci\'on JIT.
+
+\begin{table}[h]\centering
+\begin{tabular}{rr@{\qquad}rrr}
+\toprule
+\multicolumn{2}{c}{lote fijo $B=25$} & \multicolumn{3}{c}{1 GPU fija} \\
+GPU & $\mu$s/cadena-barrido & $B$ & $\mu$s/cadena-barrido & sd \\
+\midrule
+1 & 2.826 & 25  & 2.826 & 0.0010 \\
+2 & 2.800 & \textbf{50}  & \textbf{2.323} & 0.0020 \\
+4 & 2.807 & 100 & 2.960 & 0.0020 \\
+\midrule
+\multicolumn{2}{l}{dispersi\'on \textbf{0.9\,\%}} & \multicolumn{3}{l}{castigo \textbf{27\,\%} en los extremos} \\
+\bottomrule
+\end{tabular}
+\caption{Tiempo-dispositivo por cadena-barrido, escaleras completas.}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{figures/batch_device_scan.pdf}
+\caption{Izquierda: efecto puro del lote por dispositivo, con el n\'umero de GPU
+fijo en uno. Derecha: efecto puro del n\'umero de dispositivos, con el lote fijo
+en 25 cadenas por GPU.}
+\end{figure}
+
+\paragraph{Coordinar dispositivos es gratuito.} A lote fijo, pasar de una a
+cuatro GPU cuesta 0.9\,\%. Las r\'eplicas no tienen colectivo y \texttt{pmap} no
+agrega sobrecosto medible.
+
+\paragraph{El lote por dispositivo s\'i importa.} Hay un m\'inimo claro cerca de
+$B=50$ y un castigo del 27\,\% en los extremos, con desviaciones de 0.002: es
+se\~nal. La recomendaci\'on pr\'actica es \textbf{apuntar a unas 50 cadenas por
+GPU}, y explica por qu\'e la agrupaci\'on por r\'eplicas sobre cuatro
+dispositivos ($B=25$) rinde por debajo de su propio escalado.
+
+\paragraph{Lo que no queda aislado.} El barrido no reproduce los valores
+absolutos de las escaleras: a $B=100$ la escalera mide 2.586 y el barrido 2.960,
+un 14\,\% de diferencia. Queda un tercer factor sin aislar; dos candidatos no
+probados son que las escaleras pasan par\'ametros como arreglos por cadena
+mientras el barrido usa escalares, y que las escaleras cronometran la primera
+llamada con la compilaci\'on incluida. La \emph{forma} de la curva y el resultado
+sobre dispositivos quedan establecidos; los valores absolutos del barrido no
+deben citarse como costo de escalera.
+
+\section{En qu\'e afecta la paralelizaci\'on a la formaci\'on de estructuras}
+
+Las seis corridas difieren \emph{\'unicamente} en c\'omo se entregaron las mismas
+400 cadenas al hardware. El Hamiltoniano, la actualizaci\'on bipartita, la
+escalera de temperaturas y el n\'umero de r\'eplicas son id\'enticos.
+
+\subsection{Los observables coinciden}
+
+\begin{table}[h]\centering
+\begin{tabular}{lrrrrr}
+\toprule
+estado & $E$ & $M$ & $C_v$ & $\chi$ & $Q$ \\
+\midrule
+uniform & 0.02\,\% & 0.02\,\% & 6.1\,\% & 3.3\,\% & 5.1\,\% \\
+helical & 0.07\,\% & 1.8\,\%  & 8.2\,\% & 13.2\,\% & 15.8\,\% \\
+points  & 0.04\,\% & 0.29\,\% & 7.2\,\% & 18.7\,\% & 2.5\,\% \\
+lines   & 0.05\,\% & 9.5\,\%  & 8.0\,\% & 25.9\,\% & 34.7\,\% \\
+\bottomrule
+\end{tabular}
+\caption{Dispersi\'on m\'axima entre las seis paralelizaciones, relativa a la
+magnitud media del observable.}
+\end{table}
+
+\textbf{La energ\'ia concuerda al 0.07\,\% en los cuatro estados.} $C_v$ y $\chi$
+dispersan m\'as porque son varianzas estimadas con 100 r\'eplicas: eso es ruido
+Monte Carlo, no desacuerdo entre m\'etodos.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{figures/obs_points.pdf}
+\caption{Observables f\'isicos del estado \texttt{points} (skyrmiones) a lo largo
+de la escalera, para las seis paralelizaciones. Filas: cantidad; columnas:
+corrida; eje $y$ compartido por fila.}
+\end{figure}
+
+\subsection{Pero las realizaciones son distintas}
+
+Comparando las configuraciones finales a \SI{0.1}{\kelvin} entre corridas:
+
+\begin{table}[h]\centering
+\begin{tabular}{lrr}
+\toprule
+estado & correlaci\'on espacial & $Q$ final \\
+\midrule
+points & $+0.878$ & $-11.26,\,-11.13,\,-11.22,\,-11.20,\,-11.23,\,-11.27$ \\
+lines  & $-0.038$ & $-0.33,\,-0.30,\,-0.39,\,-0.25,\,-0.37,\,-0.28$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+En \texttt{points} los skyrmiones aparecen en \emph{posiciones distintas} pero las
+seis corridas encuentran \textbf{el mismo n\'umero} ($Q$ concuerda al 1.24\,\%).
+En \texttt{lines} la correlaci\'on espacial es nula: dos laberintos sin ninguna
+relaci\'on geom\'etrica.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{figures/trans_points.pdf}
+\caption{Transici\'on de estados: $s_z$ de la capa central a lo largo del
+recocido, de \SI{20}{\kelvin} a \SI{0.1}{\kelvin}, para \texttt{points}. Las tres
+corridas llegan al mismo n\'umero de skyrmiones por caminos distintos.}
+\end{figure}
+
+\subsection{Interpretaci\'on}
+
+\textbf{La paralelizaci\'on no afecta la f\'isica; afecta la realizaci\'on
+concreta.} Cambiar c\'omo se reparten las cadenas cambia los flujos de n\'umeros
+aleatorios: son cadenas de Markov distintas que muestrean la \emph{misma}
+distribuci\'on de Boltzmann. Lo que es propiedad de la distribuci\'on ---energ\'ia,
+magnetizaci\'on, n\'umero de skyrmiones--- coincide; lo que es una muestra
+concreta ---d\'onde cae cada skyrmi\'on--- difiere, y \emph{debe} diferir. Si dos
+corridas con semillas distintas dieran la misma imagen, eso s\'i ser\'ia un
+defecto.
+
+El estado \texttt{lines} ilustra el punto: con $H_{\mathrm{ex}}=0.022$ el sistema
+queda casi degenerado, y existen much\'isimas configuraciones laber\'inticas de
+energ\'ia pr\'acticamente igual. Por eso su energ\'ia concuerda al 0.01\,\%
+mientras $Q$ dispersa 44\,\%: esos laberintos son energ\'eticamente equivalentes
+y geom\'etricamente distintos. Si fuese un defecto de paralelizaci\'on, la
+energ\'ia tambi\'en se mover\'ia.
+
+\section{Costos}
+
+H100 a \SI{0.001097}{USD} por segundo (tarifa publicada, verificada).
+
+\begin{table}[h]\centering
+\begin{tabular}{lrrrr}
+\toprule
+corrida & GPU & reloj & GPU-segundos & USD \\
+\midrule
+r\'eplicas $1\times$ & 1 & 51.7 min & \num{3103} & 3.40 \\
+r\'eplicas $2\times$ & 2 & 27.6 min & \num{3307} & 3.63 \\
+r\'eplicas $4\times$ & 4 & 16.9 min & \num{4050} & 4.44 \\
+ambas $1\times$ & 1 & 62.1 min & \num{3727} & 4.09 \\
+ambas $2\times$ & 2 & 30.1 min & \num{3612} & 3.96 \\
+ambas $4\times$ & 4 & 16.4 min & \num{3926} & 4.31 \\
+\midrule
+\textbf{total} & & & \num{21726} & \textbf{23.83} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{El reloj baja $3\times$ mientras el costo sube 30\,\%.} De r\'eplicas
+$1\times$ a $4\times$: de 51.7 a 16.9 minutos, de \$3.40 a \$4.44. El 24\,\% que
+falta para el escalado ideal se paga en dinero. Si el plazo no aprieta, una sola
+GPU es la opci\'on m\'as barata.
+
+Las seis corridas produjeron \num{2400} estados recocidos con observables
+completos por \$23.83: \textbf{\$0.0099 por estado}.
+
+\section{L\'imites declarados}
+
+\begin{itemize}
+\item \textbf{El coloreado es exacto solo para las capas 1 y 3.} Bajo
+$(x+y+z)\bmod 2$ las capas 2 y 4 conectan sitios de la misma paridad, de modo que
+con $J_2$ o $J_4$ no nulos la actualizaci\'on simult\'anea deja de ser un
+reordenamiento exacto. Las corridas aqu\'i tienen $J_2=J_3=J_4=0$; el 18.9\,\% del
+conjunto de datos liberado no, y ese sesgo no est\'a medido.
+
+\item \textbf{Los ritmos por barrido extrapolan \'ordenes de magnitud, no
+diferencias del 10--20\,\%.} Al medir las escaleras completas los errores de
+extrapolaci\'on resultaron entre $-22.5$\,\% y $+18.7$\,\%, con dos efectos que
+empujan en direcciones opuestas: los observables faltantes bajan la estimaci\'on
+y el costo fijo por lanzamiento la sube. No existe factor de correcci\'on.
+
+\item \textbf{Extrapolar a lo largo del r\'egimen saturado es exacto; interpolar
+hacia dentro del no saturado no.} Una estimaci\'on a 4 cadenas por lanzamiento,
+obtenida interpolando entre puntos medidos de 1 y 25, result\'o baja en 48\,\%.
+
+\item \textbf{Las barras de error ajustadas pueden medir la cantidad
+equivocada.} Un hallazgo previo de este estudio ---una inversi\'on entre dos
+agrupaciones, reportada con 154 y 301 sigma--- result\'o ser un artefacto de
+cronometrar el lazo de actualizaci\'on pelado en lugar de una escalera de
+producci\'on. Las repeticiones concordaban a \SI{0.0001}{\milli\second} por
+barrido, lo que fij\'o el ritmo con precisi\'on pero sobre la cantidad
+equivocada.
+
+\item \textbf{Los brazos escalares son CPython.} Las ganancias contra ellos son
+frente a una implementaci\'on directa en Python, no frente a c\'odigo secuencial
+compilado.
+\end{itemize}
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{figures/extrap_vs_measured.pdf}
+\caption{Extrapolaci\'on contra medici\'on para las seis escaleras completas. El
+error medio absoluto es 15.2\,\% y el rango va de $-22.5$\,\% a $+18.7$\,\%.}
+\end{figure}
+
+\end{document}

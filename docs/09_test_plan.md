@@ -7,47 +7,51 @@ has already been run, with the problems found while checking it.
 
 ## Part 1 — Simulation: 16 runs
 
-CPU / 1 GPU / 2 GPU / 3 GPU, crossed with `DP` (matrix decomposition) and
-`BP` (checkerboard sublattice update), on and off.
+CPU / 1 GPU / 2 GPU / 3 GPU, crossed with `MD` (matrix decomposition) and
+`BP` (bipartite / checkerboard update), on and off.
 
-### The design is right; eight of the cells are not affordable
+### Measured: see `10_ablation_and_cpu_rate.md`
 
-The 2x2 is a clean ablation: it isolates what each acceleration contributes
-instead of reporting one combined number. The problem is the cost of the `SIN
-DP` half.
+**This section's estimates were wrong and are superseded.** They are kept with
+the correction because the error is instructive.
 
-Measured on this machine, at the production geometry (`Rd=18.30`, 5 layers,
-5245 active sites), a site-by-site Metropolis attempt costs **10.0 us**, so one
-sweep over the lattice costs 0.05 s. For 200 temperature points, 15,000 sweeps
-and 100 replicas:
+The estimate put a site-by-site attempt at 10.0 us and therefore a 65x penalty
+for dropping `MD`, which made eight of the sixteen cells look unaffordable and
+argued for running them at a reduced configuration. Both figures were inflated by
+per-sweep setup inside the timed loop -- the neighbour table and the per-site
+anisotropy constant were being rebuilt every sweep, which a real implementation
+builds once. Hoisted out, the per-site cost is **2.44 us** and the `MD` penalty
+is **8.6x**, so every cell runs complete lattice sweeps at the production
+geometry with no reduced configuration and no pro rata scaling.
 
-| | wall clock per run |
-|---|---|
-| without matrix decomposition | **4,366 h = 6 months** |
-| with matrix decomposition | 67 h (measured) |
-| ratio | **65x** |
+The `no BP` question below was resolved in the direction this section
+anticipated, and more sharply: the colouring costs **0.98x** -- nothing. It is
+not an accelerator at all. Its contribution is correctness, which is now measured
+rather than argued: dropping it while keeping the parallel update shifts the
+Berg-Lüscher charge of the middle layer by up to a full topological unit.
 
-And that figure counts only the exchange term; the real Hamiltonian adds DMI,
-anisotropy and Zeeman, so it is a lower bound. Eight runs at that cost are not
-going to happen.
-
-What does work: measure the `SIN DP` arm at a **reduced** configuration (fewer
-temperature points, fewer replicas) and report the per-sweep cost, which is the
-quantity the comparison actually needs. Cost is exactly linear in sweeps, so
-nothing is lost by not running the full ladder -- and the 65x can then be quoted
-from measurement rather than extrapolated from one point.
-
-### `SIN BP` needs its meaning fixed before it is run
+### `no BP` needs its meaning fixed before it is run
 
 Switching the checkerboard off is not a speed setting. Without it, updating
 sites in parallel is simply **wrong**: two neighbours would each decide against
 the other's stale value, the joint move's energy is not the sum of the
 individual ones, and the chain stops sampling the Boltzmann distribution.
 
-So `SIN BP` has to mean *strictly sequential single-site updates* -- correct,
-and slow. If that is the intent, then `SIN DP + SIN BP` and `CON DP + SIN BP`
+So `no BP` has to mean *strictly sequential single-site updates* -- correct,
+and slow. If that is the intent, then `no MD, no BP` and `MD, no BP`
 are nearly the same run, because a sequential update cannot use a vectorised
 energy for anything but one site at a time.
+
+**Measured, and the last sentence is wrong.** They are not nearly the same run:
+`MD, no BP` is 62x *slower* than `no MD, no BP`, because building a
+whole-lattice neighbour field per accepted site costs far more than the scalar
+arithmetic it replaces. Vectorising a sequential chain is a pessimisation.
+
+One more correction, and it changes what the `CPU` column means. The reference
+notebook's own CPU mode is labelled site-by-site, but it is **vectorised over the
+replica batch**, so it already carries a matrix decomposition -- on the replica
+axis instead of the lattice axis. The `no MD` baseline for the group's actual
+code is therefore 4.01 ms per replica-sweep, not the scalar loop's 12.77.
 
 ### The checkerboard is exact only for shells 1 and 3
 
