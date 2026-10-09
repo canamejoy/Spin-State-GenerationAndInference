@@ -82,6 +82,10 @@ main/report/*.pdf
 # Must stay AFTER the blanket `*.png` above — last match wins.
 !main/report/*.png
 !main/figures/*.png
+# The s_z transition maps the schedule page renders. Without these the page
+# shows thirty broken images, and `git add` reports nothing when it skips an
+# ignored file, so the omission is silent.
+!docs/pages/sz/*.png
 
 # ── WSL / tooling artefacts ───────────────────────────────────────────────────
 *:Zone.Identifier
