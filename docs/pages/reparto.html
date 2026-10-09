@@ -196,6 +196,13 @@ cuentas distintas</b>, y coincidieron entre el <b class="n">0.04 %</b> y el
 </table></div>
 
 <div class="curvebox">
+  <div class="seg" id="segShow" role="group" aria-label="Mediciones"
+       style="margin-bottom:10px"></div>
+  <div class="legend" style="margin:0 0 8px">
+    <span><i style="background:var(--accent);height:3px;width:20px;border-radius:2px"></i>empalmada, 2 contenedores</span>
+    <span><i style="background:var(--warn);height:3px;width:20px;border-radius:2px"></i>un contenedor, GPU registrada</span>
+    <span style="margin-left:auto">el anillo marca los lotes medidos dos veces</span>
+  </div>
   <canvas id="curve" width="900" height="380" aria-label="Costo por réplica-barrido en función de las réplicas por GPU"></canvas>
   <p class="curvecap">Costo por réplica-barrido contra réplicas por GPU, escala
   logarítmica. El mínimo global está en <b class="n">B = 512</b>
@@ -517,6 +524,15 @@ pidió que seis posiciones cayeran donde la regla predecía.</p>
          320:2.816,400:3.063,512:2.014,768:3.159,1024:2.402};
   // How many independent containers measured each point.
   var REPEATED={75:2,100:2,150:2,512:2,768:2,1024:2};
+  // The same nineteen batches re-measured on ONE physical GPU
+  // (GPU-cda72c4c-4186-217c-ec5c-9cfa50d90b2b) with cells ten times shorter.
+  // Drawn alongside so the agreement in shape is visible rather than asserted:
+  // every value sits higher, by a ratio that falls from 1.129x at B=10 to about
+  // 1.02x at large B, and the peaks and valleys land on the same batches.
+  var F2={10:4.242,16:3.861,25:3.114,32:2.694,40:2.725,50:2.572,64:2.667,
+          75:2.410,80:2.680,100:3.311,128:2.775,150:2.225,200:2.990,256:2.983,
+          320:2.882,400:3.125,512:2.081,768:3.238,1024:2.467};
+  var SHOW2=true;
   var BS=Object.keys(F).map(Number).sort(function(a,b){return a-b;});
   var BEST_B=512;
   var SWEEPS=200*15000, USD=0.001097;
@@ -578,13 +594,13 @@ pidió que seis posiciones cayeran donde la regla predecía.</p>
       var b=document.createElement("button");
       b.textContent=label(v);
       b.setAttribute("data-v",String(v));
-      b.setAttribute("aria-pressed",String(get()===v));
+      b.setAttribute("aria-pressed",String(String(get())===String(v)));
       host.appendChild(b);
     });
     host.onclick=function(e){
       var btn=e.target.closest("button");
       if(!btn || btn.disabled) return;
-      set(Number(btn.getAttribute("data-v")));
+      set(btn.getAttribute("data-v"));
       renderAll();
     };
   }
@@ -717,7 +733,7 @@ pidió que seis posiciones cayeran donde la regla predecía.</p>
     return PAD.l+(Math.log(b)-lo)/(hi-lo)*(w-PAD.l-PAD.r);
   }
   function yOf(v,h){
-    var lo=1.90, hi=3.90;
+    var lo=1.90, hi=4.35;
     return PAD.t+(hi-v)/(hi-lo)*(h-PAD.t-PAD.b);
   }
   function drawCurve(){
@@ -731,7 +747,7 @@ pidió que seis posiciones cayeran donde la regla predecía.</p>
 
     ctx.font="11px "+(tok("--mono")||"monospace");
     ctx.textAlign="right"; ctx.textBaseline="middle";
-    for(var v=2.0; v<=3.8001; v+=0.2){
+    for(var v=2.0; v<=4.2001; v+=0.4){
       var y=yOf(v,h);
       ctx.strokeStyle=rule; ctx.globalAlpha=.7; ctx.lineWidth=1;
       ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(w-PAD.r,y); ctx.stroke();
@@ -754,6 +770,19 @@ pidió que seis posiciones cayeran donde la regla predecía.</p>
     ctx.fillStyle=muted;
     ctx.fillText("réplicas por GPU", (PAD.l+w-PAD.r)/2, h-PAD.b+28);
 
+    if(SHOW2){
+      ctx.strokeStyle=warn; ctx.lineWidth=1.6; ctx.globalAlpha=.75;
+      ctx.setLineDash([5,4]); ctx.beginPath();
+      BS.forEach(function(b,i){
+        var x=xOf(b,w), y=yOf(F2[b],h);
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1;
+      BS.forEach(function(b){
+        ctx.beginPath(); ctx.arc(xOf(b,w),yOf(F2[b],h),2.6,0,2*Math.PI);
+        ctx.fillStyle=warn; ctx.globalAlpha=.75; ctx.fill(); ctx.globalAlpha=1;
+      });
+    }
     ctx.strokeStyle=accent; ctx.lineWidth=2; ctx.globalAlpha=.85;
     ctx.beginPath();
     BS.forEach(function(b,i){
@@ -848,22 +877,26 @@ pidió que seis posiciones cayeran donde la regla predecía.</p>
 
   buildSeg(document.getElementById("segS"),[1,2,3,4,5,6],
            function(v){return String(v);},function(){return S;},
-           function(v){S=v; if(!feasible(S,D,B)){var a=bestFor(S,D); if(a)B=a.b;}});
+           function(v){S=Number(v); if(!feasible(S,D,B)){var a=bestFor(S,D); if(a)B=a.b;}});
   buildSeg(document.getElementById("segD"),[1,2,4],
            function(v){return v+(v===1?" GPU":" GPUs");},function(){return D;},
-           function(v){D=v; if(!feasible(S,D,B)){var a=bestFor(S,D); if(a)B=a.b;}});
+           function(v){D=Number(v); if(!feasible(S,D,B)){var a=bestFor(S,D); if(a)B=a.b;}});
   buildSeg(document.getElementById("segB"),BS,
            function(v){return String(v);},function(){return B;},
-           function(v){B=v;});
+           function(v){B=Number(v);});
+  buildSeg(document.getElementById("segShow"),["ambas","solo la empalmada"],
+           function(v){return v;},
+           function(){return SHOW2?"ambas":"solo la empalmada";},
+           function(v){SHOW2=(v==="ambas");});
   buildSeg(document.getElementById("segTab"),[1,2,4],
            function(v){return v+(v===1?" GPU":" GPUs");},function(){return TAB;},
-           function(v){TAB=v;});
+           function(v){TAB=Number(v);});
   buildSeg(document.getElementById("segR"),REPSET,
            function(v){return String(v);},function(){return REPS;},
-           function(v){REPS=v; if(!feasible(S,D,B)){var a=bestFor(S,D); if(a)B=a.b;}});
+           function(v){REPS=Number(v); if(!feasible(S,D,B)){var a=bestFor(S,D); if(a)B=a.b;}});
   buildSeg(document.getElementById("segTabR"),REPSET,
            function(v){return String(v);},function(){return REPS;},
-           function(v){REPS=v; if(!feasible(S,D,B)){var a=bestFor(S,D); if(a)B=a.b;}});
+           function(v){REPS=Number(v); if(!feasible(S,D,B)){var a=bestFor(S,D); if(a)B=a.b;}});
 
   renderAll();
   window.addEventListener("resize",drawCurve);
