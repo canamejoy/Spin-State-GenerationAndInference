@@ -358,6 +358,42 @@ todo lo que sea termodinámica: más barato y con χ menos sesgado. A, 100 répl
 × 15k, solo si la carga topológica por réplica es un resultado central, porque
 ahí el muestreo del paisaje metaestable no se compensa.</div>
 
+<h2>¿Y si fueran GPUs distintas?</h2>
+<p>Modal <b>no</b> garantiza el mismo dispositivo: pedir una H100 da
+<em>una</em> H100, y otro contenedor puede caer en otro host. Es una objeción
+legítima para cualquier comparación de tiempos, así que conviene decir cómo
+queda controlada acá.</p>
+
+<p><b>Los dos brazos corrieron en una sola invocación</b>, en el mismo
+contenedor, sobre las mismas cuatro GPUs, uno detrás del otro. No hay
+comparación entre dispositivos: la diferencia de 29.6&nbsp;% se midió dentro del
+mismo hardware, con minutos de separación.</p>
+
+<p>Y el experimento se repitió entero con otra semilla, lo que da un segundo
+control:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>comparación</th><th>corrimiento del pico de χ</th></tr></thead>
+  <tbody>
+    <tr><td>misma semilla, dos corridas <span style="color:var(--muted)">— determinismo</span></td>
+        <td class="n ok">idénticas a la 4ª cifra</td></tr>
+    <tr><td>mismo cronograma, otra semilla</td><td class="n">0.10 – 0.30 K</td></tr>
+    <tr class="bad"><td>distinto cronograma</td><td class="n">0.50 – 0.70 K</td></tr>
+  </tbody>
+</table></div>
+
+<p>Correr la comparación dos veces con la misma semilla dio resultados
+<b>idénticos hasta la cuarta cifra</b> en las seis observables: el motor es
+determinista. Y el efecto del cronograma es de dos a siete veces el ruido de
+semilla.</p>
+
+<div class="note warn"><strong>Lo que no quedó registrado.</strong> Estas
+corridas guardaron solo <code>"cuda:0"</code> como identidad del dispositivo, así
+que el control existía por diseño pero no es <em>auditable</em>: nadie puede
+verificar desde los datos qué GPU fue. Las mediciones posteriores ya graban
+modelo, identificador, memoria, reloj máximo y driver. Si esta comparación se
+repite, conviene rehacerla con esa instrumentación.</div>
+
 <h2>Qué falta</h2>
 <p>τ se midió en ocho temperaturas por estado con 50 réplicas, y la mediana entre
 réplicas es estable, pero el percentil 90 llega a <b class="n">2 983</b> para
