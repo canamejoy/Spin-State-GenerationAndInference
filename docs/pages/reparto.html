@@ -302,6 +302,50 @@ cae por debajo del <b class="n">2 %</b> para B ≥ 100 — justamente donde est�
 todos los saltos que importan. <b>El mínimo, los picos y los seis saltos caen en
 los mismos lotes en las dos mediciones.</b></p>
 
+<h3>Lo mismo en segundos por réplica</h3>
+<p>Los microsegundos por réplica-barrido son cómodos para comparar, pero cuesta
+imaginarlos. Esta es la misma tabla traducida a lo que cuesta <b>una réplica en
+una corrida completa</b> — 200 temperaturas &times; 20 000 barridos, la
+convención de producción.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>empalmada</th><th>un contenedor</th><th>diferencia</th></tr></thead>
+  <tbody>
+    <tr><td class="n">10</td><td class="n">15.03 s</td><td class="n">16.97 s</td><td class="n">+1.94 s</td></tr>
+    <tr><td class="n">16</td><td class="n">14.19 s</td><td class="n">15.44 s</td><td class="n">+1.25 s</td></tr>
+    <tr><td class="n">25</td><td class="n">11.60 s</td><td class="n">12.46 s</td><td class="n">+0.86 s</td></tr>
+    <tr><td class="n">32</td><td class="n">10.04 s</td><td class="n">10.78 s</td><td class="n">+0.73 s</td></tr>
+    <tr><td class="n">40</td><td class="n">10.21 s</td><td class="n">10.90 s</td><td class="n">+0.69 s</td></tr>
+    <tr><td class="n">50</td><td class="n">9.70 s</td><td class="n">10.29 s</td><td class="n">+0.58 s</td></tr>
+    <tr><td class="n">64</td><td class="n">10.12 s</td><td class="n">10.67 s</td><td class="n">+0.55 s</td></tr>
+    <tr><td class="n">75</td><td class="n">9.18 s</td><td class="n">9.64 s</td><td class="n">+0.46 s</td></tr>
+    <tr><td class="n">80</td><td class="n">10.24 s</td><td class="n">10.72 s</td><td class="n">+0.48 s</td></tr>
+    <tr><td class="n">100</td><td class="n">12.77 s</td><td class="n">13.24 s</td><td class="n">+0.47 s</td></tr>
+    <tr><td class="n">128</td><td class="n">10.79 s</td><td class="n">11.10 s</td><td class="n">+0.31 s</td></tr>
+    <tr><td class="n">150</td><td class="n">8.57 s</td><td class="n">8.90 s</td><td class="n">+0.33 s</td></tr>
+    <tr><td class="n">200</td><td class="n">11.66 s</td><td class="n">11.96 s</td><td class="n">+0.30 s</td></tr>
+    <tr><td class="n">256</td><td class="n">11.67 s</td><td class="n">11.93 s</td><td class="n">+0.26 s</td></tr>
+    <tr><td class="n">320</td><td class="n">11.26 s</td><td class="n">11.53 s</td><td class="n">+0.26 s</td></tr>
+    <tr><td class="n">400</td><td class="n">12.25 s</td><td class="n">12.50 s</td><td class="n">+0.25 s</td></tr>
+    <tr class="best"><td class="n">512</td><td class="n">8.06 s</td><td class="n">8.32 s</td><td class="n">+0.27 s</td></tr>
+    <tr><td class="n">768</td><td class="n">12.64 s</td><td class="n">12.95 s</td><td class="n">+0.32 s</td></tr>
+    <tr><td class="n">1024</td><td class="n">9.60 s</td><td class="n">9.87 s</td><td class="n">+0.26 s</td></tr>
+  </tbody>
+</table></div>
+
+<p>Entre el mejor lote y el peor hay <b class="n">6.98 segundos por
+réplica</b>: 8.06 s con B = 512 contra 15.03 s con B = 10. Sobre las 2000
+réplicas de una tanda de 40 estados eso son <b class="n">3.9 horas de tiempo de
+GPU</b>, que sobre cuatro dispositivos se traducen en <b class="n">58 minutos</b>
+más de reloj — por elegir mal un número.</p>
+
+<div class="note"><strong>Son segundos de costo, no de espera.</strong> Las
+réplicas de un lanzamiento corren a la vez y terminan todas juntas, así que
+ninguna réplica individual tarda 8.06 s — ese es su parte del reloj total
+cuando se reparte entre todas. Una réplica dentro de un lanzamiento de B = 512
+espera lo que tarde el lanzamiento entero; lo que mejora al subir el lote es
+cuántas salen por segundo, no qué tan rápido sale una.</div>
+
 <div class="note"><strong>El argumento tiene tres niveles.</strong> La forma se
 midió <em>dentro</em> de un dispositivo, con identificador auditable. La
 variación <em>entre</em> dispositivos está acotada en <b class="n">1.5 %</b> por
