@@ -117,6 +117,12 @@
     -0.24,
     -0.238
    ]
+  },
+  "offset_is_not_constant": {
+   "ratio_at_B10": 1.129,
+   "ratio_at_B1024": 1.027,
+   "median": 1.038,
+   "note": "The shorter cell of the single-container run inflates every value, but not uniformly: the ratio falls from 1.129 at B=10 to about 1.02 at large B. That is a fixed per-cell overhead amortised over ten times less work. Shape deviation after removing the median bias is +8.7% at B=10 and under 2% for B>=100, which is where every jump lies."
   }
  }
 }
