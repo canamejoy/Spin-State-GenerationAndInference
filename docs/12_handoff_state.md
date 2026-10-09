@@ -85,6 +85,14 @@ Both need `jax[cpu]` in the venv. `tests/conftest.py` puts
 
 ## 4. Credentials and accounts
 
+**Before every launch, run the spend guard** — `scripts/modal_budget_guard.sh
+check <account> <estimated-usd>`. It reads the live balance and refuses when the
+account is short. Three accounts went past their credit in one day because the
+balance was tracked by subtracting predicted costs instead of reading it, and
+the predictions counted GPU-seconds only: CPU, memory and container startup add
+about 8% on a GPU job and dominate a long CPU job. Estimate the run, let the
+guard read the truth, and re-read the balance afterwards.
+
 Modal profiles live in `~/.modal-accounts/<name>/.modal.toml`, used via
 `MODAL_CONFIG_PATH`. **Never paste their contents.** `modal token new` writes to
 `~/.modal.toml`; move it into the per-account folder.
