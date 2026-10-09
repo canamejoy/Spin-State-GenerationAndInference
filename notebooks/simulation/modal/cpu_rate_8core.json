@@ -1,0 +1,63 @@
+{
+ "rows": [
+  {
+   "replicas": 1,
+   "elapsed_s": 2.971236858000001,
+   "first_call_s": 6.125111384999999,
+   "ms_per_sweep": 7.428092145000003,
+   "us_per_replica_sweep": 7428.092145000002,
+   "sweeps": 400
+  },
+  {
+   "replicas": 25,
+   "elapsed_s": 12.909302582000002,
+   "first_call_s": 18.222797822999997,
+   "ms_per_sweep": 32.273256455,
+   "us_per_replica_sweep": 1290.9302582,
+   "sweeps": 400
+  },
+  {
+   "replicas": 50,
+   "elapsed_s": 26.640602330000007,
+   "first_call_s": 25.724813401999995,
+   "ms_per_sweep": 66.60150582500002,
+   "us_per_replica_sweep": 1332.0301165000003,
+   "sweeps": 400
+  },
+  {
+   "replicas": 100,
+   "elapsed_s": 38.973851284999995,
+   "first_call_s": 41.766279299000004,
+   "ms_per_sweep": 97.43462821249999,
+   "us_per_replica_sweep": 974.3462821249999,
+   "sweeps": 400
+  },
+  {
+   "replicas": 200,
+   "elapsed_s": 66.92019832399998,
+   "first_call_s": 61.79655665300001,
+   "ms_per_sweep": 167.30049580999994,
+   "us_per_replica_sweep": 836.5024790499997,
+   "sweeps": 400
+  }
+ ],
+ "n_active": 5245,
+ "n_temps": 4,
+ "n_therm": 60,
+ "n_meas": 40,
+ "params": {
+  "Jex": 1.0,
+  "Kan1": 0.177,
+  "Kan2": 0.034,
+  "KanS": 0.139,
+  "Hex": 0.483,
+  "KDM": 0.88,
+  "g": 1.5707963267948966
+ },
+ "cpu_model": "unknown",
+ "threads": 24,
+ "devices": [
+  "cpu:0"
+ ],
+ "jax_version": "0.10.2"
+}
