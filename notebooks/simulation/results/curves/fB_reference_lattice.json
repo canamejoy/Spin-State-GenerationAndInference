@@ -1,0 +1,122 @@
+{
+ "description": "Cost per replica-sweep against replicas per GPU, for the production lattice Rd=18.30, L=5, 5245 active sites. Two independent measurements of the same curve.",
+ "geometry": {
+  "Rd": 18.3,
+  "L": 5,
+  "N": 39,
+  "n_active": 5245
+ },
+ "schedule": {
+  "n_therm_to_n_meas": "1:1",
+  "form": "per-chain columns",
+  "compilation": "excluded, .lower().compile() before timing"
+ },
+ "measurements": [
+  {
+   "name": "stitched",
+   "containers": 2,
+   "accounts": [
+    "cordonezz",
+    "cya21022026"
+   ],
+   "sweeps_per_cell": [
+    600000,
+    150000
+   ],
+   "repeats": 2,
+   "note": "Low half (B<=128) and high half (B>=150) come from different containers, joined by B=75 and B=100 measured in both, which agreed to 0.31% and 0.50%.",
+   "us_per_replica_sweep": {
+    "10": 3.758,
+    "16": 3.548,
+    "25": 2.9,
+    "32": 2.511,
+    "40": 2.552,
+    "50": 2.426,
+    "64": 2.53,
+    "75": 2.295,
+    "80": 2.56,
+    "100": 3.193,
+    "128": 2.698,
+    "150": 2.143,
+    "200": 2.915,
+    "256": 2.918,
+    "320": 2.816,
+    "400": 3.063,
+    "512": 2.014,
+    "768": 3.159,
+    "1024": 2.401
+   }
+  },
+  {
+   "name": "single_container",
+   "containers": 1,
+   "accounts": [
+    "carloscanamejoy2"
+   ],
+   "sweeps_per_cell": 15000,
+   "repeats": 1,
+   "gpu": {
+    "model": "NVIDIA H100 80GB HBM3",
+    "uuid": "GPU-cda72c4c-4186-217c-ec5c-9cfa50d90b2b",
+    "memory_mib": 81559,
+    "max_sm_clock_mhz": 1980,
+    "driver": "580.95.05",
+    "pcie_gen": 4
+   },
+   "note": "Every batch size on one physical GPU, to answer whether the sawtooth could be device-to-device variation. It cannot: every jump reproduces, including the one that crossed the seam.",
+   "us_per_replica_sweep": {
+    "10": 4.242,
+    "16": 3.861,
+    "25": 3.114,
+    "32": 2.694,
+    "40": 2.725,
+    "50": 2.572,
+    "64": 2.667,
+    "75": 2.41,
+    "80": 2.68,
+    "100": 3.311,
+    "128": 2.775,
+    "150": 2.225,
+    "200": 2.99,
+    "256": 2.983,
+    "320": 2.882,
+    "400": 3.125,
+    "512": 2.081,
+    "768": 3.238,
+    "1024": 2.467
+   }
+  }
+ ],
+ "agreement": {
+  "correlation": 0.9871,
+  "median_ratio": 1.038,
+  "shape_max_deviation_after_debias": 0.087,
+  "minimum_both": "B=512",
+  "jumps": {
+   "80->100": [
+    0.247,
+    0.235
+   ],
+   "128->150": [
+    -0.206,
+    -0.198
+   ],
+   "150->200": [
+    0.36,
+    0.344
+   ],
+   "400->512": [
+    -0.342,
+    -0.334
+   ],
+   "512->768": [
+    0.569,
+    0.556
+   ],
+   "768->1024": [
+    -0.24,
+    -0.238
+   ]
+  }
+ }
+}

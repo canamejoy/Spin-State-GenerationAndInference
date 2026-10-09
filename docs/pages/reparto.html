@@ -218,6 +218,50 @@ amplió la rejilla, el óptimo se movió. Cualquier método que suponga suavidad
 —ajustar una parábola, un proceso gaussiano con núcleo suave— promedia estos
 dientes y entrega el valor equivocado.</div>
 
+<h3>¿Y si fueran GPUs distintas?</h3>
+<p>Modal <b>no</b> garantiza el mismo dispositivo: pedir una H100 da
+<em>una</em> H100, y otro contenedor puede caer en otro host. La curva de arriba
+se armó con dos corridas —los lotes hasta 128 en una, de 150 en adelante en
+otra— unidas por los dos puntos que ambas midieron, que coincidieron al
+0.31&nbsp;% y 0.50&nbsp;%. Queda la pregunta legítima de si los dientes podrían
+ser variación entre dispositivos.</p>
+
+<p>Para cerrarla se repitieron <b>los 19 lotes en un solo contenedor</b>,
+registrando la identidad física de la GPU:</p>
+
+<p style="font-family:var(--mono);font-size:.82rem;color:var(--muted);
+   background:var(--surface);border:1px solid var(--rule);border-radius:6px;
+   padding:10px 12px;overflow-x:auto">NVIDIA H100 80GB HBM3 &middot;
+   GPU-cda72c4c-4186-217c-ec5c-9cfa50d90b2b &middot; 81559 MiB &middot;
+   1980 MHz &middot; driver 580.95.05</p>
+
+<div class="tw"><table>
+  <thead><tr><th>salto</th><th>curva empalmada</th><th>un solo contenedor</th>
+    <th>¿cruzaba la unión?</th></tr></thead>
+  <tbody>
+    <tr><td class="n">80 → 100</td><td class="n">+24.7 %</td><td class="n">+23.5 %</td><td>no</td></tr>
+    <tr><td class="n">128 → 150</td><td class="n">−20.6 %</td><td class="n">−19.8 %</td><td class="win">sí</td></tr>
+    <tr><td class="n">150 → 200</td><td class="n">+36.0 %</td><td class="n">+34.4 %</td><td>no</td></tr>
+    <tr><td class="n">400 → 512</td><td class="n">−34.2 %</td><td class="n">−33.4 %</td><td>no</td></tr>
+    <tr class="best"><td class="n">512 → 768</td><td class="n">+56.9 %</td><td class="n">+55.6 %</td><td>no</td></tr>
+    <tr><td class="n">768 → 1024</td><td class="n">−24.0 %</td><td class="n">−23.8 %</td><td>no</td></tr>
+  </tbody>
+</table></div>
+
+<p><b>Todos los saltos se reproducen, el mínimo sigue en B = 512 y la
+correlación entre las dos curvas es 0.987.</b> El único salto que cruzaba la
+unión mide prácticamente lo mismo dentro de un solo dispositivo. La celda más
+corta de esta repetición desplaza todos los valores un factor casi constante de
+1.038&times;, y al quitar ese sesgo las formas coinciden al 8.7&nbsp;%.</p>
+
+<div class="note"><strong>El argumento tiene tres niveles.</strong> La forma se
+midió <em>dentro</em> de un dispositivo, con identificador auditable. La
+variación <em>entre</em> dispositivos está acotada en <b class="n">1.5 %</b> por
+seis lotes repetidos en cuentas y días distintos. Y las dos curvas, empalmada y
+de contenedor único, coinciden. Para que el hardware explicara el salto de
+57&nbsp;%, la misma GPU tendría que cambiar su velocidad a la mitad entre dos
+celdas separadas por segundos.</div>
+
 <p style="color:var(--muted);font-size:.92rem">El mecanismo no está medido.
 Que 512 y 150 sean buenos y 768 y 400 malos apunta a cómo cada forma del arreglo
 se reparte entre los 132 multiprocesadores de la H100, pero eso es una conjetura
