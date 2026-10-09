@@ -1,0 +1,90 @@
+{
+ "rows": [
+  {
+   "config": "replicas",
+   "devices": 1,
+   "launches": 4,
+   "chains_per_launch": 24,
+   "total_chains": 96,
+   "sweeps": 3000,
+   "wall_s": 0.7550254469999942,
+   "ms_per_sweep": 0.25167514899999804,
+   "us_per_chain_sweep": 2.6216161354166467,
+   "ms_per_sweep_noBP_extrapolated": 0.1245916579207911
+  },
+  {
+   "config": "experiments",
+   "devices": 1,
+   "launches": 24,
+   "chains_per_launch": 4,
+   "total_chains": 96,
+   "sweeps": 3000,
+   "wall_s": 1.5802565040000331,
+   "ms_per_sweep": 0.526752168000011,
+   "us_per_chain_sweep": 5.487001750000116,
+   "ms_per_sweep_noBP_extrapolated": 0.26076840000000545
+  },
+  {
+   "config": "both",
+   "devices": 1,
+   "launches": 1,
+   "chains_per_launch": 96,
+   "total_chains": 96,
+   "sweeps": 3000,
+   "wall_s": 0.7345599470000366,
+   "ms_per_sweep": 0.24485331566667887,
+   "us_per_chain_sweep": 2.550555371527905,
+   "ms_per_sweep_noBP_extrapolated": 0.12121451270627667
+  }
+ ],
+ "thetas": [
+  {
+   "name": "uniform",
+   "Jex": 1.0,
+   "Kan1": 0.2867000102996826,
+   "Kan2": 0.0,
+   "KanS": 0.0,
+   "Hex": 0.76910001039505,
+   "KDM": 0.6535000205039978,
+   "g": 1.5707963267948966
+  },
+  {
+   "name": "helical",
+   "Jex": 1.0,
+   "Kan1": 0.2590999901294708,
+   "Kan2": 0.0,
+   "KanS": 0.0,
+   "Hex": 0.09260000288486481,
+   "KDM": 1.024999976158142,
+   "g": 1.5707963267948966
+  },
+  {
+   "name": "points",
+   "Jex": 1.0,
+   "Kan1": 0.2777000069618225,
+   "Kan2": 0.0,
+   "KanS": 0.0,
+   "Hex": 0.3889000117778778,
+   "KDM": 0.9998000264167786,
+   "g": 1.5707963267948966
+  },
+  {
+   "name": "lines",
+   "Jex": 1.0,
+   "Kan1": 0.5084999799728394,
+   "Kan2": 0.0,
+   "KanS": 0.0,
+   "Hex": 0.022299999371170998,
+   "KDM": 0.5123000144958496,
+   "g": 1.5707963267948966
+  }
+ ],
+ "n_replicas": 24,
+ "n_theta": 4,
+ "total_chains": 96,
+ "sweeps": 3000,
+ "devices": 1,
+ "bp_cost_factor": 2.02,
+ "device": "cuda:0",
+ "n_active": 5245
+}

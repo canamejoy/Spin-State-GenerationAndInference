@@ -1,0 +1,35 @@
+{
+ "note": "repeat 1 of each cell carries JIT compilation and is discarded",
+ "bscan_1gpu": {
+  "25": [
+   3.502,
+   2.827,
+   2.825
+  ],
+  "50": [
+   2.705,
+   2.321,
+   2.325
+  ],
+  "100": [
+   3.044,
+   2.962,
+   2.958
+  ]
+ },
+ "bscan_2gpu": {
+  "25": [
+   3.46,
+   2.801,
+   2.8
+  ]
+ },
+ "bscan_4gpu": {
+  "25": [
+   3.502,
+   2.807,
+   2.807
+  ]
+ },
+ "units": "device-microseconds per chain-sweep = wall * devices / (sweeps * chains)"
+}

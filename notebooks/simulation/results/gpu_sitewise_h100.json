@@ -1,0 +1,13 @@
+{
+ "cell": "gpu_sitewise",
+ "device": "cuda:0",
+ "batch": 100,
+ "max_sites": 400,
+ "sweeps": 2,
+ "wall_s": 18.478770893,
+ "us_per_site": 23098.46361625,
+ "ms_per_sweep": 121151.44166723125,
+ "ms_per_replica_sweep": 1211.5144166723126,
+ "n_active": 5245,
+ "scaled": true
+}

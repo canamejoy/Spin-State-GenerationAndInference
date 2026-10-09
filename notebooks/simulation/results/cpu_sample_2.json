@@ -1,0 +1,31 @@
+{
+ "rows": [
+  {
+   "replicas": 100,
+   "elapsed_s": 16.985686203,
+   "first_call_s": 20.890952955000003,
+   "ms_per_sweep": 94.36492335000001,
+   "us_per_replica_sweep": 943.6492335000002,
+   "sweeps": 180
+  }
+ ],
+ "n_active": 5245,
+ "n_temps": 3,
+ "n_therm": 40,
+ "n_meas": 20,
+ "params": {
+  "Jex": 1.0,
+  "Kan1": 0.177,
+  "Kan2": 0.034,
+  "KanS": 0.139,
+  "Hex": 0.483,
+  "KDM": 0.88,
+  "g": 1.5707963267948966
+ },
+ "cpu_model": "unknown",
+ "threads": 24,
+ "devices": [
+  "cpu:0"
+ ],
+ "jax_version": "0.10.2"
+}

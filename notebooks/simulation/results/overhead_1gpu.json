@@ -1,0 +1,12 @@
+{
+ "devices": 1,
+ "replicas": 100,
+ "per_device": 100,
+ "n_temps": 10,
+ "n_therm": 200,
+ "n_meas": 100,
+ "update_only_ms": 0.27730951299999995,
+ "full_anneal_ms": 0.30004288599999995,
+ "overhead_pct": 8.197833804569132,
+ "device": "cuda:0"
+}

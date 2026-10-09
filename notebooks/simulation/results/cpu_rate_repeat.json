@@ -1,0 +1,55 @@
+{
+ "rows": [
+  {
+   "replicas": 100,
+   "elapsed_s": 27.019741287000002,
+   "first_call_s": 30.041287536999995,
+   "ms_per_sweep": 67.5493532175,
+   "us_per_replica_sweep": 675.493532175,
+   "sweeps": 400
+  },
+  {
+   "replicas": 100,
+   "elapsed_s": 25.427032776000004,
+   "first_call_s": 24.891186283000003,
+   "ms_per_sweep": 63.56758194000001,
+   "us_per_replica_sweep": 635.6758194000001,
+   "sweeps": 400
+  },
+  {
+   "replicas": 100,
+   "elapsed_s": 24.731937860999977,
+   "first_call_s": 23.573766369999987,
+   "ms_per_sweep": 61.82984465249994,
+   "us_per_replica_sweep": 618.2984465249995,
+   "sweeps": 400
+  },
+  {
+   "replicas": 100,
+   "elapsed_s": 22.587447412000017,
+   "first_call_s": 23.23829123499999,
+   "ms_per_sweep": 56.46861853000004,
+   "us_per_replica_sweep": 564.6861853000005,
+   "sweeps": 400
+  }
+ ],
+ "n_active": 5245,
+ "n_temps": 4,
+ "n_therm": 60,
+ "n_meas": 40,
+ "params": {
+  "Jex": 1.0,
+  "Kan1": 0.177,
+  "Kan2": 0.034,
+  "KanS": 0.139,
+  "Hex": 0.483,
+  "KDM": 0.88,
+  "g": 1.5707963267948966
+ },
+ "cpu_model": "unknown",
+ "threads": 24,
+ "devices": [
+  "cpu:0"
+ ],
+ "jax_version": "0.10.2"
+}

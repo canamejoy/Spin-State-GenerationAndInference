@@ -1,0 +1,130 @@
+{
+ "rows": [
+  {
+   "config": "bp_only",
+   "devices": 4,
+   "launches": 400,
+   "chains_per_launch": 1,
+   "total_chains": 400,
+   "sweeps": 2000,
+   "wall_s": 12.896897082000002,
+   "ms_per_sweep": 6.959202544333331,
+   "us_per_chain_sweep": 17.398006360833325,
+   "ms_sd": 0.38288728176953324,
+   "ms_all": [
+    6.448448541000001,
+    7.370309333999998,
+    7.058849757999994
+   ],
+   "repeats": 3,
+   "ms_per_sweep_noBP_extrapolated": 3.445149774422441
+  },
+  {
+   "config": "replicas",
+   "devices": 4,
+   "launches": 4,
+   "chains_per_launch": 100,
+   "total_chains": 400,
+   "sweeps": 2000,
+   "wall_s": 0.5226588159999892,
+   "ms_per_sweep": 0.26149762483332967,
+   "us_per_chain_sweep": 0.6537440620833241,
+   "ms_sd": 0.00013859629462290815,
+   "ms_all": [
+    0.2613294079999946,
+    0.2614946085000014,
+    0.26166885799999307
+   ],
+   "repeats": 3,
+   "ms_per_sweep_noBP_extrapolated": 0.12945426971947013
+  },
+  {
+   "config": "states",
+   "devices": 4,
+   "launches": 100,
+   "chains_per_launch": 4,
+   "total_chains": 400,
+   "sweeps": 2000,
+   "wall_s": 4.041743155000006,
+   "ms_per_sweep": 2.0249278288333366,
+   "us_per_chain_sweep": 5.062319572083342,
+   "ms_sd": 0.02332429758221053,
+   "ms_all": [
+    2.020871577500003,
+    2.05530545900001,
+    1.9986064499999971
+   ],
+   "repeats": 3,
+   "ms_per_sweep_noBP_extrapolated": 1.002439519224424
+  },
+  {
+   "config": "both",
+   "devices": 4,
+   "launches": 1,
+   "chains_per_launch": 400,
+   "total_chains": 400,
+   "sweeps": 2000,
+   "wall_s": 0.6068561589999888,
+   "ms_per_sweep": 0.3032486768333295,
+   "us_per_chain_sweep": 0.7581216920833238,
+   "ms_sd": 0.00012718233727969318,
+   "ms_all": [
+    0.3034280794999944,
+    0.30317011249999837,
+    0.3031478384999957
+   ],
+   "repeats": 3,
+   "ms_per_sweep_noBP_extrapolated": 0.15012310734323242
+  }
+ ],
+ "thetas": [
+  {
+   "name": "uniform",
+   "Jex": 1.0,
+   "Kan1": 0.2867000102996826,
+   "Kan2": 0.0,
+   "KanS": 0.0,
+   "Hex": 0.76910001039505,
+   "KDM": 0.6535000205039978,
+   "g": 1.5707963267948966
+  },
+  {
+   "name": "helical",
+   "Jex": 1.0,
+   "Kan1": 0.2590999901294708,
+   "Kan2": 0.0,
+   "KanS": 0.0,
+   "Hex": 0.09260000288486481,
+   "KDM": 1.024999976158142,
+   "g": 1.5707963267948966
+  },
+  {
+   "name": "points",
+   "Jex": 1.0,
+   "Kan1": 0.2777000069618225,
+   "Kan2": 0.0,
+   "KanS": 0.0,
+   "Hex": 0.3889000117778778,
+   "KDM": 0.9998000264167786,
+   "g": 1.5707963267948966
+  },
+  {
+   "name": "lines",
+   "Jex": 1.0,
+   "Kan1": 0.5084999799728394,
+   "Kan2": 0.0,
+   "KanS": 0.0,
+   "Hex": 0.022299999371170998,
+   "KDM": 0.5123000144958496,
+   "g": 1.5707963267948966
+  }
+ ],
+ "n_replicas": 100,
+ "n_theta": 4,
+ "total_chains": 400,
+ "sweeps": 2000,
+ "devices": 4,
+ "bp_cost_factor": 2.02,
+ "device": "cuda:0",
+ "n_active": 5245
+}

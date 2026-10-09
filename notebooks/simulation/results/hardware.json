@@ -1,0 +1,26 @@
+{
+ "note": "Captured on Modal via lscpu, /proc/cpuinfo and nvidia-smi. The CPU model name is reported as 'unknown' by the environment itself: Modal runs containers under the gVisor sandbox, which masks it. It is not a parsing failure and it is not recoverable from inside the container.",
+ "cpu_container": {
+  "requested": "cpu=8.0",
+  "vendor": "GenuineIntel",
+  "model_name": "unknown (masked by gVisor)",
+  "visible_vcpus": 24,
+  "threads_per_core": 1,
+  "bogomips": 3600.14,
+  "mem_total_kB": 147837244,
+  "platform": "Linux-4.19.0-gvisor-x86_64-with-glibc2.36",
+  "caveat": "cpu=8.0 is a cgroup time limit, not a visibility limit: the container sees 24 vCPUs, so numpy and JAX size their thread pools to 24 while being throttled to 8 cores of CPU time. This is a likely contributor to the ~20% between-container scatter."
+ },
+ "gpu_container": {
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "memory_MiB": 81559,
+  "driver_version": "580.95.05",
+  "compute_capability": "9.0",
+  "pcie_link_gen_max": 5,
+  "jax_device_kind": "NVIDIA H100 80GB HBM3",
+  "host_cpu_vendor": "AuthenticAMD",
+  "host_model_name": "unknown (masked by gVisor)",
+  "host_visible_vcpus": 8,
+  "mem_total_kB": 235163892
+ }
+}

@@ -1,0 +1,42 @@
+{
+ "h100_usd_per_second": 0.001097,
+ "runs": {
+  "replicas_1gpu": {
+   "elapsed_s": 3103.176395349,
+   "devices": 1,
+   "gpu_seconds": 3103.176395349,
+   "usd": 3.4041845056978532
+  },
+  "replicas_2gpu": {
+   "elapsed_s": 1653.7359121529998,
+   "devices": 2,
+   "gpu_seconds": 3307.4718243059997,
+   "usd": 3.628296591263682
+  },
+  "replicas_4gpu": {
+   "elapsed_s": 1012.490302414,
+   "devices": 4,
+   "gpu_seconds": 4049.961209656,
+   "usd": 4.442807446992632
+  },
+  "both_1gpu": {
+   "elapsed_s": 3727.1231574179997,
+   "devices": 1,
+   "gpu_seconds": 3727.1231574179997,
+   "usd": 4.088654103687546
+  },
+  "both_2gpu": {
+   "elapsed_s": 1806.1997515439998,
+   "devices": 2,
+   "gpu_seconds": 3612.3995030879996,
+   "usd": 3.962802254887536
+  },
+  "both_4gpu": {
+   "elapsed_s": 981.501828041,
+   "devices": 4,
+   "gpu_seconds": 3926.007312164,
+   "usd": 4.306830021443909
+  }
+ },
+ "total_usd": 23.83357492397316
+}

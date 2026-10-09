@@ -1,0 +1,61 @@
+{
+ "rows": [
+  {
+   "cell": "nodp_nobp",
+   "replicas": 100,
+   "devices": 0,
+   "wall_s": 0.0764389350000001,
+   "ms_per_sweep": 334.10184506250044,
+   "us_per_site": 63.69911250000008,
+   "scaled": true,
+   "sites_timed": 200,
+   "engine": "numpy"
+  },
+  {
+   "cell": "nodp_bp",
+   "replicas": 100,
+   "devices": 0,
+   "wall_s": 0.07799852100000049,
+   "ms_per_sweep": 340.9185355375021,
+   "us_per_site": 64.99876750000041,
+   "scaled": true,
+   "sites_timed": 200,
+   "engine": "numpy"
+  },
+  {
+   "cell": "dp_nobp",
+   "replicas": 100,
+   "devices": 0,
+   "wall_s": 26.625596172999998,
+   "ms_per_sweep": 116376.04327282081,
+   "us_per_site": 22187.99681083333,
+   "scaled": true,
+   "sites_timed": 200,
+   "engine": "numpy"
+  },
+  {
+   "cell": "dp_bp",
+   "replicas": 100,
+   "devices": 1,
+   "ms_per_sweep": 58.09070164333334,
+   "scaled": false,
+   "sites_timed": 5245,
+   "wall_s": 17.427210493000004,
+   "engine": "jax"
+  }
+ ],
+ "replicas": 100,
+ "devices": 0,
+ "device": "cpu:0",
+ "n_active": 5245,
+ "params": {
+  "Jex": 1.0,
+  "Kan1": 0.177,
+  "Kan2": 0.034,
+  "KanS": 0.139,
+  "Hex": 0.483,
+  "KDM": 0.88,
+  "g": 1.5707963267948966
+ },
+ "jax_version": "0.10.2"
+}
