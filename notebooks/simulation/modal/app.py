@@ -2438,6 +2438,328 @@ def metro_probe(batches: str = "48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,
                       sweeps, repeats, tag, rd, layers)
 
 
+# --------------------------------------------------------------------------
+# Experiment 3e: ask the compiler and the profiler directly.
+#
+# Raw CUDA never reproduces the penalty, so it is a decision XLA makes as a
+# function of B. Rather than keep guessing which decision, this measures it two
+# ways in one container.
+#
+#  - It dumps the compiled module per B and reads back what the compiler chose:
+#    how many kernels it emitted and the block size (`maxntidx`) of each. If the
+#    launch geometry changes when B is a multiple of four, that is the answer.
+#
+#  - It profiles the run per B and aggregates GPU kernel time BY KERNEL NAME.
+#    The penalty is 12% of the whole; one named kernel has to carry it. Finding
+#    which one localises the cause to a single fusion instead of to "XLA".
+#
+# The host->device path is not a candidate and is not tested here: every
+# argument is already a device array before the timer starts (`pack` returns
+# `jnp.asarray`, `init_spins` returns a jnp array, a PRNGKey is a device array),
+# so the timed region contains no transfer, and Python dispatch is one fixed
+# cost per call amortised over seconds of kernel time.
+def _xla_dump(batches, tag, Rd, L, n_temps, n_therm, n_meas):
+    import os, sys, io, json, glob, gzip, re, time, collections
+    # XLA reads its flags once at initialisation, so this has to precede jax.
+    os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "")
+                               + " --xla_dump_to=/tmp/dump").strip()
+    os.makedirs("/tmp/dump", exist_ok=True)
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    sweeps = int(n_temps) * (n_therm + n_meas)
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={geo['N']} stride={12*L*geo['N']**2:,}  "
+          f"{sweeps} sweeps/cell", flush=True)
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, n_therm, n_meas)
+
+    def kernels_of(B):
+        """Block size and count of the kernels the compiler emitted for this B."""
+        best = None
+        for f in glob.glob("/tmp/dump/*"):
+            if not (f.endswith(".ll") or f.endswith(".ptx")):
+                continue
+            try:
+                t = io.open(f, encoding="utf-8", errors="replace").read()
+            except Exception:
+                continue
+            if f.endswith(".ptx"):
+                ents = re.findall(r"\.visible \.entry (\w+)", t)
+                ntid = [int(m) for m in re.findall(r"\.maxntid (\d+)", t)]
+            else:
+                ents = re.findall(r'define\s+\w*\s*void @(\w+)', t)
+                ntid = [int(m) for m in
+                        re.findall(r'"maxntidx", i32 (\d+)', t)]
+            if ents and (best is None or len(ents) > best[0]):
+                best = (len(ents), sorted(collections.Counter(ntid).items()), f)
+        return best
+
+    out = []
+    for B in batches:
+        for f in glob.glob("/tmp/dump/*"):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11), geo, B),
+                jax.random.PRNGKey(12), cols)
+        fn = jax.jit(body).lower(*args).compile()
+        jax.block_until_ready(fn(*args))                       # warm
+        t0 = time.perf_counter()
+        jax.block_until_ready(fn(*args))
+        wall = time.perf_counter() - t0
+        us = wall * 1e6 / (sweeps * B)
+
+        pdir = f"/tmp/prof/B{B}"
+        with jax.profiler.trace(pdir):
+            jax.block_until_ready(fn(*args))
+
+        # Aggregate GPU kernel time by name out of the Chrome trace.
+        per, tot = collections.Counter(), 0.0
+        tr = sorted(glob.glob(f"{pdir}/**/*.trace.json.gz", recursive=True))
+        if tr:
+            with gzip.open(tr[-1], "rt") as fh:
+                j = json.load(fh)
+            ev = j.get("traceEvents", [])
+            pname = {e["pid"]: e["args"].get("name", "")
+                     for e in ev
+                     if e.get("ph") == "M" and e.get("name") == "process_name"}
+            gpu = {p for p, n in pname.items() if "GPU" in n and "Stream" not in n}
+            for e in ev:
+                if e.get("ph") == "X" and e.get("pid") in gpu and "dur" in e:
+                    nm = re.sub(r"\.\d+$", "", str(e.get("name", "?")))
+                    per[nm] += float(e["dur"]); tot += float(e["dur"])
+        kk = kernels_of(B)
+        out.append(dict(B=int(B), us=us, wall_s=wall,
+                        n_kernels=(kk[0] if kk else None),
+                        block_sizes=(kk[1] if kk else None),
+                        gpu_us_total=tot,
+                        top=[(n, v) for n, v in per.most_common(8)]))
+        print(f"\n  B={B:4d}{'  (multiple of 4)' if B % 4 == 0 else ''}  "
+              f"{us:7.3f} us/replica-sweep   kernels={kk[0] if kk else '?'}  "
+              f"block sizes={kk[1] if kk else '?'}", flush=True)
+        print(f"    traced GPU time {tot/1e3:9.2f} ms over "
+              f"{len(per)} distinct kernels", flush=True)
+        for n, v in per.most_common(5):
+            print(f"      {v/1e3:9.2f} ms  {100*v/tot if tot else 0:5.1f}%  "
+                  f"{n[:72]}", flush=True)
+
+    print("\n=== what the compiler chose, per B ===", flush=True)
+    print(f"{'B':>5} {'B%4':>4} {'us':>8} {'kernels':>8}  block sizes", flush=True)
+    for r in out:
+        print(f"{r['B']:5d} {r['B'] % 4:4d} {r['us']:8.3f} "
+              f"{str(r['n_kernels']):>8}  {r['block_sizes']}", flush=True)
+
+    # Same kernel name, how its share of GPU time moves with B mod 4.
+    names = set()
+    for r in out:
+        names |= {n for n, _ in r["top"]}
+    print("\n=== per-kernel GPU time (ms), by B ===", flush=True)
+    hdr = "kernel".ljust(54) + "".join(f"{r['B']:>9}" for r in out)
+    print(hdr, flush=True)
+    print("-" * len(hdr), flush=True)
+    for nm in sorted(names):
+        d = {r["B"]: dict(r["top"]).get(nm, 0.0) / 1e3 for r in out}
+        print(nm[:52].ljust(54) + "".join(f"{d[r['B']]:9.2f}" for r in out),
+              flush=True)
+    m4 = [r for r in out if r["B"] % 4 == 0]
+    nm4 = [r for r in out if r["B"] % 4]
+    if m4 and nm4:
+        a = sum(r["gpu_us_total"] / r["B"] for r in m4) / len(m4)
+        b = sum(r["gpu_us_total"] / r["B"] for r in nm4) / len(nm4)
+        print(f"\ntraced GPU us per replica: multiples of 4 {a:,.1f}  "
+              f"others {b:,.1f}  -> {100*(a/b-1):+.1f}%", flush=True)
+        print("If this matches the wall-clock penalty, the cost is inside the "
+              "kernels and the table above names which.", flush=True)
+    res = dict(rows=out, Rd=float(Rd), L=int(L), N=int(geo["N"]), sweeps=sweeps,
+               device=device_identity())
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+# The first attempt at reading the compiler's choices matched nothing, because
+# it guessed at the dump's file names and formats. This one looks first: it
+# lists what XLA actually wrote, then searches every text file for whatever
+# records a launch geometry -- `launch_dimensions` in a thunk sequence,
+# `maxntidx` in LLVM IR, `.maxntid` in PTX -- and reports per kernel.
+def _launch_dims(batches, tag, Rd, L, n_temps, n_therm, n_meas):
+    import os, sys, io, json, glob, re, collections
+    os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "")
+                               + " --xla_dump_to=/tmp/dump").strip()
+    os.makedirs("/tmp/dump", exist_ok=True)
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    print(f"gpu={device_identity()}", flush=True)
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, n_therm, n_meas)
+
+    # The thunk sequence writes the geometry as
+    #   `<fusion name> grid: [G, 1, 1] threads: [T, 1, 1]`
+    THUNK = re.compile(r"\]\s+([A-Za-z_][\w$]*) grid: \[(\d+), 1, 1\]"
+                       r" threads: \[(\d+), 1, 1\]")
+    PAT = (("thunk_launch", re.compile(r"launch_dimensions[^\n]{0,120}")),
+           ("llvm_maxntidx", re.compile(r'"maxntidx", i32 (\d+)')),
+           ("ptx_maxntid", re.compile(r"\.maxntid ([\d, ]+)")),
+           ("ptx_entry", re.compile(r"\.visible \.entry ([\w$]+)")),
+           ("llvm_define", re.compile(r"define[^@\n]{0,40}@([\w$]+)")))
+    out = []
+    for i, B in enumerate(batches):
+        for f in glob.glob("/tmp/dump/*"):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11), geo, B),
+                jax.random.PRNGKey(12), cols)
+        jax.jit(body).lower(*args).compile()
+
+        # Hundreds of tiny `jit_stage` modules come from tracing the arguments;
+        # only the module that carries the (B, L, N, N, 3) array is the kernel
+        # under study, so everything is filtered to that module's prefix.
+        files = sorted(glob.glob("/tmp/dump/*"))
+        big = max(files, key=os.path.getsize)
+        pre = os.path.basename(big).split(".jit_")[0]
+        files = [f for f in files if os.path.basename(f).startswith(pre)]
+        if i == 0:
+            print(f"\nXLA dumped {len(sorted(glob.glob('/tmp/dump/*')))} files; "
+                  f"the module under study is {pre}, with {len(files)} of them. "
+                  f"Its 12 largest:", flush=True)
+            for f in sorted(files, key=os.path.getsize, reverse=True)[:12]:
+                print(f"    {os.path.getsize(f):12,d} B  {os.path.basename(f)}",
+                      flush=True)
+            thunks = [f for f in files if "thunk_sequence" in f]
+            if thunks:
+                t = io.open(thunks[0], encoding="utf-8", errors="replace").read()
+                print(f"\n  head of {os.path.basename(thunks[0])}:", flush=True)
+                for ln in t.splitlines()[:25]:
+                    print(f"      {ln[:150]}", flush=True)
+        hits = collections.defaultdict(list)
+        for f in files:
+            try:
+                t = io.open(f, encoding="utf-8", errors="replace").read()
+            except Exception:
+                continue
+            for nm, rx in PAT:
+                m = rx.findall(t)
+                if m:
+                    hits[nm].extend(m)
+        rec = dict(B=int(B), n_files=len(files))
+        print(f"\n  B={B}{'  (multiple of 4)' if B % 4 == 0 else ''}:", flush=True)
+        for nm, _ in PAT:
+            v = hits.get(nm, [])
+            if not v:
+                continue
+            if nm in ("ptx_entry", "llvm_define"):
+                rec[nm] = len(set(v))
+                print(f"    {nm:14s} {len(set(v))} distinct", flush=True)
+            else:
+                c = collections.Counter(v)
+                rec[nm] = sorted(c.items())[:40]
+                print(f"    {nm:14s} {len(v)} occurrences, "
+                      f"{len(c)} distinct values", flush=True)
+                for val, n in c.most_common(10):
+                    print(f"        x{n:4d}  {str(val)[:96]}", flush=True)
+        # Per-kernel grid and block, from the module's own thunk sequence.
+        geom = {}
+        for f in files:
+            if "thunk_sequence" not in f:
+                continue
+            t = io.open(f, encoding="utf-8", errors="replace").read()
+            for nm, g, th in THUNK.findall(t):
+                geom[nm] = (int(g), int(th))
+        rec["geom"] = geom
+        blocks = sorted({th for _, th in geom.values()})
+        print(f"    thunk geometry  {len(geom)} kernels, "
+              f"block sizes in use: {blocks}", flush=True)
+        out.append(rec)
+
+    print("\n=== block sizes XLA chose, per B ===", flush=True)
+    for r in out:
+        g = r.get("geom") or {}
+        c = collections.Counter(th for _, th in g.values())
+        print(f"  B={r['B']:4d} B%4={r['B'] % 4}  kernels={len(g):3d}  "
+              f"blocks={sorted(c.items())}", flush=True)
+
+    print("\n=== heaviest kernels: grid x block, per B ===", flush=True)
+    allnm = sorted(set().union(*[set((r.get("geom") or {}).keys()) for r in out]))
+    big = [n for n in allnm
+           if max((r.get("geom") or {}).get(n, (0, 0))[0] for r in out) > 1000]
+    hdr = "kernel".ljust(38) + "".join(f"{r['B']:>18}" for r in out)
+    print(hdr, flush=True)
+    print("-" * len(hdr), flush=True)
+    for n in big:
+        row = n[:36].ljust(38)
+        for r in out:
+            g, th = (r.get("geom") or {}).get(n, (0, 0))
+            row += f"{(str(g) + 'x' + str(th)) if g else '-':>18}"
+        print(row, flush=True)
+    print("\nSame block size across B means XLA is not choosing a different "
+          "launch shape; a kernel present at one B and absent at another means "
+          "it chose a different fusion structure.", flush=True)
+
+    print("\n=== launch geometry per B ===", flush=True)
+    for r in out:
+        ld = r.get("thunk_launch") or r.get("llvm_maxntidx") or r.get("ptx_maxntid")
+        print(f"  B={r['B']:4d} B%4={r['B'] % 4}  files={r['n_files']}  "
+              f"kernels={r.get('ptx_entry') or r.get('llvm_define')}  "
+              f"{str(ld)[:120]}", flush=True)
+    res = dict(rows=out, Rd=float(Rd), L=int(L), device=device_identity())
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", **_BS)
+def launch_dims_h100(b, tag, Rd, L, nt, th, me):
+    return _launch_dims(b, tag, Rd, L, nt, th, me)
+
+
+@app.local_entrypoint()
+def launch_dims(batches: str = "59,60,63,64", rd: float = 18.30,
+                layers: int = 5, n_temps: int = 8, n_therm: int = 200,
+                n_meas: int = 100, tag: str = "exp3f"):
+    """Experiment 3f: the launch geometry XLA picks, per B. Compile only."""
+    launch_dims_h100.remote([int(x) for x in batches.split(",") if x], tag,
+                            rd, layers, n_temps, n_therm, n_meas)
+
+
+@app.function(gpu="H100", **_BS)
+def xla_dump_h100(b, tag, Rd, L, nt, th, me):
+    return _xla_dump(b, tag, Rd, L, nt, th, me)
+
+
+@app.local_entrypoint()
+def xla_dump(batches: str = "51,52,53,59,60,63,64", rd: float = 18.30,
+             layers: int = 5, n_temps: int = 8, n_therm: int = 200,
+             n_meas: int = 100, tag: str = "exp3e"):
+    """Experiment 3e: what the compiler emits per B, and which kernel pays."""
+    xla_dump_h100.remote([int(x) for x in batches.split(",") if x], tag,
+                         rd, layers, n_temps, n_therm, n_meas)
+
+
 @app.function(gpu="H100", **_BS)
 def xla_probe_h100(b, tag, Rd, L):
     return _xla_layout_probe(b, tag, Rd, L)
