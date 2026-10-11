@@ -1342,6 +1342,296 @@
    "repeats": 3,
    "kernel": "raw CUDA stencil + K-1 sibling reads in one arena"
   },
-  "finding": "A raw CUDA 7-point stencil with the identical array shape, identical replica stride (91,260 B), identical wrap topology and identical checkerboard parity shows NO penalty: -0.1%, full overlap, on the same H100 and the same lattice where the JAX kernel gives +12.1%. Adding 1, 2, 4 or 8 same-shaped sibling buffers in one contiguous arena changes nothing (-0.1% to +0.4%). XLA does not pad the batch dimension (argument bytes per replica constant to 0.000%) and uses one layout {4,3,2,1,0} across the window. Conclusion: the penalty is NOT intrinsic to this access pattern on this hardware. It comes from how XLA compiles this particular kernel. The raw stencil omits the Philox RNG, exp(), the anisotropy/DMI arithmetic and jnp.roll neighbour construction, so it is a proxy, and which of those is responsible is not yet established."
+  "finding": "A raw CUDA 7-point stencil with the identical array shape, identical replica stride (91,260 B), identical wrap topology and identical checkerboard parity shows NO penalty: -0.1%, full overlap, on the same H100 and the same lattice where the JAX kernel gives +12.1%. Adding 1, 2, 4 or 8 same-shaped sibling buffers in one contiguous arena changes nothing (-0.1% to +0.4%). XLA does not pad the batch dimension (argument bytes per replica constant to 0.000%) and uses one layout {4,3,2,1,0} across the window. Conclusion: the penalty is NOT intrinsic to this access pattern on this hardware. It comes from how XLA compiles this particular kernel. Adding the random draws does not change this either. A raw Metropolis substep with three normals and one uniform per site, a uniaxial term, the exp() and the acceptance branch gives -0.2% with the RNG generated in registers and -0.1% with it written to a full-size 4-float-per-site buffer by a separate kernel each substep and read back. Both are flat with full overlap, even though the added work is real: the inline version costs 1.12x the bare stencil and the materialised version 1.33x. So neither the replica stride, nor sibling-buffer arena alignment, nor the generator's traffic explains the +12.1%. What still differs from the compiled kernel: jnp.roll neighbour construction (which XLA may materialise as shifted copies instead of computing modular indices), the per-temperature reductions, and the block and grid dimensions XLA picks per fusion, which derive from an element count that depends on B. The next step needs no new kernel: dump XLA's launch dimensions and fusion configs per B and look for what changes at B = 0 mod 4.",
+  "3d_raw_cuda_with_rng": {
+   "by_mode": [
+    {
+     "mode": 0,
+     "label": "no RNG (the 3b control)",
+     "rows": [
+      {
+       "B": 48,
+       "us": 0.49121407447037874,
+       "sd_s": 3.387860175854125e-06
+      },
+      {
+       "B": 49,
+       "us": 0.49222203339038245,
+       "sd_s": 3.94656043914537e-07
+      },
+      {
+       "B": 50,
+       "us": 0.4900341351826986,
+       "sd_s": 1.395257357140389e-06
+      },
+      {
+       "B": 51,
+       "us": 0.48375913000834014,
+       "sd_s": 4.230217508156322e-06
+      },
+      {
+       "B": 52,
+       "us": 0.4759347031259129,
+       "sd_s": 1.807296508310191e-06
+      },
+      {
+       "B": 53,
+       "us": 0.46968688005171483,
+       "sd_s": 8.614363626839186e-06
+      },
+      {
+       "B": 54,
+       "us": 0.47929810888973284,
+       "sd_s": 6.195600569776624e-07
+      },
+      {
+       "B": 55,
+       "us": 0.4767414921461935,
+       "sd_s": 3.777970288960655e-06
+      },
+      {
+       "B": 56,
+       "us": 0.47021301965864876,
+       "sd_s": 5.198376689820672e-06
+      },
+      {
+       "B": 57,
+       "us": 0.46469738608912425,
+       "sd_s": 1.2897699150004448e-06
+      },
+      {
+       "B": 58,
+       "us": 0.46660077982935405,
+       "sd_s": 3.633853397804252e-06
+      },
+      {
+       "B": 59,
+       "us": 0.4674829421968335,
+       "sd_s": 5.634366044271475e-06
+      },
+      {
+       "B": 60,
+       "us": 0.46239347811098447,
+       "sd_s": 3.5541442278284757e-06
+      },
+      {
+       "B": 61,
+       "us": 0.45692648826835364,
+       "sd_s": 4.019594837329024e-06
+      },
+      {
+       "B": 62,
+       "us": 0.4547730483461879,
+       "sd_s": 6.087675467862442e-06
+      },
+      {
+       "B": 63,
+       "us": 0.4568584045194865,
+       "sd_s": 1.8171479919403112e-06
+      },
+      {
+       "B": 64,
+       "us": 0.45377694898181486,
+       "sd_s": 1.654404293557571e-07
+      }
+     ],
+     "mod4_penalty": -0.0018737124993235543,
+     "overlap": true
+    },
+    {
+     "mode": 1,
+     "label": "RNG inline, fused, no extra traffic",
+     "rows": [
+      {
+       "B": 48,
+       "us": 0.5451292461819118,
+       "sd_s": 6.0604093678144385e-06
+      },
+      {
+       "B": 49,
+       "us": 0.5494846075840818,
+       "sd_s": 3.8550522691346165e-06
+      },
+      {
+       "B": 50,
+       "us": 0.5501212437947591,
+       "sd_s": 5.682333361523811e-06
+      },
+      {
+       "B": 51,
+       "us": 0.5433129329307406,
+       "sd_s": 3.6383617167278675e-06
+      },
+      {
+       "B": 52,
+       "us": 0.5343692323081514,
+       "sd_s": 3.0878226141908983e-06
+      },
+      {
+       "B": 53,
+       "us": 0.5259961502107183,
+       "sd_s": 6.355550739345477e-06
+      },
+      {
+       "B": 54,
+       "us": 0.5377600124343433,
+       "sd_s": 2.9609805879563448e-06
+      },
+      {
+       "B": 55,
+       "us": 0.5342884834366616,
+       "sd_s": 6.671728727123928e-07
+      },
+      {
+       "B": 56,
+       "us": 0.5267927003285241,
+       "sd_s": 5.62322140399859e-06
+      },
+      {
+       "B": 57,
+       "us": 0.5193693410118654,
+       "sd_s": 5.025443031939647e-06
+      },
+      {
+       "B": 58,
+       "us": 0.520446583685747,
+       "sd_s": 3.71556877099356e-06
+      },
+      {
+       "B": 59,
+       "us": 0.5249844028451349,
+       "sd_s": 3.81556532837768e-06
+      },
+      {
+       "B": 60,
+       "us": 0.519162654876709,
+       "sd_s": 5.868469447248717e-06
+      },
+      {
+       "B": 61,
+       "us": 0.5124024875828478,
+       "sd_s": 3.855983789488749e-06
+      },
+      {
+       "B": 62,
+       "us": 0.5079916984804215,
+       "sd_s": 5.852984712090384e-06
+      },
+      {
+       "B": 63,
+       "us": 0.513685216348638,
+       "sd_s": 2.7460790986079783e-06
+      },
+      {
+       "B": 64,
+       "us": 0.5106258392333984,
+       "sd_s": 5.071629852632839e-06
+      }
+     ],
+     "mod4_penalty": -0.002090263904315548,
+     "overlap": true
+    },
+    {
+     "mode": 2,
+     "label": "RNG materialised, written then read",
+     "rows": [
+      {
+       "B": 48,
+       "us": 0.6605325804816352,
+       "sd_s": 2.7449881379296026e-06
+      },
+      {
+       "B": 49,
+       "us": 0.6612263028583829,
+       "sd_s": 9.195189923474597e-06
+      },
+      {
+       "B": 50,
+       "us": 0.657702742682563,
+       "sd_s": 8.968075579795165e-06
+      },
+      {
+       "B": 51,
+       "us": 0.6505167925799333,
+       "sd_s": 2.7499594644325758e-06
+      },
+      {
+       "B": 52,
+       "us": 0.6406519555637978,
+       "sd_s": 7.019124571929866e-06
+      },
+      {
+       "B": 53,
+       "us": 0.6319768373821267,
+       "sd_s": 3.0133912587267387e-06
+      },
+      {
+       "B": 54,
+       "us": 0.6382564654566132,
+       "sd_s": 7.579119230719042e-06
+      },
+      {
+       "B": 55,
+       "us": 0.6340037066527087,
+       "sd_s": 3.919953142007215e-06
+      },
+      {
+       "B": 56,
+       "us": 0.6261003206646631,
+       "sd_s": 9.845622710445298e-06
+      },
+      {
+       "B": 57,
+       "us": 0.6185547046029312,
+       "sd_s": 1.4134912963170624e-05
+      },
+      {
+       "B": 58,
+       "us": 0.6182541061635218,
+       "sd_s": 2.351638568697337e-06
+      },
+      {
+       "B": 59,
+       "us": 0.6193762669680034,
+       "sd_s": 1.5945878192548677e-06
+      },
+      {
+       "B": 60,
+       "us": 0.6129315694173176,
+       "sd_s": 5.31731740607961e-06
+      },
+      {
+       "B": 61,
+       "us": 0.6060406592808569,
+       "sd_s": 2.913276889692938e-06
+      },
+      {
+       "B": 62,
+       "us": 0.6010580746503714,
+       "sd_s": 3.4746854081695446e-06
+      },
+      {
+       "B": 63,
+       "us": 0.6026988391102517,
+       "sd_s": 8.547143467600909e-06
+      },
+      {
+       "B": 64,
+       "us": 0.5992213719420962,
+       "sd_s": 4.005463716090528e-06
+      }
+     ],
+     "mod4_penalty": -0.0006651200935255952,
+     "overlap": true
+    }
+   ],
+   "Rd": 18.3,
+   "L": 5,
+   "N": 39,
+   "stride": 91260,
+   "sweeps": 600,
+   "repeats": 3,
+   "kernel": "raw CUDA Metropolis substep via cupy RawModule"
+  }
  }
 }
