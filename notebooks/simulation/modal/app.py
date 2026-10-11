@@ -1688,15 +1688,146 @@ def _fcurve(batches, repeats, n_temps, n_therm, n_meas, tag,
     return res
 
 
+# --------------------------------------------------------------------------
+# Stride discriminator: does v2(replica stride) steer the penalty off a T4?
+# --------------------------------------------------------------------------
+# On a T4 the mod-4 penalty moves with the power of two in the replica stride
+# (`L * N^2 * 12` bytes): 4 x odd suffers, 16 x odd is immune. That was measured
+# on three lattices. This runs the same three in ONE container, so the three
+# penalties share a physical GPU and the comparison carries no device drift.
+
+LATTICES = [(18.30, 5), (15.00, 3), (7.50, 12)]   # v2(stride) = 2, 2, 4
+
+
+def _stride_disc(lattices, batches, repeats, n_temps, n_therm, n_meas, tag):
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    sweeps = int(n_temps) * (n_therm + n_meas)
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    print(f"gpu={device_identity()}", flush=True)
+
+    def v2(n):
+        k = 0
+        while n % 2 == 0:
+            n //= 2
+            k += 1
+        return k
+
+    out = []
+    for Rd, L in lattices:
+        geo = S.build_geometry(Rd=float(Rd), L=int(L))
+        eng = S.build_engine(geo)
+        N = int(geo["N"])
+        stride = int(L) * N * N * 12
+        print(f"\n--- Rd={Rd} L={L} N={N} stride={stride:,} v2={v2(stride)} "
+              f"({stride // 2 ** v2(stride)} x 2^{v2(stride)}) ---", flush=True)
+
+        def body(sp, kk, p, _e=eng):
+            return _e["anneal"](sp, kk, betas, p, n_therm, n_meas)
+
+        rows = []
+        for B in batches:
+            cols = PA.pack([theta], B)
+            args = (S.init_spins(jax.random.PRNGKey(11), geo, B),
+                    jax.random.PRNGKey(12), cols)
+            fn = jax.jit(body).lower(*args).compile()   # nothing timed yet
+            ts = []
+            for _ in range(repeats):
+                t0 = time.perf_counter()
+                jax.block_until_ready(fn(*args))
+                ts.append(time.perf_counter() - t0)
+            a = np.array(ts)
+            us = float(a.mean() * 1e6 / (sweeps * B))
+            rows.append(dict(B=int(B), us=us, sd_s=float(a.std())))
+            print(f"  B={B:4d}  {us:8.3f} us  (sd {a.std():.3f} s)"
+                  f"{'   <<< multiple of 4' if B % 4 == 0 else ''}", flush=True)
+
+        m4 = [r["us"] for r in rows if r["B"] % 4 == 0]
+        nm = [r["us"] for r in rows if r["B"] % 4]
+        pen = (np.mean(m4) / np.mean(nm) - 1) if m4 and nm else float("nan")
+        overlap = not (min(m4) > max(nm)) if m4 and nm else None
+        print(f"  => mod-4 penalty {pen:+.1%}   overlap: "
+              f"{'yes' if overlap else 'NONE'}", flush=True)
+        out.append(dict(Rd=float(Rd), L=int(L), N=N, stride=stride,
+                        v2_stride=v2(stride), n_active=int(np.asarray(geo["disco"]).sum()),
+                        rows=rows, mod4_penalty=pen, overlap=bool(overlap)))
+
+    print("\n=== stride discriminator ===", flush=True)
+    print(f"{'Rd':>6} {'L':>3} {'stride':>10} {'v2':>3} {'mod-4 penalty':>14} {'overlap':>8}", flush=True)
+    for o in out:
+        print(f"{o['Rd']:6.2f} {o['L']:3d} {o['stride']:10,d} {o['v2_stride']:3d} "
+              f"{o['mod4_penalty']:+13.1%} {'yes' if o['overlap'] else 'NONE':>8}", flush=True)
+
+    res = dict(lattices=out, batches=list(map(int, batches)), sweeps=sweeps,
+               repeats=repeats, device=device_identity(), aot_compiled=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", **_BS)
+def stride_disc_h100(lat, b, r, nt, th, me, tag):
+    return _stride_disc(lat, b, r, nt, th, me, tag)
+
+
+@app.function(gpu="A100-40GB", **_BS)
+def stride_disc_a100(lat, b, r, nt, th, me, tag):
+    return _stride_disc(lat, b, r, nt, th, me, tag)
+
+
+@app.local_entrypoint()
+def stride_discriminator(batches: str = "51,52,53,59,60,61,63,64,65",
+                         repeats: int = 2, n_temps: int = 40,
+                         n_therm: int = 1000, n_meas: int = 500,
+                         tag: str = "stride_disc", device: str = "h100"):
+    bl = [int(x) for x in batches.split(",") if x]
+    fn = {"h100": stride_disc_h100, "a100": stride_disc_a100}[device.lower()]
+    fn.remote(LATTICES, bl, repeats, n_temps, n_therm, n_meas, tag)
+
+
 @app.function(gpu="H100", **_BS)
 def fcurve1(b, r, nt, th, me, tag, Rd=18.30, L=5):
+    return _fcurve(b, r, nt, th, me, tag, Rd, L)
+
+
+# The same measurement on two other devices. `gpu=` is resolved when the
+# decorator runs, so a third device needs a third wrapper -- it cannot be a
+# parameter. A100 is the interesting middle case: its bus is 5120-bit like the
+# H100's, but its bandwidth is about 1.6x lower, which separates "the sawtooth
+# follows bus width" from "the sawtooth follows bandwidth". On a T4 those two
+# move together, so that pair cannot tell them apart.
+@app.function(gpu="A100-40GB", **_BS)
+def fcurve_a100(b, r, nt, th, me, tag, Rd=18.30, L=5):
+    return _fcurve(b, r, nt, th, me, tag, Rd, L)
+
+
+@app.function(gpu="L4", **_BS)
+def fcurve_l4(b, r, nt, th, me, tag, Rd=18.30, L=5):
+    return _fcurve(b, r, nt, th, me, tag, Rd, L)
+
+
+# The H200 is the one device that holds SM count fixed. It has the same 132 SMs
+# as the H100 and 1.43x the bandwidth (4800 vs 3350 GB/s), so it separates the
+# two factors the four-device set leaves degenerate: if the mod-4 penalty drops
+# below the H100's +11.7% the driver is bandwidth, and if it stays there the
+# driver is SM count.
+@app.function(gpu="H200", **_BS)
+def fcurve_h200(b, r, nt, th, me, tag, Rd=18.30, L=5):
     return _fcurve(b, r, nt, th, me, tag, Rd, L)
 
 
 @app.local_entrypoint()
 def f_curve(batches: str = "", repeats: int = 2, n_temps: int = 40,
             n_therm: int = 10000, n_meas: int = 5000, tag: str = "fcurve",
-            rd: float = 18.30, layers: int = 5):
+            rd: float = 18.30, layers: int = 5,
+            device: str = "h100"):
     # Geometry is a parameter because the whole 19-point curve was measured at
     # one lattice (Rd=18.30, L=5, 5245 active sites). The array a kernel sees is
     # (B, L, N, N, 3), so if the sawtooth comes from how that shape tiles the
@@ -1704,8 +1835,10 @@ def f_curve(batches: str = "", repeats: int = 2, n_temps: int = 40,
     # That is testable: a geometry with twice the sites should put its minimum
     # at half the B.
     bl = [int(x) for x in batches.split(",") if x] or F_GRID
-    print(json.dumps(fcurve1.remote(bl, repeats, n_temps, n_therm, n_meas,
-                                    tag, rd, layers)["rows"], indent=1))
+    fn = {"h100": fcurve1, "a100": fcurve_a100, "l4": fcurve_l4,
+          "h200": fcurve_h200}[device.lower()]
+    print(json.dumps(fn.remote(bl, repeats, n_temps, n_therm, n_meas,
+                               tag, rd, layers)["rows"], indent=1))
 
 
 # --------------------------------------------------------------------------
