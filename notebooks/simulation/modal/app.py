@@ -12,12 +12,18 @@ import modal
 
 app = modal.App("nanodisk-baseline")
 
-image = (
+# Modal refuses a build step stacked after `add_local_*`, so the pip layer is
+# named on its own and any image that needs an extra package branches from here.
+_base = (
     # Pinning jax 0.4.35 here breaks: its CUDA discovery hits
     # `cuda_nvcc.__file__ is None` inside Modal's slim image. The unpinned
     # wheel resolves its own CUDA deps correctly.
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("jax[cuda12]", "numpy")
+)
+
+image = (
+    _base
     .add_local_file(
         "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/sim_core.py",
         "/root/sim_core.py",
@@ -47,6 +53,20 @@ image = (
         "/root/theta4.json",
     )
 )
+
+# The XLA-confound probe needs a kernel that XLA never touches, so this image
+# adds CuPy and compiles the stencil with nvrtc instead. It branches off `_base`
+# rather than `image` because the local files have to go on last, and it needs
+# only `sim_core` for the geometry.
+cuda_image = (
+    _base
+    .pip_install("cupy-cuda12x")
+    .add_local_file(
+        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/sim_core.py",
+        "/root/sim_core.py",
+    )
+)
+
 
 vol = modal.Volume.from_name("nanodisk-out", create_if_missing=True)
 
@@ -1782,14 +1802,456 @@ def stride_disc_a100(lat, b, r, nt, th, me, tag):
     return _stride_disc(lat, b, r, nt, th, me, tag)
 
 
+# --------------------------------------------------------------------------
+# Experiment 1: turn "v2(stride) decides whether" into a curve.
+#
+# `stride = 12 * L * N^2` and `N = 2*(int(Rd)+1)+1` is always ODD, so the only
+# even factors come from 12 = 4*3 and from L itself:
+#
+#       v2(stride) = 2 + v2(L)                       (verified, 192/192 pairs)
+#
+# Two consequences. First, the geometry-only rule collapses to counting factors
+# of two in the LAYER COUNT -- Rd cannot change it. Second, v2 = 0 and v2 = 1
+# are unreachable while a site is 3 floats, so the sweep starts at 2.
+#
+# Each (Rd, L) below is chosen so n_active stays near 2125, which holds the work
+# per replica fixed (within 5.6%) while v2 runs 2 -> 6. v2 = 2, 3 and 4 appear
+# twice at different L, which tests whether the penalty depends on v2 alone or
+# also on the lattice shape.
+#
+# What this design CANNOT do: vary stride magnitude at fixed v2 and fixed work.
+# stride ~= 12*L*(2*Rd)^2 and n_active ~= L*pi*Rd^2, so stride/n_active is
+# pinned near 48/pi ~= 16 for every geometry. Magnitude and work per replica are
+# proportional by construction, so no experiment on this lattice family can
+# separate them. The v2 arm is the only clean one.
+STRIDE_SWEEP = [
+    (26.05, 1),    # v2=2  stride 36,300  n_active 2129
+    (15.05, 3),    # v2=2  stride 39,204  n_active 2151
+    (18.40, 2),    # v2=3  stride 36,504  n_active 2138
+    (10.65, 6),    # v2=3  stride 38,088  n_active 2142
+    (13.05, 4),    # v2=4  stride 40,368  n_active 2180
+    (7.30, 12),    # v2=4  stride 41,616  n_active 2124
+    (9.10, 8),     # v2=5  stride 42,336  n_active 2088
+    (6.35, 16),    # v2=6  stride 43,200  n_active 2064
+]
+
+
+# Holding n_active near 2125 above also held the array footprint near 2 MB,
+# while the reference lattice that shows the +12.1% penalty sits at 5.1 MB. If
+# the effect needs the larger footprint, STRIDE_SWEEP cannot see it at any v2 --
+# the control fixed the wrong quantity. This set repeats the identical v2 sweep
+# with n_active held near 5245 instead, which puts every cell in the footprint
+# regime where the penalty is known to exist and keeps the strides within 13%
+# of the reference's 91,260.
+STRIDE_SWEEP_BIG = [
+    (40.85, 1),    # v2=2  stride 82,668   n_active 5241
+    (23.55, 3),    # v2=2  stride 86,436   n_active 5247
+    (28.90, 2),    # v2=3  stride 83,544   n_active 5234
+    (16.65, 6),    # v2=3  stride 88,200   n_active 5262
+    (20.40, 4),    # v2=4  stride 88,752   n_active 5252
+    (11.75, 12),   # v2=4  stride 90,000   n_active 5244
+    (14.35, 8),    # v2=5  stride 92,256   n_active 5256
+    (10.05, 16),   # v2=6  stride 101,568  n_active 5200
+]
+
+
+# --------------------------------------------------------------------------
+# Experiment 3a: is the penalty XLA's layout choice rather than the hardware?
+#
+# Every measurement so far runs one kernel through JAX/XLA, so a batch-dimension
+# penalty could be XLA padding or re-laying-out the array at some B and not
+# others. This compiles the real kernel across the window and reports, per B,
+# the parameter layouts and the bytes XLA actually allocates. If allocation
+# grows strictly proportionally to B and the layouts are identical, XLA is not
+# padding and the penalty has to come from below it.
+def _xla_layout_probe(batches, tag, Rd, L):
+    import sys, json, re
+    sys.path.insert(0, "/root")
+    import numpy as np, jax
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = __import__("jax").numpy.asarray(1.0 / (kB * np.linspace(20.0, 0.1, 4)))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    N = int(geo["N"])
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} stride={12*L*N*N:,} bytes/replica", flush=True)
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, 2, 2)
+
+    out = []
+    for B in batches:
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11), geo, B),
+                jax.random.PRNGKey(12), cols)
+        comp = jax.jit(body).lower(*args).compile()
+        txt = comp.as_text()
+        try:
+            ma = comp.memory_analysis()
+            temp = int(ma.temp_size_in_bytes)
+            argb = int(ma.argument_size_in_bytes)
+            outb = int(ma.output_size_in_bytes)
+        except Exception as e:            # the field set moves between versions
+            temp = argb = outb = -1
+            print(f"  memory_analysis unavailable: {e}", flush=True)
+        # Entry parameter shapes carry their layout in {...}; the spin array is
+        # the rank-5 one. A padded batch shows up either as a different layout
+        # or as an allocation that is not proportional to B.
+        lay = re.findall(r"f32\[%d,\d+,\d+,\d+,3\]\{[0-9,]+\}" % B, txt)
+        ninstr = txt.count("\n")
+        nfusion = len(re.findall(r"fusion\(", txt))
+        out.append(dict(B=int(B), temp_bytes=temp, arg_bytes=argb, out_bytes=outb,
+                        spin_layouts=sorted(set(lay))[:3], hlo_lines=ninstr,
+                        fusions=nfusion))
+        print(f"  B={B:4d}  temp={temp:12,d}  arg={argb:11,d}  "
+              f"out={outb:10,d}  fusions={nfusion:4d}  hlo_lines={ninstr:5d}  "
+              f"{(sorted(set(lay))[:1] or ['-'])[0]}", flush=True)
+
+    print("\n=== per-replica allocation (bytes / B) ===", flush=True)
+    print(f"{'B':>5} {'B%4':>4} {'temp/B':>12} {'arg/B':>10} {'fusions':>8}", flush=True)
+    for r in out:
+        print(f"{r['B']:5d} {r['B'] % 4:4d} {r['temp_bytes'] / r['B']:12,.1f} "
+              f"{r['arg_bytes'] / r['B']:10,.1f} {r['fusions']:8d}", flush=True)
+    per = [r["temp_bytes"] / r["B"] for r in out if r["temp_bytes"] > 0]
+    if per:
+        print(f"\ntemp bytes per replica spread: {min(per):,.1f} .. {max(per):,.1f} "
+              f"({100 * (max(per) / min(per) - 1):.2f}%)", flush=True)
+        print("A flat per-replica allocation and one layout across the window "
+              "means XLA is NOT padding the batch dimension.", flush=True)
+    uniq = {tuple(r["spin_layouts"]) for r in out}
+    print(f"distinct spin-array layouts across the window: {len(uniq)}", flush=True)
+    res = dict(rows=out, Rd=float(Rd), L=int(L), N=N, stride=12 * L * N * N,
+               device=device_identity())
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+# --------------------------------------------------------------------------
+# Experiment 3b: the same access pattern with XLA removed entirely.
+#
+# A 7-point stencil over the identical (B, L, N, N, 3) float32 array, with the
+# identical topology (x and y wrap, z does not) and the identical checkerboard
+# parity split, compiled by nvrtc through CuPy. No JAX, no XLA, no autotuner.
+# Thread i maps to flat site i, which is the natural linearisation XLA also
+# uses, so the replica stride is the same 12*L*N^2 bytes.
+#
+# This is NOT the Metropolis kernel: no RNG, no anisotropy, no acceptance test.
+# It is the memory traffic of a substep and nothing else. That is the point --
+# if the mod-4 penalty survives here, it belongs to the access pattern and the
+# hardware, not to anything XLA decided.
+_STENCIL = r"""
+extern "C" __global__
+void substep(const float* __restrict__ s, float* __restrict__ o,
+             const unsigned char* __restrict__ mask,
+             int B, int L, int N, int parity) {
+  long long tid = blockIdx.x * (long long)blockDim.x + threadIdx.x;
+  long long nsite = (long long)B * L * N * N;
+  if (tid >= nsite) return;
+  int x = (int)(tid % N);
+  int y = (int)((tid / N) % N);
+  int z = (int)((tid / ((long long)N * N)) % L);
+  long long b = tid / ((long long)N * N * L);
+  long long base = tid * 3;
+  if (!mask[(long long)z * N * N + (long long)y * N + x] ||
+      (((x + y + z) & 1) != parity)) {
+    o[base] = s[base]; o[base + 1] = s[base + 1]; o[base + 2] = s[base + 2];
+    return;
+  }
+  const int dx[6] = {1, -1, 0, 0, 0, 0};
+  const int dy[6] = {0, 0, 1, -1, 0, 0};
+  const int dz[6] = {0, 0, 0, 0, 1, -1};
+  float ax = 0.f, ay = 0.f, az = 0.f;
+  for (int k = 0; k < 6; ++k) {
+    int nz = z + dz[k];
+    if (nz < 0 || nz >= L) continue;          // z does not wrap
+    int ny = (y + dy[k] + N) % N;
+    int nx = (x + dx[k] + N) % N;
+    long long nb = ((((b * L + nz) * N + ny) * (long long)N) + nx) * 3;
+    ax += s[nb]; ay += s[nb + 1]; az += s[nb + 2];
+  }
+  float ex = s[base]     + 0.1f * ax;
+  float ey = s[base + 1] + 0.1f * ay;
+  float ez = s[base + 2] + 0.1f * az;
+  float inv = rsqrtf(ex * ex + ey * ey + ez * ez + 1e-20f);
+  o[base] = ex * inv; o[base + 1] = ey * inv; o[base + 2] = ez * inv;
+}
+"""
+
+
+def _raw_cuda_probe(batches, sweeps, repeats, tag, Rd, L):
+    import sys, json
+    sys.path.insert(0, "/root")
+    import numpy as np, cupy as cp
+    import sim_core as S
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N = int(geo["N"])
+    mask = cp.asarray(np.ascontiguousarray(
+        np.asarray(geo["disco"]).astype(np.uint8)))
+    mod = cp.RawModule(code=_STENCIL, options=("-std=c++11",))
+    k = mod.get_function("substep")
+    print(f"cupy={cp.__version__} runtime={cp.cuda.runtime.runtimeGetVersion()}",
+          flush=True)
+    dev = cp.cuda.Device()
+    print(f"gpu={cp.cuda.runtime.getDeviceProperties(dev.id)['name'].decode()} "
+          f"SMs={dev.attributes['MultiProcessorCount']}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} stride={12*L*N*N:,} bytes/replica  "
+          f"{sweeps} sweeps/cell", flush=True)
+
+    TPB = 256
+    rng = np.random.default_rng(7)
+    rows = []
+    for B in batches:
+        nsite = B * L * N * N
+        grid = (nsite + TPB - 1) // TPB
+        # Built on the host: this image carries no cuRAND, and the kernel does
+        # no random work anyway, so the initial state only has to be unit spins.
+        h = rng.standard_normal((nsite, 3)).astype(np.float32)
+        h /= np.linalg.norm(h, axis=-1, keepdims=True) + 1e-20
+        a = cp.asarray(h.reshape(-1))
+        bbuf = cp.empty_like(a)
+        args0 = (a, bbuf, mask, np.int32(B), np.int32(L), np.int32(N), np.int32(0))
+        args1 = (bbuf, a, mask, np.int32(B), np.int32(L), np.int32(N), np.int32(1))
+        k((grid,), (TPB,), args0)          # warm up / JIT the module
+        k((grid,), (TPB,), args1)
+        cp.cuda.Stream.null.synchronize()
+        ts = []
+        for _ in range(repeats):
+            e0, e1 = cp.cuda.Event(), cp.cuda.Event()
+            e0.record()
+            for _ in range(sweeps):
+                k((grid,), (TPB,), args0)
+                k((grid,), (TPB,), args1)
+            e1.record(); e1.synchronize()
+            ts.append(cp.cuda.get_elapsed_time(e0, e1) / 1e3)
+        arr = np.array(ts)
+        us = float(arr.mean() * 1e6 / (sweeps * B))
+        rows.append(dict(B=int(B), us=us, sd_s=float(arr.std())))
+        print(f"  B={B:4d}  {us:8.4f} us/replica-sweep  (sd {arr.std():.4f} s)"
+              f"{'   <<< multiple of 4' if B % 4 == 0 else ''}", flush=True)
+        del a, bbuf
+        cp.get_default_memory_pool().free_all_blocks()
+
+    m4 = [r["us"] for r in rows if r["B"] % 4 == 0]
+    nm = [r["us"] for r in rows if r["B"] % 4]
+    pen = float(np.mean(m4) / np.mean(nm) - 1) if m4 and nm else float("nan")
+    ovl = bool(min(m4) <= max(nm)) if m4 and nm else None
+    print(f"\n=== raw CUDA, no XLA ===", flush=True)
+    print(f"  multiples of 4: mean {np.mean(m4):.4f}  min {min(m4):.4f}", flush=True)
+    print(f"  others:         mean {np.mean(nm):.4f}  max {max(nm):.4f}", flush=True)
+    print(f"  mod-4 penalty {pen:+.1%}   overlap: {'yes' if ovl else 'NONE'}",
+          flush=True)
+    print("  penalty present here => the effect is the access pattern and the "
+          "hardware.\n  penalty absent here => it was XLA's layout choice.",
+          flush=True)
+    res = dict(rows=rows, mod4_penalty=pen, overlap=ovl, Rd=float(Rd), L=int(L),
+               N=N, stride=12 * L * N * N, sweeps=sweeps, repeats=repeats,
+               kernel="raw CUDA 7-point stencil via cupy RawModule")
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+# --------------------------------------------------------------------------
+# Experiment 3c: the single-array stencil showed NO mod-4 penalty (-0.1%, full
+# overlap), so the effect is not intrinsic to the access pattern. That leaves
+# the one structural difference between it and the real kernel: the real kernel
+# keeps SEVERAL same-shaped buffers live at once (the trial state, the random
+# draws, dS, the neighbour sum, dE, the acceptance mask), and XLA packs them
+# into one arena.
+#
+# That makes the controlling quantity the TOTAL array size, not the replica
+# stride. With stride 91,260 = 4 * 22,815 the whole array is B * 91,260 bytes,
+# so v2(total) = v2(B) + 2. At B = 64 that is 2^8 * 22,815: a multiple of 256
+# bytes, which is exactly the DRAM partition interleave. Sibling buffers then
+# all begin on the same partition and camp on it together. At odd B, or B = 2
+# mod 4, they start staggered and spread.
+#
+# So this kernel keeps the same stencil on buffer 0 and adds one coalesced read
+# at the same offset in each of K-1 sibling buffers, all inside a single
+# contiguous arena so they are exactly adjacent, the way a buffer assignment
+# packs them. Sweeping K against B tests the prediction directly: the penalty
+# should be absent at K=1 and grow with K, and only at B = 0 mod 4.
+_MULTIBUF = r"""
+extern "C" __global__
+void multibuf(const float* __restrict__ s, float* __restrict__ o,
+              const unsigned char* __restrict__ mask,
+              int B, int L, int N, int parity, int K, long long arena) {
+  long long tid = blockIdx.x * (long long)blockDim.x + threadIdx.x;
+  long long nsite = (long long)B * L * N * N;
+  if (tid >= nsite) return;
+  int x = (int)(tid % N);
+  int y = (int)((tid / N) % N);
+  int z = (int)((tid / ((long long)N * N)) % L);
+  long long b = tid / ((long long)N * N * L);
+  long long base = tid * 3;
+  if (!mask[(long long)z * N * N + (long long)y * N + x] ||
+      (((x + y + z) & 1) != parity)) {
+    o[base] = s[base]; o[base + 1] = s[base + 1]; o[base + 2] = s[base + 2];
+    return;
+  }
+  const int dx[6] = {1, -1, 0, 0, 0, 0};
+  const int dy[6] = {0, 0, 1, -1, 0, 0};
+  const int dz[6] = {0, 0, 0, 0, 1, -1};
+  float ax = 0.f, ay = 0.f, az = 0.f;
+  for (int k = 0; k < 6; ++k) {
+    int nz = z + dz[k];
+    if (nz < 0 || nz >= L) continue;
+    int ny = (y + dy[k] + N) % N;
+    int nx = (x + dx[k] + N) % N;
+    long long nb = ((((b * L + nz) * N + ny) * (long long)N) + nx) * 3;
+    ax += s[nb]; ay += s[nb + 1]; az += s[nb + 2];
+  }
+  // One coalesced read per sibling buffer, same offset, adjacent in the arena.
+  for (int j = 1; j < K; ++j) {
+    const float* sj = s + (long long)j * arena;
+    ax += sj[base]; ay += sj[base + 1]; az += sj[base + 2];
+  }
+  float ex = s[base]     + 0.1f * ax;
+  float ey = s[base + 1] + 0.1f * ay;
+  float ez = s[base + 2] + 0.1f * az;
+  float inv = rsqrtf(ex * ex + ey * ey + ez * ez + 1e-20f);
+  o[base] = ex * inv; o[base + 1] = ey * inv; o[base + 2] = ez * inv;
+}
+"""
+
+
+def _multibuf_probe(batches, ks, sweeps, repeats, tag, Rd, L):
+    import sys, json
+    sys.path.insert(0, "/root")
+    import numpy as np, cupy as cp
+    import sim_core as S
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N = int(geo["N"])
+    mask = cp.asarray(np.ascontiguousarray(
+        np.asarray(geo["disco"]).astype(np.uint8)))
+    k = cp.RawModule(code=_MULTIBUF, options=("-std=c++11",)).get_function("multibuf")
+    dev = cp.cuda.Device()
+    print(f"gpu={cp.cuda.runtime.getDeviceProperties(dev.id)['name'].decode()} "
+          f"SMs={dev.attributes['MultiProcessorCount']}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} replica stride={12*L*N*N:,} bytes  "
+          f"{sweeps} sweeps/cell  K={list(ks)}", flush=True)
+
+    TPB = 256
+    rng = np.random.default_rng(7)
+    out = []
+    for K in ks:
+        print(f"\n--- K={K} sibling buffer(s) in one arena ---", flush=True)
+        rows = []
+        for B in batches:
+            nsite = B * L * N * N
+            arena = nsite * 3                       # floats per buffer
+            grid = (nsite + TPB - 1) // TPB
+            h = rng.standard_normal((nsite, 3)).astype(np.float32)
+            h /= np.linalg.norm(h, axis=-1, keepdims=True) + 1e-20
+            a = cp.asarray(np.tile(h.reshape(-1), K))   # ONE contiguous arena
+            o1 = cp.empty(arena, dtype=cp.float32)
+            ar = np.int64(arena)
+            g0 = (a, o1, mask, np.int32(B), np.int32(L), np.int32(N),
+                  np.int32(0), np.int32(K), ar)
+            g1 = (a, o1, mask, np.int32(B), np.int32(L), np.int32(N),
+                  np.int32(1), np.int32(K), ar)
+            k((grid,), (TPB,), g0); k((grid,), (TPB,), g1)
+            cp.cuda.Stream.null.synchronize()
+            ts = []
+            for _ in range(repeats):
+                e0, e1 = cp.cuda.Event(), cp.cuda.Event()
+                e0.record()
+                for _ in range(sweeps):
+                    k((grid,), (TPB,), g0)
+                    k((grid,), (TPB,), g1)
+                e1.record(); e1.synchronize()
+                ts.append(cp.cuda.get_elapsed_time(e0, e1) / 1e3)
+            arr = np.array(ts)
+            us = float(arr.mean() * 1e6 / (sweeps * B))
+            tot = B * 12 * L * N * N
+            rows.append(dict(B=int(B), us=us, sd_s=float(arr.std()),
+                             total_bytes=int(tot)))
+            print(f"  B={B:4d}  {us:8.4f} us  total={tot:12,d} B"
+                  f"{'   <<< multiple of 4' if B % 4 == 0 else ''}", flush=True)
+            del a, o1
+            cp.get_default_memory_pool().free_all_blocks()
+        m4 = [r["us"] for r in rows if r["B"] % 4 == 0]
+        nm = [r["us"] for r in rows if r["B"] % 4]
+        pen = float(np.mean(m4) / np.mean(nm) - 1)
+        ovl = bool(min(m4) <= max(nm))
+        print(f"  => K={K}  mod-4 penalty {pen:+.1%}  overlap: "
+              f"{'yes' if ovl else 'NONE'}", flush=True)
+        out.append(dict(K=int(K), rows=rows, mod4_penalty=pen, overlap=ovl))
+
+    print("\n=== sibling-buffer count vs mod-4 penalty ===", flush=True)
+    print(f"{'K':>4} {'penalty':>10} {'overlap':>8}", flush=True)
+    for o in out:
+        print(f"{o['K']:4d} {o['mod4_penalty']:+9.1%} "
+              f"{'yes' if o['overlap'] else 'NONE':>8}", flush=True)
+    res = dict(by_k=out, Rd=float(Rd), L=int(L), N=N, stride=12 * L * N * N,
+               sweeps=sweeps, repeats=repeats,
+               kernel="raw CUDA stencil + K-1 sibling reads in one arena")
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", image=cuda_image, memory=65536, timeout=3600,
+              volumes={"/out": vol})
+def multibuf_h100(b, ks, sw, r, tag, Rd, L):
+    return _multibuf_probe(b, ks, sw, r, tag, Rd, L)
+
+
+@app.local_entrypoint()
+def buffer_probe(batches: str = "48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64",
+                 ks: str = "1,2,4,8", sweeps: int = 1000, repeats: int = 3,
+                 rd: float = 18.30, layers: int = 5, tag: str = "exp3c"):
+    """Experiment 3c: does the mod-4 penalty appear once sibling buffers exist?"""
+    multibuf_h100.remote([int(x) for x in batches.split(",") if x],
+                         [int(x) for x in ks.split(",") if x],
+                         sweeps, repeats, tag, rd, layers)
+
+
+@app.function(gpu="H100", **_BS)
+def xla_probe_h100(b, tag, Rd, L):
+    return _xla_layout_probe(b, tag, Rd, L)
+
+
+@app.function(gpu="H100", image=cuda_image, memory=65536, timeout=3600,
+              volumes={"/out": vol})
+def raw_cuda_h100(b, sw, r, tag, Rd, L):
+    return _raw_cuda_probe(b, sw, r, tag, Rd, L)
+
+
+@app.local_entrypoint()
+def xla_confound(batches: str = "48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64",
+                 sweeps: int = 400, repeats: int = 3, rd: float = 18.30,
+                 layers: int = 5, tag: str = "xla_confound", part: str = "both"):
+    """Experiment 3. `part=layout` is the XLA allocation probe (3a),
+    `part=raw` is the nvrtc stencil with XLA removed (3b)."""
+    bl = [int(x) for x in batches.split(",") if x]
+    if part in ("both", "layout"):
+        xla_probe_h100.remote(bl, tag + "_layout", rd, layers)
+    if part in ("both", "raw"):
+        raw_cuda_h100.remote(bl, sweeps, repeats, tag + "_raw", rd, layers)
+
+
 @app.local_entrypoint()
 def stride_discriminator(batches: str = "51,52,53,59,60,61,63,64,65",
                          repeats: int = 2, n_temps: int = 40,
                          n_therm: int = 1000, n_meas: int = 500,
-                         tag: str = "stride_disc", device: str = "h100"):
+                         tag: str = "stride_disc", device: str = "h100",
+                         lattices: str = "control"):
     bl = [int(x) for x in batches.split(",") if x]
     fn = {"h100": stride_disc_h100, "a100": stride_disc_a100}[device.lower()]
-    fn.remote(LATTICES, bl, repeats, n_temps, n_therm, n_meas, tag)
+    lat = {"control": LATTICES, "sweep": STRIDE_SWEEP,
+           "sweepbig": STRIDE_SWEEP_BIG}[lattices.lower()]
+    fn.remote(lat, bl, repeats, n_temps, n_therm, n_meas, tag)
 
 
 @app.function(gpu="H100", **_BS)
