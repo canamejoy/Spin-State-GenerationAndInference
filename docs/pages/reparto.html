@@ -354,10 +354,13 @@ de contenedor único, coinciden. Para que el hardware explicara el salto de
 57&nbsp;%, la misma GPU tendría que cambiar su velocidad a la mitad entre dos
 celdas separadas por segundos.</div>
 
-<p style="color:var(--muted);font-size:.92rem">El mecanismo no está medido.
-Que 512 y 150 sean buenos y 768 y 400 malos apunta a cómo cada forma del arreglo
-se reparte entre los 132 multiprocesadores de la H100, pero eso es una conjetura
-y no se probó.</p>
+<p style="color:var(--muted);font-size:.92rem">Una versión anterior de esta
+página atribuía el dentado a cómo cada forma del arreglo se reparte entre los 132
+multiprocesadores de la H100. Eso era una conjetura, y para la parte
+<em>local</em> del dentado resultó equivocada: el mecanismo está medido y es del
+compilador, no del reparto entre multiprocesadores
+(<a href="#mecanismo">más abajo</a>). Por qué 512 es bueno y 768 malo sigue sin
+explicación.</p>
 
 <h2>Los cuatro grados de libertad</h2>
 <p>Hay cuatro cosas que se pueden elegir: cuántos <b>estados</b> correr por
@@ -471,8 +474,16 @@ lanzamientos, y se apoya en tres mediciones: el número de dispositivos cuesta
 corridas de 200 puntos de temperatura; se contrastó esa suposición en
 <code>B = 100</code> y da 0.3 %, pero es un punto, no cinco.</p>
 <p>Falta verificar una celda de las tablas contra una corrida completa de punta a
-punta, y falta explicar el mecanismo de los dientes de sierra, que por ahora solo
-está descrito.</p>
+punta. Del dentado ya hay una parte explicada —&nbsp;el castigo de los lotes pares
+es <a href="#mecanismo">el ancho del bucle que elige XLA</a>, y de ahí sale una
+geometría inmune— pero
+<b>la curva ancha sigue sin mecanismo</b>: por qué 512 es el mínimo y 768 uno de
+los peores no se deduce de nada medido, y los dos están en el mismo ancho.</p>
+<p>Tampoco se sabe <em>por qué</em> el ancho 4 cuesta y el ancho 2 no. Cuatro
+flotantes son 16 bytes por hilo y el tamaño de transacción es el sospechoso
+obvio, pero no se midió. Y el castigo desaparece con huellas de arreglo cercanas
+a 2 MB, mientras que a 5 MB separa limpio en todos los casos; esa frontera está
+observada y no explicada.</p>
 
 <div class="note">Nada de esto cambia la física. Las paralelizaciones medidas
 coinciden en la energía al <b class="n">0.07 %</b>. Lo que cambia es la
@@ -552,6 +563,166 @@ misma forma de columnas y el mismo cronograma de 10 puntos de temperatura. Las
 rejillas de Rd 12 y Rd 24 se eligieron emparejadas por producto con la
 referencia, que es lo que vuelve el test nítido: no se buscó un mínimo libre, se
 pidió que seis posiciones cayeran donde la regla predecía.</p>
+
+<h2 id="mecanismo">El castigo de los lotes pares, y de dónde sale</h2>
+<p>Dentro del dentado hay una estructura que <em>sí</em> tiene explicación.
+Midiendo lotes <b>contiguos</b> —59 contra 60, 63 contra 64— aparece un castigo
+limpio y reproducible en los múltiplos de cuatro, en <b>cinco dispositivos
+distintos</b>:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>GPU</th><th>multiprocesadores</th><th>ancho de banda</th>
+    <th>castigo en <code>B</code> ≡ 0 (mod 4)</th></tr></thead>
+  <tbody>
+    <tr><td>T4</td><td class="n">40</td><td class="n">320 GB/s</td><td class="n">+42 %</td></tr>
+    <tr><td>L4</td><td class="n">58</td><td class="n">300 GB/s</td><td class="n">+38 %</td></tr>
+    <tr><td>A100-SXM4-40GB</td><td class="n">108</td><td class="n">1555 GB/s</td><td class="n">+21 %</td></tr>
+    <tr><td>H100 80GB HBM3</td><td class="n">132</td><td class="n">3350 GB/s</td><td class="n">+12.1 %</td></tr>
+    <tr><td>H200 141GB HBM3e</td><td class="n">132</td><td class="n">4800 GB/s</td><td class="n">+14.0 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>La H200 es el control que rompe la lectura de hardware. Tiene los
+<b>mismos 132 multiprocesadores</b> que la H100 y <b class="n">1.43×</b> su
+ancho de banda; si el castigo viniera de la memoria tenía que bajar. No bajó.</p>
+
+<h3>Cuatro mecanismos descartados</h3>
+<p>Antes de encontrar la causa se eliminaron, uno por uno, los candidatos
+obvios. Cada prueba reproduce la misma forma de arreglo, el mismo paso entre
+réplicas, la misma topología y la misma paridad de tablero:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>hipótesis</th><th>cómo se probó</th><th>efecto medido</th></tr></thead>
+  <tbody>
+    <tr><td>Es el hardware, no el compilador</td>
+        <td>kernel CUDA crudo por nvrtc, sin XLA</td><td class="n">&minus;0.1 %</td></tr>
+    <tr><td>Es la alineación de los búferes hermanos</td>
+        <td>1, 2, 4 y 8 búferes en una arena contigua</td><td class="n">&minus;0.1 a +0.4 %</td></tr>
+    <tr><td>Son los números aleatorios</td>
+        <td>sin RNG, Box-Muller en registros, y búfer materializado</td>
+        <td class="n">&minus;0.2 % / &minus;0.1 %</td></tr>
+    <tr><td>XLA rellena el arreglo</td>
+        <td>bytes de argumento por réplica, por <code>B</code></td>
+        <td class="n">constante a 0.000 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Y el transfer tampoco: los tres argumentos ya están en el dispositivo antes
+del cronómetro, así que no hay copia CPU→GPU dentro de la región medida. El
+perfilador lo confirma por otro camino — el <b>tiempo de GPU trazado</b> por
+réplica sube <b class="n">+15.3 %</b> en los múltiplos de cuatro, que es lo mismo
+que marca el reloj de pared. El costo está <em>dentro</em> de los kernels.</p>
+
+<h3>La causa: el ancho del bucle que elige XLA</h3>
+<p>El módulo compilado lo dice en su propia secuencia de <em>thunks</em>. El
+<b>tamaño de bloque es 128 en todos los kernels pesados y en todos los
+<code>B</code></b>; lo único que se mueve es la grilla. Con</p>
+
+<p style="text-align:center;font-size:1.02rem"><code>elementos =
+B&nbsp;×&nbsp;L&nbsp;×&nbsp;N²&nbsp;×&nbsp;3</code></p>
+
+<p>y <code>N</code> siempre impar, los únicos factores de dos vienen de
+<code>B</code> y de <code>L</code>:</p>
+
+<p style="text-align:center;font-size:1.02rem"><code>v₂(elementos) = v₂(B) +
+v₂(L)</code>&nbsp;&nbsp;&nbsp;y&nbsp;&nbsp;&nbsp;<code>ancho = min(4,
+2<sup>v₂(elementos)</sup>)</code></p>
+
+<p>donde <code>v₂</code> cuenta cuántas veces un número es divisible por dos.
+Cada hilo procesa <code>ancho</code> elementos en vez de uno. Eso predice
+<b class="n">89</b> valores de grilla de tres volcados del compilador
+<b>sin un solo fallo</b>. En la red de tres capas los tres anchos aparecen en la
+misma geometría:</p>
+
+<div class="tw"><table>
+  <thead><tr><th><code>B</code></th><th class="n">57</th><th class="n">58</th>
+    <th class="n">59</th><th class="n">60</th><th class="n">62</th><th class="n">63</th></tr></thead>
+  <tbody>
+    <tr><td>v₂(elementos)</td><td class="n">0</td><td class="n">1</td><td class="n">0</td>
+        <td class="n">2</td><td class="n">1</td><td class="n">0</td></tr>
+    <tr><td>ancho</td><td class="n">1</td><td class="n">2</td><td class="n">1</td>
+        <td class="n">4</td><td class="n">2</td><td class="n">1</td></tr>
+    <tr><td>grilla predicha</td><td class="n">9623</td><td class="n">4896</td><td class="n">9961</td>
+        <td class="n">2533</td><td class="n">5234</td><td class="n">10636</td></tr>
+    <tr class="best"><td>grilla observada</td><td class="n">9623</td><td class="n">4896</td><td class="n">9961</td>
+        <td class="n">2533</td><td class="n">5234</td><td class="n">10636</td></tr>
+  </tbody>
+</table></div>
+
+<p><b>Solo el ancho 4 se paga.</b> Esa misma red mide ancho 2 en
+<b class="n">+0.09 %</b> contra ancho 1 —&nbsp;<code>B</code> = 58 cae entre sus
+vecinos 57 y 59, en 2.470 → 2.484 → 2.502&nbsp;µs— y ancho 4 en
+<b class="n">+14.25 %</b>. Así que la escalera de tres niveles del compilador
+colapsa a <b>una sola desigualdad</b> en el costo:</p>
+
+<p style="text-align:center;font-size:1.05rem"><b>castigo ⟺ v₂(B) + v₂(L)
+≥ 2</b></p>
+
+<h3>Tres regímenes, y uno de ellos es inmune</h3>
+<p>Como <code>v₂(L)</code> es lo único que aporta la geometría, el número de
+capas decide el comportamiento entero:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>capas <code>L</code></th><th>ancho 4 cuando</th><th>consecuencia</th></tr></thead>
+  <tbody>
+    <tr><td><code>L</code> impar</td><td><code>B</code> múltiplo de 4</td>
+        <td>el castigo en los múltiplos de cuatro</td></tr>
+    <tr><td><code>L</code> ≡ 2 (mod 4)</td><td><b>todo <code>B</code> par</b></td>
+        <td>la regla de los múltiplos de cuatro <b>clasifica mal</b></td></tr>
+    <tr class="best"><td><code>L</code> divisible por 4</td><td>siempre</td>
+        <td><b>inmune</b>: el lote deja de importar</td></tr>
+  </tbody>
+</table></div>
+
+<p>El caso del medio es una predicción falsable, y ninguna ventana medida antes
+podía verla: todas contenían solo impares entre los no-múltiplos de cuatro. Se
+probó con seis capas, en <code>B</code> = 57…64:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>red</th><th>partición por ancho 4</th><th>partición por <code>B</code> mod 4</th></tr></thead>
+  <tbody>
+    <tr class="best"><td>Rd 16.65, <b>L = 6</b></td>
+        <td class="n">+14.7 %, sin traslape</td><td class="n">+10.2 %, <b>con traslape</b></td></tr>
+    <tr><td>Rd 23.55, L = 3</td><td class="n">+14.2 %, sin traslape</td>
+        <td class="n">+14.2 %, sin traslape</td></tr>
+    <tr><td>Rd 20.40, L = 4</td><td>no existe partición</td><td class="n">&minus;2.5 %, con traslape</td></tr>
+  </tbody>
+</table></div>
+
+<p>Con seis capas, <code>B</code> = 58 y 62 son caros y la regla de los
+múltiplos de cuatro falla. Con tres capas las dos particiones coinciden, que es
+lo que explica por qué la regla vieja funcionaba. Y con cuatro capas no hay nada
+que partir: la inmunidad no es que el castigo no aplique, es que
+<b>ya está pagado en todas las celdas</b>.</p>
+
+<div class="note warn"><strong>Esto explica la estructura local, no el dentado
+completo.</strong> En la red de referencia <code>L</code> = 5 es impar, así que
+los catorce lotes divisibles por cuatro de la curva de 19 puntos están todos en
+ancho 4 —&nbsp;incluidos <b class="n">512</b>, que es el mejor de todos, y
+<b class="n">768</b>, que es de los peores. Entre esos catorce la dispersión es
+<b class="n">1.76×</b>, mayor que el castigo mismo, y el grupo de ancho 4 contra
+el resto da <b class="n">+2.7 %</b> en una medición y <b class="n">&minus;0.7 %</b>
+en la otra. <b>El ancho de vector no ordena la curva ancha.</b> Explica el salto
+entre lotes vecinos y explica la inmunidad por geometría; por qué 512 gana sigue
+sin explicación.</div>
+
+<div class="note"><strong>Regla práctica.</strong> Elegí un número de capas
+<b>divisible por cuatro</b> y el tamaño del lote deja de ser un riesgo. Si la
+física fija las capas, calculá <code>v₂(B) + v₂(L)</code> y mantenelo por debajo
+de 2: con <code>L</code> impar eso es evitar los múltiplos de cuatro, con
+<code>L</code> ≡ 2 (mod 4) es evitar <em>todo</em> lote par. Nada de esto
+reemplaza medir la curva por geometría —&nbsp;solo quita de encima el castigo que
+sí tiene regla.</div>
+
+<p style="color:var(--muted);font-size:.92rem">Volcados con
+<code>--xla_dump_to</code> en una H100, solo compilación; los tiempos con 40
+puntos de temperatura × 1500 barridos, dos repeticiones, compilación excluida.
+Un detalle metodológico que cuesta caro ignorar: <b>los nombres de fusión no son
+estables entre lotes</b>. <code>loop_select_fusion_2</code> recorre el arreglo
+completo en <code>B</code> = 58 y los arreglos de un valor por sitio en el resto,
+y <code>loop_maximum_negate_fusion_1</code> solo existe en <code>B</code> = 60.
+Puntuar la geometría por nombre de kernel reporta fallos que no son fallos; hay
+que puntuarla entrada por entrada.</p>
 
 </div>
 

@@ -154,6 +154,20 @@ It is the last extrapolated figure in the study. Everything else is measured.
 - **Device count is free** at fixed per-device batch (0.9% over 1, 2, 4 GPUs).
   **Per-device batch has an optimum near 50 chains**, 27% penalty at 25 or 100.
 - **Parallelisation changes speed by up to 8,700x and physics not at all.**
+- **The batch penalty is XLA's vector width, not the hardware.** XLA launches a
+  fixed 128-thread block and gives each thread `min(4, 2^v2(elements))` elements,
+  where `elements = B * L * N^2 * 3`. `N` is always odd, so
+  `v2(elements) = v2(B) + v2(L)` and only the 4-wide path is expensive. The
+  penalty condition is therefore `v2(B) + v2(L) >= 2`: odd `L` suffers at
+  multiples of four, `L = 2 mod 4` at **every even** `B`, and `L` divisible by
+  four is **immune**. Predicted 89 grid values across three `--xla_dump_to`
+  dumps with zero misses. Measured +14.7% (no overlap) against +10.2% (with
+  overlap for the `B % 4` rule) at `L = 6`. Ruled out first, each at the same
+  shape, stride, topology and parity: raw CUDA without XLA (-0.1%), sibling
+  buffer alignment (-0.1% to +0.4%), the RNG (-0.2%), XLA padding (0.000%), and
+  the host-to-device path (arguments are already device arrays, and traced GPU
+  time rises +15.3% in step with wall clock). Bandwidth was refuted by an H200
+  control: same 132 SMs, 1.43x the bandwidth, penalty did not fall.
 
 ## 7. Open questions
 
@@ -169,9 +183,29 @@ It is the last extrapolated figure in the study. Everything else is measured.
   verified. Generating a dataset needs that wrapper changed.
 - **Parts 2 and 3 of the test plan are untouched**: the generative-model
   comparison and the remaining cycle-integration cells.
+- **The broad f(B) sawtooth still has no mechanism.** The vector width explains
+  the step between *adjacent* batch sizes and the geometric immunity, and
+  nothing more: at the reference lattice (`L = 5`, odd) all fourteen
+  batches divisible by four are 4-wide, including `B = 512`, the global minimum,
+  and `B = 768`, among the worst. Spread inside that group is 1.76x, larger than
+  the penalty, and 4-wide against the rest is +2.7% in one measurement and
+  -0.7% in the other. Why 512 wins is unexplained.
+- **Why 4-wide costs and 2-wide does not** is untested. Four floats is 16 B per
+  thread, so transaction size is the obvious suspect. Measured on `L = 3`, which
+  spans all three widths in one lattice: width 2 is +0.09% against width 1,
+  width 4 is +14.25%.
+- **The footprint threshold is observed, not explained.** Holding active sites
+  near 2125 (about 2 MB) gives a null result at every `v2`, while 5245 sites
+  (about 5 MB) separates cleanly. The boundary between the two is unmapped.
 
 ## 8. Methodological rules earned the hard way
 
+- **Fusion names are not stable across batch sizes.** In the XLA dumps
+  `loop_select_fusion_2` walks the full `(B, L, N, N, 3)` array at `B = 58` and
+  the per-site `(B, L, N, N)` arrays elsewhere, and
+  `loop_maximum_negate_fusion_1` exists only at `B = 60`. Scoring launch
+  geometry per kernel name reported two false misses; score it per entry,
+  against every array shape the module walks.
 - Extrapolating **along** the saturated regime is exact; interpolating **into**
   the unsaturated regime was wrong by 48%.
 - Per-sweep rates separate orders of magnitude, not 10–20% differences.

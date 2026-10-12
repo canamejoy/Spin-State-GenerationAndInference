@@ -5,7 +5,7 @@ Open the `.html` files directly in a browser; everything they need is here.
 
 | page | what it answers |
 |---|---|
-| `reparto.html` | How many replicas belong on each GPU, how the cost curve behaves, and how the optimum moves with the lattice geometry. |
+| `reparto.html` | How many replicas belong on each GPU, how the cost curve behaves, how the optimum moves with the lattice geometry, and why batch sizes divisible by four are penalised — XLA's vector width, with the layer count deciding whether a lattice is immune. |
 | `cronograma.html` | 100 replicas x 15k sweeps against 50 x 20k: cost, accuracy, and the autocorrelation time that decides between them. |
 
 `cronograma.html` reads `sched.json` and the `sz/` images with relative paths,
