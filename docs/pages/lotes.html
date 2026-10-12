@@ -1042,9 +1042,9 @@ número impar de capas, donde las dos particiones coinciden.</div>
         <td>H100, y la inmunidad también en <b>T4</b> (84 % del castigo se va,
             con un residuo del 4 % sin explicar)</td>
         <td class="n">dos arquitecturas</td></tr>
-    <tr><td><b>El ancho de vector y las grillas</b> (89 valores predichos)</td>
-        <td><b>H100 solamente</b></td>
-        <td class="bad">un solo dispositivo</td></tr>
+    <tr><td><b>El ancho de vector y las grillas</b> (89 + 9 valores predichos)</td>
+        <td>H100 y <b>T4</b>, con el mismo tope de 4 y el mismo bloque de 128</td>
+        <td class="win">dos arquitecturas</td></tr>
   </tbody>
 </table></div>
 
@@ -1120,18 +1120,68 @@ dirección que el mecanismo de coalescencia predice:</p>
 H100 esconde con paralelismo de instrucciones. <b>El punto de cruce se corre con
 el ancho de banda</b> — predicho antes de medirlo, en otra arquitectura.</p>
 
-<div class="note bad"><strong>Pero no cierra del todo, y hay que decirlo.</strong>
-Ese <b class="n">+4.0 %</b> con <code>L</code> = 4 en la T4 sale
-<em>sin traslape</em>, o sea que es una separación limpia. Y el ancho de vector
-<b>no puede explicarlo</b>: las ocho celdas están en ancho 4 por el tope. Es
-marginal —la brecha entre el múltiplo de cuatro más lento y el no-múltiplo más
-rápido es de 0.052 µs, un 0.25 %, unas tres desviaciones estándar— y quitar
-<code>B</code> = 64, que es potencia de dos, todavía deja +3.6 %.
-<b>La hipótesis natural:</b> que en <code>sm_75</code> XLA tome una ruta
-<em>más ancha</em> que 4 con <code>v₂</code> alto. El tope de 4 se estableció
-solo con volcados de H100, y esto conectaría con la estructura de módulo ocho que
-vimos en mediciones tempranas. <b>Sin probar</b> — hace falta
-<code>--xla_dump_to</code> en una T4.</div>
+<h3>El residuo del 4 %, y una hipótesis mía que murió</h3>
+<p>Ese <b class="n">+4.0 %</b> con <code>L</code> = 4 en la T4 salía
+<em>sin traslape</em>, o sea como separación limpia. Y el ancho de vector no
+podía explicarlo, porque las ocho celdas están en ancho 4 por el tope. Mi
+hipótesis fue que en <code>sm_75</code> XLA tomara una ruta <b>más ancha</b> que
+4 con <code>v₂</code> alto — lo cual habría explicado además la estructura de
+módulo ocho que arrastrábamos desde las primeras mediciones. El tope de 4 se
+había establecido solo con volcados de H100.</p>
+
+<p>Leímos el volcado de la T4. <b>La hipótesis es falsa.</b></p>
+
+<div class="tw"><table>
+  <thead><tr><th>red</th><th><code>B</code></th><th>v₂(elem)</th>
+    <th>grilla observada</th><th>si el tope es 4</th><th>si es 8</th><th>si es 16</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="5">Rd 20.40<br>L = 4</td><td class="n">57</td><td class="n">2</td>
+        <td class="n">2471</td><td class="win n">2471 ✓</td><td class="n">2471</td><td class="n">2471</td></tr>
+    <tr><td class="n">58</td><td class="n">3</td><td class="n">2514</td>
+        <td class="win n">2514 ✓</td><td class="off n">1257</td><td class="off n">1257</td></tr>
+    <tr><td class="n">59</td><td class="n">2</td><td class="n">2557</td>
+        <td class="win n">2557 ✓</td><td class="n">2557</td><td class="n">2557</td></tr>
+    <tr><td class="n">60</td><td class="n">4</td><td class="n">2601</td>
+        <td class="win n">2601 ✓</td><td class="off n">1301</td><td class="off n">651</td></tr>
+    <tr><td class="n">64</td><td class="n">8</td><td class="n">2774</td>
+        <td class="win n">2774 ✓</td><td class="off n">1387</td><td class="off n">694</td></tr>
+    <tr><td rowspan="4">Rd 18.30<br>L = 5</td><td class="n">57</td><td class="n">0</td>
+        <td class="n">10160</td><td class="win n">10160 ✓</td><td class="n">10160</td><td class="n">10160</td></tr>
+    <tr><td class="n">58</td><td class="n">1</td><td class="n">5170</td>
+        <td class="win n">5170 ✓</td><td class="n">5170</td><td class="n">5170</td></tr>
+    <tr><td class="n">60</td><td class="n">2</td><td class="n">2674</td>
+        <td class="win n">2674 ✓</td><td class="n">2674</td><td class="n">2674</td></tr>
+    <tr><td class="n">64</td><td class="n">6</td><td class="n">2852</td>
+        <td class="win n">2852 ✓</td><td class="off n">1426</td><td class="off n">713</td></tr>
+  </tbody>
+</table></div>
+
+<p><b>El tope de 4 acierta 9 de 9; el de 8 y el de 16 fallan 4 de 9.</b> Así que
+<b>el tope es de XLA, no de Hopper</b>, con el mismo bloque de 128 en las dos
+arquitecturas. Y de paso <b>cierra en negativo</b> la otra pregunta: la
+estructura de módulo ocho tampoco es una ruta más ancha.</p>
+
+<div class="note warn"><strong>Entonces el +4.0 % es el dentado ancho, no un
+segundo mecanismo.</strong> El volcado confirma que las ocho celdas son ancho 4 y
+que las grillas crecen monótonamente con <code>B</code> (2471 → 2774), sin
+ninguna estructura de módulo cuatro. Mirando los tiempos ordenados, <b>las dos
+celdas más rápidas son <code>B</code> = 63 y 62</b> — adyacentes, o sea un hoyo
+local, no un patrón periódico. El efecto reclamado es 4.0 % contra una dispersión
+total del 9.0 % en la ventana, con 2 muestras contra 6 y una brecha de 0.052 µs.
+<b>«Sin traslape» acá es estadística débil encontrándose con una curva ondulada.</b>
+La inmunidad de <code>L</code> = 4 hay que leerla como completa dentro de la
+resolución de esta ventana.</div>
+
+<div class="note"><strong>Un hallazgo lateral que vale aclarar.</strong> El
+programa que compila XLA para la T4 <b>no es el mismo programa</b> que para la
+H100, aunque la regla valga en las dos. La T4 usa muchos más tamaños de bloque
+(1, 2, 3, 4, 43, 57…64, 128, 256, 480) donde la H100 tenía 128 uniforme en todo
+el conjunto pesado, y emite kernels <code>input_concatenate_fusion</code> con
+grillas de ~4× las de las fusiones de bucle que <b>no siguen</b> la regla del
+ancho ni varían con <code>B</code> mod 4. <b>La regla gobierna las fusiones de
+bucle sobre el arreglo de espines</b>, que es donde se mueve el costo medido — no
+es una afirmación sobre cada kernel que emite el compilador, y el conjunto
+emitido depende del destino.</div>
 
 <h2 id="solucion">12 · La solución</h2>
 
@@ -1355,11 +1405,6 @@ descubiertos acá— pero su efecto se mide, no se interpola.</div>
   16.4 MB y el B son 40.6 MB — <b>los dos caben</b> en los 50 MB de la H100, y
   solo el B paga. Peor: el microbenchmark de arriba toca 15.7 MB, comparable al
   brazo A, y el castigo aparece igual.</li>
-  <li><b>El residuo del 4 % con <code>L</code> = 4 en la T4.</b> Las ocho celdas
-  están en ancho 4, así que el tope de 4 no puede explicarlo. La hipótesis
-  natural es que en <code>sm_75</code> XLA tome una ruta más ancha con
-  <code>v₂</code> alto — lo que conectaría con la estructura de módulo ocho de
-  las mediciones tempranas. Falta <code>--xla_dump_to</code> en una T4.</li>
   <li><b>Por qué 512 gana y 768 pierde.</b> Los dos están en ancho 4, y el
   dentado ancho sobrevive dentro de la clase de ancho 4 en los dos dispositivos:
   <code>B</code> = 60 contra 64 difieren +27.5 % en la T4 y −4.7 % en la H100,
@@ -1411,6 +1456,8 @@ módulo.</p>
         <td><code>results/curves/width4_is_uncoalesced.json</code></td></tr>
     <tr><td>La regla en una T4 (§11)</td>
         <td><code>results/curves/geometry_rule_on_a_t4.json</code></td></tr>
+    <tr><td>El tope de ancho en sm_75 (§11)</td>
+        <td><code>results/curves/width_cap_is_xla_not_hopper.json</code></td></tr>
   </tbody>
 </table></div>
 

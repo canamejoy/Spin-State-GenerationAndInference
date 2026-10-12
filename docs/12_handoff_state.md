@@ -207,9 +207,23 @@ It is the last extrapolated figure in the study. Everything else is measured.
   +25.7% to +4.0%, an 84% reduction. But that +4.0% separates cleanly and the
   width cap of 4 cannot explain it, since all eight cells are width 4. The gap
   is marginal (0.052 us, ~0.25%, about 3 sd) and survives dropping B=64.
-  Hypothesis: on `sm_75` XLA takes a path wider than 4 at higher `v2`, which
-  would also connect to the unexplained mod-8 structure. Needs
-  `--xla_dump_to` on a T4.
+  **That hypothesis is now refuted.** The T4's own thunk sequence gives cap 4
+  exact in 9 of 9 grids across both lattices, while cap 8 and cap 16 each fail
+  4 of 9, at the same 128-thread block — so the width cap of 4 is XLA's, not
+  Hopper's, and the old mod-8 structure is not a wider path either. The +4.0%
+  is the broad sawtooth: every cell is width 4, the grids rise monotonically
+  with B (2471 -> 2774) with no mod-4 structure, and the two fastest cells are
+  B=63 and B=62, adjacent, which is a local dip. The effect is 4.0% against a
+  9.0% window spread on 2 samples against 6, so "no overlap" there is weak
+  statistics meeting a wiggly curve. Read the L=4 immunity as complete within
+  this window's resolution.
+- **The T4's compiled program is not the H100's, even though the rule holds on
+  both.** The T4 uses block sizes 1, 2, 3, 4, 43, 57..64, 128, 256, 480 where
+  the H100's heavy set was uniformly 128, and it emits heavy
+  `input_concatenate_fusion` kernels at ~4x the loop-fusion grid that do not
+  follow the width rule and do not vary with B mod 4. The rule governs the loop
+  fusions over the spin array, which is where the measured cost moves — it is
+  not a claim about every kernel, and the emitted set is target-specific.
 - **The ~2 MB footprint threshold is NOT an L2-capacity effect.** The five-device
   campaign (T4, L4, A100, H100, H200) only established that the penalty exists
   at multiples of four with `L = 5`, which is odd — the special case where the

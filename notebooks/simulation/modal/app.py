@@ -2964,13 +2964,29 @@ def launch_dims_h100(b, tag, Rd, L, nt, th, me):
     return _launch_dims(b, tag, Rd, L, nt, th, me)
 
 
+# Experiment 7: is the vector-width cap of 4 a property of XLA, or of Hopper?
+#
+# Every launch dump so far came from an H100, and the cap of 4 was read off
+# those. Experiment 6 then found a small but CLEAN +4.0% residue at L = 4 on a
+# T4, where all eight cells are width 4 under that cap -- so the cap cannot
+# explain it. XLA's code generator consults the target compute capability, so
+# the obvious candidate is that sm_75 takes a path WIDER than 4 at higher v2,
+# which would also account for the mod-8 structure seen in early measurements.
+# Reading the T4's own thunk sequence settles it, and costs only compile time.
+@app.function(gpu="T4", image=image, memory=32768, timeout=3600,
+              volumes={"/out": vol})
+def launch_dims_t4(b, tag, Rd, L, nt, th, me):
+    return _launch_dims(b, tag, Rd, L, nt, th, me)
+
+
 @app.local_entrypoint()
 def launch_dims(batches: str = "59,60,63,64", rd: float = 18.30,
                 layers: int = 5, n_temps: int = 8, n_therm: int = 200,
-                n_meas: int = 100, tag: str = "exp3f"):
-    """Experiment 3f: the launch geometry XLA picks, per B. Compile only."""
-    launch_dims_h100.remote([int(x) for x in batches.split(",") if x], tag,
-                            rd, layers, n_temps, n_therm, n_meas)
+                n_meas: int = 100, tag: str = "exp3f", device: str = "h100"):
+    """The launch geometry XLA picks, per B. Compile only."""
+    fn = {"h100": launch_dims_h100, "t4": launch_dims_t4}[device.lower()]
+    fn.remote([int(x) for x in batches.split(",") if x], tag,
+              rd, layers, n_temps, n_therm, n_meas)
 
 
 @app.function(gpu="H100", **_BS)
