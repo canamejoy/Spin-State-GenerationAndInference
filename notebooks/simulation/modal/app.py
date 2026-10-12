@@ -1765,8 +1765,11 @@ def _stride_disc(lattices, batches, repeats, n_temps, n_therm, n_meas, tag):
             a = np.array(ts)
             us = float(a.mean() * 1e6 / (sweeps * B))
             rows.append(dict(B=int(B), us=us, sd_s=float(a.std())))
+            ve = v2(B) + v2(int(L))
             print(f"  B={B:4d}  {us:8.3f} us  (sd {a.std():.3f} s)"
-                  f"{'   <<< multiple of 4' if B % 4 == 0 else ''}", flush=True)
+                  f"  v2(elements)={ve}"
+                  f"  width={min(4, 2 ** ve)}"
+                  f"{'  (B|4)' if B % 4 == 0 else ''}", flush=True)
 
         m4 = [r["us"] for r in rows if r["B"] % 4 == 0]
         nm = [r["us"] for r in rows if r["B"] % 4]
@@ -1774,15 +1777,37 @@ def _stride_disc(lattices, batches, repeats, n_temps, n_therm, n_meas, tag):
         overlap = not (min(m4) > max(nm)) if m4 and nm else None
         print(f"  => mod-4 penalty {pen:+.1%}   overlap: "
               f"{'yes' if overlap else 'NONE'}", flush=True)
+
+        # Split the same rows by the predicted vector width instead. The launch
+        # dumps show XLA picks `width = min(4, 2^v2(elements))`, so this is a
+        # width-4 against narrower split, NOT vectorised against scalar -- at
+        # v2(elements) == 1 the narrow side is still 2-wide. For an odd L the
+        # split coincides with the mod-4 one; where it differs, it is the
+        # mechanism under test, so the two are reported side by side.
+        w4 = [r["us"] for r in rows if v2(r["B"]) + v2(int(L)) >= 2]
+        nar = [r["us"] for r in rows if v2(r["B"]) + v2(int(L)) < 2]
+        vpen = (np.mean(w4) / np.mean(nar) - 1) if w4 and nar else float("nan")
+        vover = (not (min(w4) > max(nar))) if w4 and nar else None
+        print(f"  => predicted width-4 penalty {vpen:+.1%} "
+              f"({len(w4)} at width 4 vs {len(nar)} narrower)   overlap: "
+              f"{'yes' if vover else 'NONE' if vover is not None else 'n/a'}",
+              flush=True)
         out.append(dict(Rd=float(Rd), L=int(L), N=N, stride=stride,
                         v2_stride=v2(stride), n_active=int(np.asarray(geo["disco"]).sum()),
-                        rows=rows, mod4_penalty=pen, overlap=bool(overlap)))
+                        rows=rows, mod4_penalty=pen, overlap=bool(overlap),
+                        width4_penalty=vpen, width4_overlap=vover,
+                        n_width4=len(w4), n_narrower=len(nar)))
 
     print("\n=== stride discriminator ===", flush=True)
-    print(f"{'Rd':>6} {'L':>3} {'stride':>10} {'v2':>3} {'mod-4 penalty':>14} {'overlap':>8}", flush=True)
+    print(f"{'Rd':>6} {'L':>3} {'stride':>10} {'v2':>3} {'mod-4 penalty':>14} "
+          f"{'overlap':>8} {'predicted':>11} {'overlap':>8}", flush=True)
     for o in out:
+        vo = o["width4_overlap"]
         print(f"{o['Rd']:6.2f} {o['L']:3d} {o['stride']:10,d} {o['v2_stride']:3d} "
-              f"{o['mod4_penalty']:+13.1%} {'yes' if o['overlap'] else 'NONE':>8}", flush=True)
+              f"{o['mod4_penalty']:+13.1%} {'yes' if o['overlap'] else 'NONE':>8} "
+              f"{o['width4_penalty']:+10.1%} "
+              f"{('yes' if vo else 'NONE') if vo is not None else 'n/a':>8}",
+              flush=True)
 
     res = dict(lattices=out, batches=list(map(int, batches)), sweeps=sweeps,
                repeats=repeats, device=device_identity(), aot_compiled=True)
@@ -1852,6 +1877,32 @@ STRIDE_SWEEP_BIG = [
     (11.75, 12),   # v2=4  stride 90,000   n_active 5244
     (14.35, 8),    # v2=5  stride 92,256   n_active 5256
     (10.05, 16),   # v2=6  stride 101,568  n_active 5200
+]
+
+
+# Experiment 4: the falsifiable consequence of the vectorisation mechanism.
+#
+# The cause is XLA taking a 4-wide loop over `elements = B * L * N^2 * 3`, and
+# `N^2 * 3` is odd, so
+#
+#       v2(elements) = v2(B) + v2(L)
+#
+# and the 4-wide path needs v2(elements) >= 2. That predicts three different
+# behaviours from the layer count alone:
+#
+#       L odd           vectorises only at B divisible by 4   -> the mod-4 rule
+#       L = 2 mod 4     vectorises at EVERY EVEN B            -> a mod-2 rule
+#       L divisible 4   vectorises at every B                 -> immune
+#
+# Every window measured so far (51,52,53,59,60,61,63,64,65) contains only ODD
+# non-multiples of four, so it cannot tell the mod-4 rule from the mod-2 one.
+# This window deliberately includes B = 58 and 62: even, not multiples of four.
+# L = 6 must be slow there and L = 3 must not. Footprints are held near the
+# 5.2k-site regime where the penalty is known to exist.
+PARITY_SWEEP = [
+    (16.65, 6),    # L = 2 mod 4 -> predicted slow at 58, 60, 62, 64
+    (23.55, 3),    # L odd       -> predicted slow at 60, 64 only
+    (20.40, 4),    # L | 4       -> predicted flat, already vectorised
 ]
 
 
@@ -2793,7 +2844,7 @@ def stride_discriminator(batches: str = "51,52,53,59,60,61,63,64,65",
     bl = [int(x) for x in batches.split(",") if x]
     fn = {"h100": stride_disc_h100, "a100": stride_disc_a100}[device.lower()]
     lat = {"control": LATTICES, "sweep": STRIDE_SWEEP,
-           "sweepbig": STRIDE_SWEEP_BIG}[lattices.lower()]
+           "sweepbig": STRIDE_SWEEP_BIG, "parity": PARITY_SWEEP}[lattices.lower()]
     fn.remote(lat, bl, repeats, n_temps, n_therm, n_meas, tag)
 
 

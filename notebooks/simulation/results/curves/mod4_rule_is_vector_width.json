@@ -1,0 +1,528 @@
+{
+ "question": "Does the batch penalty follow `B % 4 == 0`, or the vector width XLA picks? The two differ only when L is even, and every window measured before this one contained no even non-multiple of four.",
+ "rule": {
+  "elements": "B * L * N^2 * 3, and N is always odd, so v2(elements) = v2(B) + v2(L)",
+  "width": "XLA launches 128 threads and gives each one min(4, 2^v2(elements)) elements",
+  "cost": "only width 4 is expensive. Width 2 costs +0.1% against width 1 (measured on L=3, where one lattice spans all three widths), so the penalty condition collapses to a single inequality: v2(B) + v2(L) >= 2.",
+  "consequences": {
+   "L odd": "width 4 only at B divisible by 4 -> the mod-4 penalty",
+   "L = 2 mod 4": "width 4 at every even B -> the mod-4 rule MISCLASSIFIES",
+   "L divisible by 4": "width 4 at every B -> flat, immune"
+  }
+ },
+ "findings": [
+  "89 grid values across three lattices, 0 mispredicted, from each module's own thunk_sequence.txt. Block size is 128 everywhere; only the grid moves.",
+  "L=6: the width-4 split separates perfectly (+14.7%, no overlap) while `B % 4` does not (+10.2%, overlap). B=58 and B=62 are expensive, which no earlier window could have seen.",
+  "L=3: the width-4 split and the mod-4 split coincide, +14.2%, no overlap.",
+  "L=3 also rules out a graded cost: B=58 (width 2) sits between its width-1 neighbours 57 and 59 (2.470 / 2.484 / 2.502), and B=62 between 61 and 63 (2.366 / 2.373 / 2.367). The 2-wide path is free.",
+  "L=4: every cell is width 4, so no split exists and none is seen (mod-4 -2.5% with overlap). Immunity is not the penalty failing to apply, it is the penalty already paid in every cell.",
+  "Fusion names are not stable across B -- `loop_select_fusion_2` walks the full array at B=58 and the per-site arrays elsewhere, and `loop_maximum_negate_fusion_1` exists only at B=60 -- so grids must be scored per entry, not per kernel name."
+ ],
+ "open_questions": [
+  "Why width 4 costs and width 2 does not. Four floats is 16 B per thread; transaction size is the obvious suspect but it is untested.",
+  "Why no penalty appears at the ~2 MB footprint (STRIDE_SWEEP was null at every v2), while 5 MB separates cleanly.",
+  "Whether the earlier mod-8 structure is a wider path at higher v2. The widths seen here stop at 4."
+ ],
+ "supersedes": "the claim in mod4_cause_xla_vectorisation.json that the choice is binary between a scalar and a 4-wide path. There is also a 2-wide path at v2(elements) == 1. It changes no stated rule, because the 2-wide path carries no measurable cost.",
+ "device": "NVIDIA H100 80GB HBM3",
+ "method": {
+  "launch_geometry": "app.py::launch_dims, compile only, XLA_FLAGS=--xla_dump_to",
+  "timing": "app.py::stride_discriminator --lattices parity, 40 temperatures x 1500 sweeps, 2 repeats, AOT compiled so compile time is excluded",
+  "windows": "B = 57..64 for timing; B = 57,58,59,60,62,63 for the dumps"
+ },
+ "arms": [
+  {
+   "L": 6,
+   "Rd": 16.65,
+   "N": 35,
+   "elements_per_replica_full": 22050,
+   "elements_per_replica_site": 7350,
+   "v2_elements_per_replica": 1,
+   "stride_bytes": 88200,
+   "cells": [
+    {
+     "B": 57,
+     "us_per_replica_sweep": 2.21,
+     "v2_elements": 1,
+     "predicted_width": 2,
+     "grid_observed": {
+      "full": 4910,
+      "site": 1637
+     },
+     "grid_predicted": {
+      "full": 4910,
+      "site": 1637
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 58,
+     "us_per_replica_sweep": 2.51,
+     "v2_elements": 2,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": 2498,
+      "site": 833
+     },
+     "grid_predicted": {
+      "full": 2498,
+      "site": 833
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 59,
+     "us_per_replica_sweep": 2.202,
+     "v2_elements": 1,
+     "predicted_width": 2,
+     "grid_observed": {
+      "full": 5082,
+      "site": 1694
+     },
+     "grid_predicted": {
+      "full": 5082,
+      "site": 1694
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 60,
+     "us_per_replica_sweep": 2.618,
+     "v2_elements": 3,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": 2584,
+      "site": 862
+     },
+     "grid_predicted": {
+      "full": 2584,
+      "site": 862
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 61,
+     "us_per_replica_sweep": 2.192,
+     "v2_elements": 1,
+     "predicted_width": 2,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 5255,
+      "site": 1752
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    },
+    {
+     "B": 62,
+     "us_per_replica_sweep": 2.481,
+     "v2_elements": 2,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": 2671,
+      "site": 891
+     },
+     "grid_predicted": {
+      "full": 2671,
+      "site": 891
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 63,
+     "us_per_replica_sweep": 2.144,
+     "v2_elements": 1,
+     "predicted_width": 2,
+     "grid_observed": {
+      "full": 5427,
+      "site": 1809
+     },
+     "grid_predicted": {
+      "full": 5427,
+      "site": 1809
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 64,
+     "us_per_replica_sweep": 2.429,
+     "v2_elements": 7,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2757,
+      "site": 919
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    }
+   ],
+   "n_grid_values": 12,
+   "n_grid_mispredicted": 0,
+   "width4_penalty": 0.1474622770919065,
+   "width4_overlap": false,
+   "width2_vs_width1": null,
+   "mod4_penalty": 0.1020452725817016,
+   "mod4_overlap": true
+  },
+  {
+   "L": 3,
+   "Rd": 23.55,
+   "N": 49,
+   "elements_per_replica_full": 21609,
+   "elements_per_replica_site": 7203,
+   "v2_elements_per_replica": 0,
+   "stride_bytes": 86436,
+   "cells": [
+    {
+     "B": 57,
+     "us_per_replica_sweep": 2.47,
+     "v2_elements": 0,
+     "predicted_width": 1,
+     "grid_observed": {
+      "full": 9623,
+      "site": 3208
+     },
+     "grid_predicted": {
+      "full": 9623,
+      "site": 3208
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 58,
+     "us_per_replica_sweep": 2.484,
+     "v2_elements": 1,
+     "predicted_width": 2,
+     "grid_observed": {
+      "full": 4896,
+      "site": 1632
+     },
+     "grid_predicted": {
+      "full": 4896,
+      "site": 1632
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 59,
+     "us_per_replica_sweep": 2.502,
+     "v2_elements": 0,
+     "predicted_width": 1,
+     "grid_observed": {
+      "full": 9961,
+      "site": 3321
+     },
+     "grid_predicted": {
+      "full": 9961,
+      "site": 3321
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 60,
+     "us_per_replica_sweep": 2.839,
+     "v2_elements": 2,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": 2533,
+      "site": 845
+     },
+     "grid_predicted": {
+      "full": 2533,
+      "site": 845
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 61,
+     "us_per_replica_sweep": 2.366,
+     "v2_elements": 0,
+     "predicted_width": 1,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 10299,
+      "site": 3433
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    },
+    {
+     "B": 62,
+     "us_per_replica_sweep": 2.373,
+     "v2_elements": 1,
+     "predicted_width": 2,
+     "grid_observed": {
+      "full": 5234,
+      "site": 1745
+     },
+     "grid_predicted": {
+      "full": 5234,
+      "site": 1745
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 63,
+     "us_per_replica_sweep": 2.367,
+     "v2_elements": 0,
+     "predicted_width": 1,
+     "grid_observed": {
+      "full": 10636,
+      "site": 3546
+     },
+     "grid_predicted": {
+      "full": 10636,
+      "site": 3546
+     },
+     "grid_matches": {
+      "full": true,
+      "site": true
+     }
+    },
+    {
+     "B": 64,
+     "us_per_replica_sweep": 2.705,
+     "v2_elements": 6,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2702,
+      "site": 901
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    }
+   ],
+   "n_grid_values": 12,
+   "n_grid_mispredicted": 0,
+   "width4_penalty": 0.142150803461063,
+   "width4_overlap": false,
+   "width2_vs_width1": 0.0009273570324574987,
+   "mod4_penalty": 0.142150803461063,
+   "mod4_overlap": false
+  },
+  {
+   "L": 4,
+   "Rd": 20.4,
+   "N": 43,
+   "elements_per_replica_full": 22188,
+   "elements_per_replica_site": 7396,
+   "v2_elements_per_replica": 2,
+   "stride_bytes": 88752,
+   "cells": [
+    {
+     "B": 57,
+     "us_per_replica_sweep": 2.549,
+     "v2_elements": 2,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": 2471,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2471,
+      "site": 824
+     },
+     "grid_matches": {
+      "full": true,
+      "site": null
+     }
+    },
+    {
+     "B": 58,
+     "us_per_replica_sweep": 2.545,
+     "v2_elements": 3,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": 2514,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2514,
+      "site": 838
+     },
+     "grid_matches": {
+      "full": true,
+      "site": null
+     }
+    },
+    {
+     "B": 59,
+     "us_per_replica_sweep": 2.716,
+     "v2_elements": 2,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": 2557,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2557,
+      "site": 853
+     },
+     "grid_matches": {
+      "full": true,
+      "site": null
+     }
+    },
+    {
+     "B": 60,
+     "us_per_replica_sweep": 2.652,
+     "v2_elements": 4,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2601,
+      "site": 867
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    },
+    {
+     "B": 61,
+     "us_per_replica_sweep": 2.755,
+     "v2_elements": 2,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2644,
+      "site": 882
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    },
+    {
+     "B": 62,
+     "us_per_replica_sweep": 2.434,
+     "v2_elements": 3,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2687,
+      "site": 896
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    },
+    {
+     "B": 63,
+     "us_per_replica_sweep": 2.475,
+     "v2_elements": 2,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2731,
+      "site": 911
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    },
+    {
+     "B": 64,
+     "us_per_replica_sweep": 2.376,
+     "v2_elements": 8,
+     "predicted_width": 4,
+     "grid_observed": {
+      "full": null,
+      "site": null
+     },
+     "grid_predicted": {
+      "full": 2774,
+      "site": 925
+     },
+     "grid_matches": {
+      "full": null,
+      "site": null
+     }
+    }
+   ],
+   "n_grid_values": 3,
+   "n_grid_mispredicted": 0,
+   "width4_penalty": null,
+   "width4_overlap": null,
+   "width2_vs_width1": null,
+   "mod4_penalty": -0.025203567274137195,
+   "mod4_overlap": true
+  }
+ ],
+ "grid_accounting": {
+  "recorded_here": 27,
+  "recorded_here_note": "one representative grid per array shape per B, which is what the `arms[].cells[].grid_observed` entries hold",
+  "all_kernel_rows": 89,
+  "all_kernel_rows_note": "every heavy entry of every `loop_*` row in the three `heaviest kernels` tables, scored entry by entry against both shapes; 10 further entries are grid-1 bookkeeping launches and were reported separately rather than counted as hits",
+  "mispredicted": 0
+ }
+}
