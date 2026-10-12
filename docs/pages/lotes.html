@@ -82,6 +82,8 @@ hr{border:0;border-top:1px solid var(--rule);margin:3rem 0}
             border-radius:6px;transition:background .15s,border-color .15s}
 .seg button:hover:not(:disabled){border-color:var(--accent)}
 .seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.seg button:disabled{color:var(--dead);border-color:var(--rule);cursor:not-allowed;
+                     text-decoration:line-through}
 .seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 input[type=range]{width:100%;max-width:300px;accent-color:var(--accent)}
 .rangerow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -1130,10 +1132,24 @@ delgado— pero pasar de cinco a ocho, o de seis a ocho, puede ser una decisión
 que la física admite. Si la admite, la inmunidad al lote sale sin pagar nada.</p>
 
 <h3 id="planner">El planificador</h3>
-<p>Elegí una configuración y mirá qué pasa. La geometría de abajo arranca en la
-red de referencia, que es la única con la curva <code>f(B)</code> medida en los
-diecinueve lotes; si la movés, el planificador <b>deja de darte un costo</b> y te
-dice por qué.</p>
+<p>Elegí una configuración y mirá qué pasa. Un lote tachado es un reparto que
+<b>no cierra</b>: el total de réplicas no se divide en lanzamientos de ese tamaño,
+y no se puede seleccionar.</p>
+
+<div class="note warn"><strong>Todo lo de acá abajo está medido en una sola
+geometría: Rd = 18.30, L = 5, 5245 sitios activos.</strong> Es la única red con
+la curva <code>f(B)</code> medida en los diecinueve lotes, y por eso el
+planificador está fijo en ella. <b>Con otra geometría los números cambian, y no
+solo de escala:</b> cambian los sitios activos, se mueve el lote óptimo a un
+lugar que <a href="#h2">no se puede extrapolar</a>, y a través de
+<code>v₂(L)</code> cambia <em>cuáles</em> lotes pagan el castigo. Para otra red
+hay que medir la curva de nuevo — unos <b class="n">$0.60</b> y media hora. Lo
+único que transfiere sin medir es el piso por sitio, 4 × 10⁻⁴ µs por
+sitio-barrido, dentro del 15 % en cuatro redes.</div>
+
+<p>Como esta red tiene <code>L = 5</code>, que es impar, <code>v₂(L) = 0</code> y
+la condición <code>v₂(B) + v₂(L) ≥ 2</code> se reduce a que <code>B</code> sea
+múltiplo de cuatro. Eso es lo que marca la fila del ancho.</p>
 
 <div class="stage">
   <div class="controls">
@@ -1147,23 +1163,6 @@ dice por qué.</p>
   <div class="controls" style="margin-top:16px">
     <div class="ctl" style="flex:1 1 100%"><span>Réplicas por GPU · B</span>
       <div class="seg" id="pB" role="group" aria-label="Réplicas por GPU"></div></div>
-  </div>
-  <div class="controls" style="margin-top:16px;padding-top:16px;
-       border-top:1px solid var(--rule)">
-    <div class="ctl" style="flex:1 1 240px">
-      <span>Geometría · radio Rd</span>
-      <div class="rangerow">
-        <input type="range" id="pRd" min="6" max="30" step="0.05" value="18.30">
-        <output id="pRdO">18.30</output>
-      </div>
-    </div>
-    <div class="ctl" style="flex:1 1 240px">
-      <span>Geometría · capas L</span>
-      <div class="rangerow">
-        <input type="range" id="pL" min="1" max="16" step="1" value="5">
-        <output id="pLO">5</output>
-      </div>
-    </div>
   </div>
 
   <p id="pExplain" style="margin:18px 0 2px;font-size:.95rem"></p>
@@ -1182,14 +1181,14 @@ dice por qué.</p>
   <p id="pHint" style="margin:16px 0 0;font-size:.88rem;color:var(--muted)"></p>
 </div>
 
-<div class="note"><strong>Por qué el planificador se niega a cotizar otra
-geometría.</strong> Porque la prueba del producto de la sección 4 demostró que la
-curva <b>no se transfiere</b>: en Rd = 24 la predicción salió invertida las seis
-veces. Un planificador que te diera un número para cualquier red estaría
-inventándolo. Lo que sí transfiere es el <b>piso por sitio</b> —4 × 10⁻⁴ µs por
-sitio-barrido, dentro del 15 % en cuatro redes— y eso es lo que muestra: el costo
-que alcanzarías <em>con el mejor lote de esa red</em>, que todavía hay que
-medir.</div>
+<div class="note"><strong>Por qué no hay deslizadores de geometría acá.</strong>
+Porque la prueba del producto de la <a href="#h2">sección 4</a> demostró que la
+curva <b>no se transfiere</b> entre redes: en Rd = 24 la predicción salió
+invertida las seis veces, y en Rd = 12 acertó tres de seis. Un planificador con
+un control de geometría tendría que inventar la curva de cada red, y sería
+exactamente el error que ese experimento refutó. La geometría es un grado de
+libertad <em>real</em> —está en la tabla de arriba y es el más importante de los
+descubiertos acá— pero su efecto se mide, no se interpola.</div>
 
 <h2 id="abierto">14 · Lo que sigue sin explicación</h2>
 <p>Tres cosas, y las tres están observadas pero no entendidas:</p>
@@ -1637,7 +1636,6 @@ $("vIn").addEventListener("input", syncV2);
 const REF = {Rd: 18.30, L: 5, nActive: 5245};
 const SWEEPS = 200 * 15000;           // the production convention
 const USD_PER_GPU_S = 0.001097;       // H100 on Modal, verified
-const US_PER_SITE_SWEEP = 4.0e-4;     // transfers within 15% across four lattices
 const PLAN = {S: 4, R: 128, D: 1, B: 512};
 
 const pBS = Object.keys(FB.stitched).map(Number).sort((a, b) => a - b);
@@ -1661,11 +1659,11 @@ function buildSeg(host, values, label, get, set){
 }
 
 function syncPlan(){
-  const Rd = parseFloat($("pRd").value), L = parseInt($("pL").value, 10);
-  $("pRdO").textContent = Rd.toFixed(2);
-  $("pLO").textContent = L;
+  // Pinned to the reference lattice: it is the only geometry whose f(B) is
+  // measured at all nineteen batches, and section 4 showed the curve does not
+  // transfer, so there is nothing honest to interpolate for another one.
+  const {Rd, L} = REF;
   const geo = geometry(Rd, L);
-  const isRef = Math.abs(Rd - REF.Rd) < 0.005 && L === REF.L;
   const {S, R, D, B} = PLAN;
 
   // Mark unreachable batches instead of hiding them: which combinations close
@@ -1716,7 +1714,7 @@ function syncPlan(){
     + "Rd " + Rd.toFixed(2) + ", L " + L + ", N " + geo.N + ", "
     + fmt(geo.nActive) + " sitios";
 
-  if (isRef){
+  {
     const us = FB.stitched[B];
     const wall = launches * B * SWEEPS * us * 1e-6;
     const usd = wall * D * USD_PER_GPU_S;
@@ -1738,30 +1736,6 @@ function syncPlan(){
       + "diecinueve puntos. 200 temperaturas × 15 000 barridos, H100 a $"
       + USD_PER_GPU_S + " por GPU-segundo. El mejor B alcanzable con esta "
       + "combinación es <b>" + bestB + "</b>.";
-  } else {
-    const floor = geo.nActive * US_PER_SITE_SWEEP;
-    const wall = launches * B * SWEEPS * floor * 1e-6;
-    const usd = wall * D * USD_PER_GPU_S;
-    $("pTime").textContent = "≳ " + (wall < 3600 ? (wall / 60).toFixed(1) + " min"
-                                                 : (wall / 3600).toFixed(2) + " h");
-    $("pUsd").textContent = "≳ $" + usd.toFixed(2);
-    $("pPer").textContent = "≳ $" + (usd / (S * R)).toFixed(5);
-    $("pRel").textContent = "sin medir";
-    $("pRel").className = "";
-    $("pHint").innerHTML = "<b>Esta red no tiene curva medida</b>, así que no hay "
-      + "costo que darte en <code>B</code> = " + B + ". Lo que ves es el "
-      + "<b>piso</b>: " + fmt(geo.nActive) + " sitios × 4 × 10⁻⁴ µs = "
-      + floor.toFixed(3) + " µs por réplica-barrido, que es lo que costaría "
-      + "<em>con el mejor lote de esta red</em> — un lote que hay que encontrar "
-      + "midiendo. Vale dentro del 15 %. Lo que <b>sí</b> se puede afirmar sin "
-      + "medir es la columna del ancho: "
-      + (v2(L) >= 2
-          ? "con <code>v₂(L) = " + v2(L) + " ≥ 2</code> ningún lote es peor que "
-          + "su vecino por este motivo."
-          : v2(L) === 1
-            ? "con <code>v₂(L) = 1</code> el castigo cae en <b>todo lote par</b>."
-            : "con <code>v₂(L) = 0</code> el castigo cae en los <b>múltiplos de "
-            + "cuatro</b>.");
   }
 }
 buildSeg($("pS"), [1, 2, 3, 4, 5, 6], v => String(v),
@@ -1771,8 +1745,6 @@ buildSeg($("pR"), [100, 128, 150, 256], v => String(v),
 buildSeg($("pD"), [1, 2, 4], v => v + (v === 1 ? " GPU" : " GPUs"),
          () => PLAN.D, v => { PLAN.D = v; });
 buildSeg($("pB"), pBS, v => String(v), () => PLAN.B, v => { PLAN.B = v; });
-$("pRd").addEventListener("input", syncPlan);
-$("pL").addEventListener("input", syncPlan);
 
 /* ------------------------------------------------------------------ startup */
 function redrawAll(){ drawCurve(); drawWindow(); syncGeometry(); }

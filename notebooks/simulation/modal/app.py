@@ -1827,6 +1827,12 @@ def stride_disc_a100(lat, b, r, nt, th, me, tag):
     return _stride_disc(lat, b, r, nt, th, me, tag)
 
 
+@app.function(gpu="T4", image=image, memory=32768, timeout=6 * 3600,
+              volumes={"/out": vol})
+def stride_disc_t4(lat, b, r, nt, th, me, tag):
+    return _stride_disc(lat, b, r, nt, th, me, tag)
+
+
 # --------------------------------------------------------------------------
 # Experiment 1: turn "v2(stride) decides whether" into a curve.
 #
@@ -1903,6 +1909,27 @@ PARITY_SWEEP = [
     (16.65, 6),    # L = 2 mod 4 -> predicted slow at 58, 60, 62, 64
     (23.55, 3),    # L odd       -> predicted slow at 60, 64 only
     (20.40, 4),    # L | 4       -> predicted flat, already vectorised
+]
+
+
+# Experiment 6: does the GEOMETRY half of the rule hold off an H100?
+#
+# The five-device campaign only ever measured L = 5, which is odd -- exactly the
+# case where `B % 4` and `v2(B) + v2(L) >= 2` are the same statement. Every
+# measurement of the layer dependence ran on an H100, and XLA's code generator
+# consults the target compute capability, so nothing so far rules out the
+# vector-width choice being specific to Hopper.
+#
+# This pair settles it on a Turing T4, two architecture generations away and the
+# device with the largest penalty (+42%), so the signal is the clearest
+# available. Footprints are matched so the comparison is not confounded by the
+# footprint threshold that killed arm A of experiment 4.
+#
+#   L = 5   odd        -> must keep the mod-4 penalty
+#   L = 4   divisible  -> must be FLAT if the rule travels
+GEOM_PAIR = [
+    (18.30, 5),    # the reference lattice: +42.0% on a T4, 5245 sites
+    (20.40, 4),    # predicted immune, 5252 sites -- matched within 0.2%
 ]
 
 
@@ -2033,6 +2060,155 @@ void substep(const float* __restrict__ s, float* __restrict__ o,
   o[base] = ex * inv; o[base + 1] = ey * inv; o[base + 2] = ez * inv;
 }
 """
+
+
+# --------------------------------------------------------------------------
+# Experiment 5: WHY does width 4 cost and width 2 not?
+#
+# XLA's decision is about an ELEMENTWISE loop over the flat spin array, not
+# about the stencil: the kernels whose grid dropped 3.94x are `loop_*_fusion`,
+# one output element per input element. So the question isolates cleanly --
+# take an elementwise kernel over n floats and hand each thread 1, 2 or 4 of
+# them, with the total work fixed, and see which is slower on real hardware.
+#
+# Two index schemes, because they are not equivalent and XLA has to pick one:
+#
+#   blocked   thread t owns elements  t*VEC .. t*VEC+VEC-1   (consecutive)
+#   strided   thread t owns elements  t, t+T, t+2T, ...      (grid-stride)
+#
+# Blocked is the suspect. With VEC consecutive floats per thread, a single load
+# instruction across a 32-thread warp touches addresses 4*VEC bytes apart, so
+# the warp's request spans VEC*128 bytes instead of 128 and needs VEC times the
+# transactions. Strided keeps every individual load perfectly coalesced.
+#
+# If blocked VEC=4 is slow and strided VEC=4 is not, the mechanism is the
+# indexing, and the device-dependent amplitude would follow from how much each
+# memory system suffers from it. If both are flat, the cost is somewhere else
+# (register pressure, spills) and this probe says so by being null.
+_ELEMENTWISE = r"""
+extern "C" __global__
+void ew(const float* __restrict__ a, const float* __restrict__ b,
+        float* __restrict__ o, long long n) {
+  const long long t = blockIdx.x * (long long)blockDim.x + threadIdx.x;
+  const long long T = (long long)gridDim.x * blockDim.x;
+#pragma unroll
+  for (int j = 0; j < VEC; ++j) {
+    const long long i = BLOCKED ? (t * VEC + j) : (t + (long long)j * T);
+    if (i < n) {
+      const float x = a[i], y = b[i];
+      // Arithmetic density in the range of the real fusions: a couple of
+      // multiplies, a max and a reciprocal. Cheap enough that memory decides.
+      o[i] = fmaxf(x * y + x, 0.0f) * __frcp_rn(1.0f + fabsf(y));
+    }
+  }
+}
+"""
+
+
+def _vector_width_probe(vecs, schemes, iters, repeats, tag, Rd, L, B):
+    """Is a 4-wide elementwise loop intrinsically slower than a 1-wide one?"""
+    import sys, json, itertools
+    sys.path.insert(0, "/root")
+    import numpy as np, cupy as cp
+    import sim_core as S
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N = int(geo["N"])
+    n = int(B) * int(L) * N * N * 3          # exactly XLA's element count
+    dev = cp.cuda.Device()
+    print(f"gpu={cp.cuda.runtime.getDeviceProperties(dev.id)['name'].decode()} "
+          f"SMs={dev.attributes['MultiProcessorCount']}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} B={B}  n={n:,} elements "
+          f"({3 * 4 * n / 2**20:.1f} MB touched per pass)  "
+          f"{iters} iterations/cell", flush=True)
+
+    rng = np.random.default_rng(7)
+    a = cp.asarray(rng.standard_normal(n).astype(np.float32))
+    b = cp.asarray(rng.standard_normal(n).astype(np.float32))
+    o = cp.empty_like(a)
+    TPB = 128                                 # the block size XLA actually used
+
+    rows = []
+    for vec, scheme in itertools.product(vecs, schemes):
+        blocked = 1 if scheme == "blocked" else 0
+        mod = cp.RawModule(code=_ELEMENTWISE, options=(
+            "-std=c++11", f"-DVEC={vec}", f"-DBLOCKED={blocked}"))
+        k = mod.get_function("ew")
+        grid = (n + TPB * vec - 1) // (TPB * vec)
+        args = (a, b, o, np.int64(n))
+        k((grid,), (TPB,), args)              # warm up / compile
+        cp.cuda.Stream.null.synchronize()
+        ts = []
+        for _ in range(repeats):
+            e0, e1 = cp.cuda.Event(), cp.cuda.Event()
+            e0.record()
+            for _ in range(iters):
+                k((grid,), (TPB,), args)
+            e1.record(); e1.synchronize()
+            ts.append(cp.cuda.get_elapsed_time(e0, e1) / 1e3)
+        arr = np.array(ts)
+        per = float(arr.mean() / iters)                  # seconds per pass
+        gbs = 3.0 * 4.0 * n / per / 1e9                  # two reads, one write
+        rows.append(dict(vec=int(vec), scheme=scheme, grid=int(grid),
+                         block=TPB, s_per_pass=per, gb_s=gbs,
+                         sd_s=float(arr.std())))
+        print(f"  VEC={vec} {scheme:8s} grid={grid:8,d} x {TPB}  "
+              f"{per * 1e6:9.2f} us/pass  {gbs:8.1f} GB/s  "
+              f"(sd {arr.std():.4f} s)", flush=True)
+
+    print("\n=== cost of widening the loop, at fixed total work ===", flush=True)
+    print(f"{'scheme':>9} {'VEC=1':>11} {'VEC=2':>11} {'VEC=4':>11} "
+          f"{'4 vs 1':>9} {'2 vs 1':>9}", flush=True)
+    summary = {}
+    for scheme in schemes:
+        by = {r["vec"]: r["s_per_pass"] for r in rows if r["scheme"] == scheme}
+        base = by.get(1)
+        line = f"{scheme:>9}"
+        for v in (1, 2, 4):
+            line += f" {by[v] * 1e6:10.2f}u" if v in by else f" {'-':>11}"
+        r4 = by[4] / base - 1 if base and 4 in by else float("nan")
+        r2 = by[2] / base - 1 if base and 2 in by else float("nan")
+        summary[scheme] = dict(vs1_at4=r4, vs1_at2=r2)
+        print(line + f" {r4:+8.1%} {r2:+8.1%}", flush=True)
+
+    print("\nThe JAX kernel pays +14.25% going from width 1 to width 4 and "
+          "+0.09% going to width 2. A blocked scheme that reproduces that "
+          "signature locates the cost in the indexing; a flat result puts it "
+          "elsewhere, and either way this probe carries no XLA.", flush=True)
+    res = dict(rows=rows, summary=summary, n_elements=n, block=TPB,
+               Rd=float(Rd), L=int(L), N=N, B=int(B), iters=iters,
+               repeats=repeats, device=device_identity(),
+               reference_jax=dict(width2_vs_width1=0.0009,
+                                  width4_vs_width1=0.1425,
+                                  measured_on="Rd 23.55 L 3, H100"))
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", image=cuda_image, memory=65536, timeout=3600,
+              volumes={"/out": vol})
+def vecwidth_h100(v, sc, it, r, tag, Rd, L, B):
+    return _vector_width_probe(v, sc, it, r, tag, Rd, L, B)
+
+
+@app.function(gpu="T4", image=cuda_image, memory=32768, timeout=3600,
+              volumes={"/out": vol})
+def vecwidth_t4(v, sc, it, r, tag, Rd, L, B):
+    return _vector_width_probe(v, sc, it, r, tag, Rd, L, B)
+
+
+@app.local_entrypoint()
+def vector_width(vecs: str = "1,2,4", schemes: str = "blocked,strided",
+                 iters: int = 300, repeats: int = 3, rd: float = 18.30,
+                 layers: int = 5, batch: int = 60, device: str = "h100",
+                 tag: str = "exp5_vecwidth"):
+    """Experiment 5: why width 4 costs. Raw CUDA, no XLA anywhere."""
+    fn = {"h100": vecwidth_h100, "t4": vecwidth_t4}[device.lower()]
+    fn.remote([int(x) for x in vecs.split(",") if x],
+              [x.strip() for x in schemes.split(",") if x.strip()],
+              iters, repeats, tag + "_" + device.lower(), rd, layers, batch)
 
 
 def _raw_cuda_probe(batches, sweeps, repeats, tag, Rd, L):
@@ -2842,9 +3018,11 @@ def stride_discriminator(batches: str = "51,52,53,59,60,61,63,64,65",
                          tag: str = "stride_disc", device: str = "h100",
                          lattices: str = "control"):
     bl = [int(x) for x in batches.split(",") if x]
-    fn = {"h100": stride_disc_h100, "a100": stride_disc_a100}[device.lower()]
+    fn = {"h100": stride_disc_h100, "a100": stride_disc_a100,
+          "t4": stride_disc_t4}[device.lower()]
     lat = {"control": LATTICES, "sweep": STRIDE_SWEEP,
-           "sweepbig": STRIDE_SWEEP_BIG, "parity": PARITY_SWEEP}[lattices.lower()]
+           "sweepbig": STRIDE_SWEEP_BIG, "parity": PARITY_SWEEP,
+           "geompair": GEOM_PAIR}[lattices.lower()]
     fn.remote(lat, bl, repeats, n_temps, n_therm, n_meas, tag)
 
 
