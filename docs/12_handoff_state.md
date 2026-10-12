@@ -183,6 +183,15 @@ It is the last extrapolated figure in the study. Everything else is measured.
   verified. Generating a dataset needs that wrapper changed.
 - **Parts 2 and 3 of the test plan are untouched**: the generative-model
   comparison and the remaining cycle-integration cells.
+- **The geometry half of the rule is measured on ONE device.** The five-device
+  campaign (T4, L4, A100, H100, H200) only established that the penalty exists
+  at multiples of four with `L = 5`, which is odd — the special case where the
+  `B % 4` rule and `v2(B) + v2(L) >= 2` coincide. Every measurement of the layer
+  dependence (the eight-lattice `v2` sweeps, the compiler dumps, the `L = 6`
+  parity test) ran on an H100 only. XLA's codegen consults the target compute
+  capability, so a different architecture may pick different widths. **The cheap
+  test: the dense window at `L = 4` against `L = 5` on a T4**, which has the
+  largest penalty and so the clearest signal. Untested.
 - **The broad f(B) sawtooth still has no mechanism.** The vector width explains
   the step between *adjacent* batch sizes and the geometric immunity, and
   nothing more: at the reference lattice (`L = 5`, odd) all fourteen

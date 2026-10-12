@@ -7,7 +7,7 @@ Open the `.html` files directly in a browser; everything they need is here.
 |---|---|
 | `reparto.html` | How many replicas belong on each GPU, how the cost curve behaves, how the optimum moves with the lattice geometry, and why batch sizes divisible by four are penalised — XLA's vector width, with the layer count deciding whether a lattice is immune. |
 | `cronograma.html` | 100 replicas x 15k sweeps against 50 x 20k: cost, accuracy, and the autocorrelation time that decides between them. |
-| `lotes.html` | The whole GPU-parallelisation investigation as one narrative: the optimal-batch hypothesis, every mechanism that turned out to be false (hardware, cache, bandwidth, buffer alignment, the RNG, the host transfer, the replica stride), and the rule that held — `v2(B) + v2(L) >= 2`. Four interactive widgets: a geometry explorer, the 19-point curve, the dense per-device windows, and a vector-width calculator. |
+| `lotes.html` | The whole GPU-parallelisation investigation as one narrative: the optimal-batch hypothesis, every mechanism that turned out to be false (hardware, cache, bandwidth, buffer alignment, the RNG, the host transfer, the replica stride), and the rule that held — `v2(B) + v2(L) >= 2`. Six interactive widgets: a `v2` explainer, a geometry explorer, the 19-point curve, the dense per-device windows, a vector-width calculator, and a planner over the five degrees of freedom that refuses to cost a lattice whose curve has not been measured. States what is verified on five GPUs and what is verified only on an H100. |
 
 `cronograma.html` reads `sched.json` and the `sz/` images with relative paths,
 so keep the three together. Those images are the middle-layer `s_z` map of

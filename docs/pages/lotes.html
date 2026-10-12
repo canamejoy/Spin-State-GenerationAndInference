@@ -158,7 +158,74 @@ y la regla que sí quedó demostrada.</p>
   deja de importar.</b></p>
 </div>
 
+<h2 id="palabras">Dos palabras, antes de empezar</h2>
+
+<h3>«Castigo» quiere decir que tarda más</h3>
+<p>Nada se rompe y ningún resultado cambia. <b>La física es idéntica</b> — las
+paralelizaciones medidas coinciden en la energía al 0.07 %. Lo único que pasa es
+que la misma simulación, con el mismo resultado, <b>tarda más tiempo de GPU y por
+lo tanto cuesta más plata</b>.</p>
+
+<p>La unidad que usamos en toda la página es <b>microsegundos por
+réplica-barrido</b>: cuánto tiempo de GPU consume una réplica para completar un
+barrido de la red. Así los números se comparan entre lotes de tamaños distintos.
+Cuando decimos «+14 % de castigo» queremos decir que esa celda consume 14 % más
+microsegundos por el mismo trabajo. Sobre una corrida de producción eso son horas
+y dólares, no milisegundos.</p>
+
+<h3 id="quev2">Y <code>v₂</code> es «cuántas veces entra el 2»</h3>
+<p>Cualquier número entero se puede escribir, de una sola manera, como
+<b>una potencia de dos multiplicada por un número impar</b>:</p>
+
+<p style="text-align:center;font-size:1.05rem"><code>n = 2<sup>k</sup> ·
+(impar)</code>&nbsp;&nbsp;&nbsp;y a ese <code>k</code> le llamamos
+<code>v₂(n)</code></p>
+
+<p>En palabras: <b><code>v₂(n)</code> es cuántas veces podés dividir
+<code>n</code> por dos antes de que te quede un impar.</b> Nada más. Tres
+ejemplos:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>n</th><th>dividiendo por dos</th><th>queda</th><th>v₂(n)</th></tr></thead>
+  <tbody>
+    <tr><td class="n">60</td><td class="n">60 → 30 → 15</td>
+        <td class="n">15, impar · 60 = 2² · 15</td><td class="n">2</td></tr>
+    <tr><td class="n">58</td><td class="n">58 → 29</td>
+        <td class="n">29, impar · 58 = 2¹ · 29</td><td class="n">1</td></tr>
+    <tr><td class="n">59</td><td class="n">no se puede, ya es impar</td>
+        <td class="n">59 · 59 = 2⁰ · 59</td><td class="n">0</td></tr>
+  </tbody>
+</table></div>
+
+<p>Probalo con cualquier número:</p>
+
+<div class="stage" style="padding:16px 18px">
+  <div class="controls">
+    <div class="ctl" style="flex:1 1 100%">
+      <span>Un número entero</span>
+      <div class="rangerow">
+        <input type="number" id="vIn" min="1" max="999999" step="1" value="2048"
+               style="font-family:var(--mono);font-size:1rem;padding:7px 10px;
+                      width:9em;background:var(--bg);color:var(--ink);
+                      border:1px solid var(--rule);border-radius:6px">
+        <span id="vOut" style="font-family:var(--mono);font-size:1.05rem"></span>
+      </div>
+    </div>
+  </div>
+  <p class="curvecap" style="margin-top:10px">Un número impar tiene
+  <code>v₂ = 0</code>. Una potencia de dos tiene el <code>v₂</code> más alto
+  posible para su tamaño — por eso los lotes «redondos» como 256, 512 y 1024 son
+  justo los que más factores de dos acumulan.</p>
+</div>
+
+<div class="note"><strong>Por qué aparece esto en una página sobre GPUs.</strong>
+Porque el compilador toma una decisión de generación de código que depende de si
+el número de elementos del arreglo es divisible por 2, por 4, o por nada. Y
+<code>v₂</code> es exactamente la forma de escribir eso. No es matemática
+decorativa: es la variable que resultó controlar el efecto.</div>
+
 <ul class="toc">
+  <li><a href="#palabras">Dos palabras: «castigo» y <code>v₂</code></a></li>
   <li><a href="#trabajo">1 · Qué estamos paralelizando</a></li>
   <li class="sub"><a href="#geometria">El explorador de geometría</a></li>
   <li><a href="#h1">2 · Hipótesis 1: hay un número óptimo</a></li>
@@ -173,9 +240,12 @@ y la regla que sí quedó demostrada.</p>
   <li><a href="#causa">9 · La causa</a></li>
   <li class="sub"><a href="#calc">La calculadora del ancho</a></li>
   <li><a href="#falsable">10 · La prueba que podía matarla</a></li>
-  <li><a href="#solucion">11 · La solución</a></li>
-  <li><a href="#abierto">12 · Lo que sigue sin explicación</a></li>
-  <li><a href="#metodo">13 · Cómo se midió</a></li>
+  <li><a href="#gpus">11 · ¿Funciona en cualquier GPU?</a></li>
+  <li><a href="#solucion">12 · La solución</a></li>
+  <li><a href="#grados">13 · Los cinco grados de libertad</a></li>
+  <li class="sub"><a href="#planner">El planificador</a></li>
+  <li><a href="#abierto">14 · Lo que sigue sin explicación</a></li>
+  <li><a href="#metodo">15 · Cómo se midió</a></li>
 </ul>
 
 <hr>
@@ -884,7 +954,72 @@ clasifica mal. Partir por el ancho predicho da +14.7 % sin traslape, 8 de 8. La
 regla de los múltiplos de cuatro funcionaba porque todo lo medido antes tenía un
 número impar de capas, donde las dos particiones coinciden.</div>
 
-<h2 id="solucion">11 · La solución</h2>
+<h2 id="gpus">11 · ¿Funciona en cualquier GPU?</h2>
+<p>Esta es la pregunta correcta y la respuesta honesta tiene dos mitades, porque
+<b>no medimos las dos en los mismos lugares</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>qué parte de la regla</th><th>dónde está medida</th><th>alcance</th></tr></thead>
+  <tbody>
+    <tr><td><b>Que el castigo existe</b> en los múltiplos de cuatro, con un
+            número impar de capas</td>
+        <td>T4, L4, A100, H100, H200 — <b>cinco GPUs, cuatro arquitecturas</b>
+            (Turing, Ada, Ampere, Hopper)</td>
+        <td class="win">sólido en NVIDIA</td></tr>
+    <tr><td><b>Que las capas deciden</b>: inmunidad con <code>L</code> divisible
+            por 4, castigo en todo lote par con <code>L</code> ≡ 2 (mod 4)</td>
+        <td><b>H100 solamente</b></td>
+        <td class="bad">un solo dispositivo</td></tr>
+    <tr><td><b>El ancho de vector y las grillas</b> (89 valores predichos)</td>
+        <td><b>H100 solamente</b></td>
+        <td class="bad">un solo dispositivo</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Así que la página afirmaba más alcance del que
+tiene, y lo corrijo acá.</strong> «Elegí capas divisibles por cuatro y el lote
+deja de importar» está verificado en <b>una</b> GPU. Lo que está verificado en
+cinco es el caso particular de <code>L</code> impar, que es la mitad de la regla.
+Los ocho barridos de geometría, los volcados del compilador y la prueba de
+paridad se corrieron todos en H100.</div>
+
+<h3>Qué razones hay para esperar que sí generalice</h3>
+<ul>
+  <li><b>La decisión es del compilador, no del chip.</b> XLA elige el ancho a
+  partir de la forma del arreglo, que es la misma en cualquier dispositivo. El
+  número de elementos no depende de la GPU.</li>
+  <li><b>El castigo ya aparece en cuatro arquitecturas distintas</b>, separadas
+  por seis años y por un factor de 15 en ancho de banda. Un efecto de
+  generación de código explicaría eso mucho mejor que una coincidencia de cuatro
+  diseños de memoria.</li>
+  <li><b>El bloque de 128 hilos fue constante</b> en todos los volcados, lo cual
+  sugiere que es una elección fija de XLA y no una sintonía por dispositivo.</li>
+</ul>
+
+<h3>Y qué razones hay para dudar</h3>
+<ul>
+  <li><b>XLA conoce la arquitectura destino.</b> Su generador de código consulta
+  la <em>compute capability</em>, así que nada impide que elija anchos distintos
+  en una T4 que en una H100. No lo verificamos.</li>
+  <li><b>La amplitud varía 3.5×</b> entre dispositivos (+42 % en la T4 contra
+  +12 % en la H100) y <b>eso no está explicado</b>. Si no sabemos por qué el
+  ancho 4 cuesta, no podemos saber en qué hardware deja de costar — o cuesta
+  más.</li>
+  <li><b>Está atado a esta versión de XLA.</b> Es una decisión de un
+  optimizador, y los optimizadores cambian entre versiones. La regla es de este
+  compilador, no de la aritmética.</li>
+  <li><b>Fuera de NVIDIA no hay nada medido.</b> Ni ROCm ni TPU ni Metal.</li>
+</ul>
+
+<div class="note warn"><strong>El experimento que cerraría esto cuesta
+centavos.</strong> Correr la ventana densa con <code>L</code> = 4 y con
+<code>L</code> = 5 en una <b>T4</b>, que es la que tiene el castigo más grande y
+por lo tanto la señal más clara. Si con cuatro capas sale plana, la mitad
+geométrica de la regla pasa de un dispositivo a dos arquitecturas muy separadas.
+Si no sale plana, el ancho de vector es específico de Hopper y hay que decirlo.
+<b>Está sin hacer.</b></div>
+
+<h2 id="solucion">12 · La solución</h2>
 
 <div class="answer">
   <p><b>Elegí un número de capas divisible por cuatro.</b> Con eso
@@ -930,16 +1065,133 @@ esquivar los picos. La regla del ancho quita de encima el castigo que sí tiene
 explicación; el resto todavía se mide.</div>
 
 <h3>El costo concreto de la convención heredada</h3>
-<p>La convención de 50 réplicas por dispositivo cuesta <b class="n">+25.9 %</b>
-por réplica contra <code>B</code> = 513 en una H100. Es un número «seguro» —50 no
-es múltiplo de cuatro— pero está 26 % arriba de la meseta. Y en la configuración
-de producción completa: cuatro estados con 100 réplicas en 4 GPUs cuestan
-<b class="n">$0.00798</b> por réplica, mientras que los mismos cuatro estados con
-128 réplicas, <b>en una sola GPU</b> y un único lanzamiento de 512, cuestan
-<b class="n">$0.00665</b> — un 17 % menos, y entregan 28 % más réplicas para
-promediar.</p>
+<p>La convención de 50 réplicas por dispositivo es un número «seguro» —50 no es
+múltiplo de cuatro, así que esquiva el castigo— pero está lejos de ser bueno. En
+la misma medición de la H100, <code>B</code> = 50 cuesta
+<b class="n">2.414 µs</b> y <code>B</code> = 513 cuesta
+<b class="n">1.987 µs</b>: la convención paga <b class="n">+21.5 %</b> por
+réplica sin ninguna razón.</p>
 
-<h2 id="abierto">12 · Lo que sigue sin explicación</h2>
+<p>Y en la configuración de producción completa, con la curva de diecinueve
+puntos: cuatro estados × 100 réplicas en 4 GPUs <b>con 50 réplicas por
+dispositivo</b> cuestan <b class="n">$0.00798</b> por réplica. Los mismos cuatro
+estados con 128 réplicas, <b>en una sola GPU</b> y un único lanzamiento de 512,
+cuestan <b class="n">$0.00663</b> — un <b class="n">17 %</b> menos, y entregan
+28 % más réplicas para promediar. El <a href="#planner">planificador</a> de la
+sección siguiente calcula las dos.</p>
+
+<div class="note"><strong>Un detalle del modelo que vale entender.</strong> El
+costo por réplica resulta depender <em>únicamente</em> de <code>f(B)</code>:
+los lanzamientos y el número de GPUs se cancelan en la aritmética. Por eso «más
+GPUs es gratis» vale <b>a <code>B</code> fijo</b> — pero con el total fijo, más
+GPUs obliga a un <code>B</code> menor, y si eso saca del óptimo, se paga. Con
+cuatro estados × 128 réplicas el mejor lote alcanzable es <b>512 en una sola
+GPU</b> ($0.00663); en 2 o 4 GPUs el mejor que cierra es 32, y cuesta
+<b>$0.00826</b>. El planificador lo marca.</div>
+
+<h2 id="grados">13 · Los cinco grados de libertad</h2>
+<p>Para armar una tanda hay cinco cosas que se pueden elegir. Cuatro ya estaban
+medidas desde el principio. La quinta —<b>la geometría</b>— era un parámetro
+físico que nadie miraba como palanca de rendimiento, y resultó ser la única que
+<b>cambia las reglas</b> en vez de cambiar el costo.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>grado de libertad</th><th>efecto medido</th><th>qué hace</th></tr></thead>
+  <tbody>
+    <tr class="best"><td>Réplicas por GPU · <code>B</code></td><td class="n">86 %</td>
+        <td>lo único que cuesta <em>directamente</em></td></tr>
+    <tr class="best"><td><b>Geometría · <code>Rd</code>, <code>L</code></b></td>
+        <td>cambia las reglas</td>
+        <td>decide <b>si <code>B</code> importa</b>, y mueve el óptimo a un lugar
+            que no se extrapola</td></tr>
+    <tr><td>Número de GPUs</td><td class="n">&minus;0.2 %</td>
+        <td>a <code>B</code> fijo, divide el reloj sin tocar la factura</td></tr>
+    <tr><td>Número de estados</td><td class="n">0 %</td>
+        <td>fija el total, y con eso qué <code>B</code> se alcanza</td></tr>
+    <tr><td>Réplicas por estado</td><td class="n">0 %</td>
+        <td>igual, y es la palanca que destraba los lotes grandes</td></tr>
+    <tr><td>Número de lanzamientos</td><td class="n">+0.9 %</td>
+        <td>queda determinado por los otros</td></tr>
+    <tr><td>Composición del lote</td><td class="n">+0.3 %</td>
+        <td>nada: mismo estado o estados mezclados cuesta igual</td></tr>
+  </tbody>
+</table></div>
+
+<p>La fila de la geometría es la novedad de toda esta investigación, y conviene
+ser preciso sobre en qué sentido es un grado de libertad distinto a los otros.
+<b>Los demás mueven el costo dentro de una curva fija. La geometría cambia la
+curva.</b> Cambia los sitios activos, cambia el óptimo a un lugar impredecible
+desde otra red, y —esto es lo nuevo— <b>a través de <code>v₂(L)</code> decide si
+el tamaño del lote es un riesgo o es irrelevante</b>.</p>
+
+<p>Y tiene una propiedad que ningún otro grado de libertad tiene: <b>a veces es
+gratis</b>. Pasar de cinco capas a cuatro cambia la física —es un disco más
+delgado— pero pasar de cinco a ocho, o de seis a ocho, puede ser una decisión
+que la física admite. Si la admite, la inmunidad al lote sale sin pagar nada.</p>
+
+<h3 id="planner">El planificador</h3>
+<p>Elegí una configuración y mirá qué pasa. La geometría de abajo arranca en la
+red de referencia, que es la única con la curva <code>f(B)</code> medida en los
+diecinueve lotes; si la movés, el planificador <b>deja de darte un costo</b> y te
+dice por qué.</p>
+
+<div class="stage">
+  <div class="controls">
+    <div class="ctl"><span>Estados</span>
+      <div class="seg" id="pS" role="group" aria-label="Número de estados"></div></div>
+    <div class="ctl"><span>Réplicas por estado</span>
+      <div class="seg" id="pR" role="group" aria-label="Réplicas por estado"></div></div>
+    <div class="ctl"><span>GPUs</span>
+      <div class="seg" id="pD" role="group" aria-label="Número de GPUs"></div></div>
+  </div>
+  <div class="controls" style="margin-top:16px">
+    <div class="ctl" style="flex:1 1 100%"><span>Réplicas por GPU · B</span>
+      <div class="seg" id="pB" role="group" aria-label="Réplicas por GPU"></div></div>
+  </div>
+  <div class="controls" style="margin-top:16px;padding-top:16px;
+       border-top:1px solid var(--rule)">
+    <div class="ctl" style="flex:1 1 240px">
+      <span>Geometría · radio Rd</span>
+      <div class="rangerow">
+        <input type="range" id="pRd" min="6" max="30" step="0.05" value="18.30">
+        <output id="pRdO">18.30</output>
+      </div>
+    </div>
+    <div class="ctl" style="flex:1 1 240px">
+      <span>Geometría · capas L</span>
+      <div class="rangerow">
+        <input type="range" id="pL" min="1" max="16" step="1" value="5">
+        <output id="pLO">5</output>
+      </div>
+    </div>
+  </div>
+
+  <p id="pExplain" style="margin:18px 0 2px;font-size:.95rem"></p>
+  <p id="pSub" style="margin:0;color:var(--muted);font-size:.88rem"></p>
+
+  <div class="readout">
+    <div><span>Lanzamientos</span><b id="pLaunch">—</b></div>
+    <div><span>Sitios activos</span><b id="pAct">—</b></div>
+    <div><span>Ancho de vector</span><b id="pW">—</b></div>
+    <div><span>El lote importa</span><b id="pRisk">—</b></div>
+    <div><span>Reloj</span><b id="pTime">—</b></div>
+    <div><span>Costo</span><b id="pUsd">—</b></div>
+    <div><span>USD por réplica</span><b id="pPer">—</b></div>
+    <div><span>Contra el mejor</span><b id="pRel">—</b></div>
+  </div>
+  <p id="pHint" style="margin:16px 0 0;font-size:.88rem;color:var(--muted)"></p>
+</div>
+
+<div class="note"><strong>Por qué el planificador se niega a cotizar otra
+geometría.</strong> Porque la prueba del producto de la sección 4 demostró que la
+curva <b>no se transfiere</b>: en Rd = 24 la predicción salió invertida las seis
+veces. Un planificador que te diera un número para cualquier red estaría
+inventándolo. Lo que sí transfiere es el <b>piso por sitio</b> —4 × 10⁻⁴ µs por
+sitio-barrido, dentro del 15 % en cuatro redes— y eso es lo que muestra: el costo
+que alcanzarías <em>con el mejor lote de esa red</em>, que todavía hay que
+medir.</div>
+
+<h2 id="abierto">14 · Lo que sigue sin explicación</h2>
 <p>Tres cosas, y las tres están observadas pero no entendidas:</p>
 
 <ul>
@@ -958,7 +1210,7 @@ promediar.</p>
 tempranas es una ruta más ancha a <code>v₂</code> más alto. Los anchos observados
 en los volcados se detienen en 4.</p>
 
-<h2 id="metodo">13 · Cómo se midió</h2>
+<h2 id="metodo">15 · Cómo se midió</h2>
 
 <h3>Protocolo</h3>
 <ul>
@@ -1359,9 +1611,172 @@ function syncCalc(){
 $("cB").addEventListener("input", syncCalc);
 $("cL").addEventListener("input", syncCalc);
 
+/* ----------------------------------------------------------- the v2 explainer */
+function syncV2(){
+  const raw = $("vIn").value.trim();
+  const n = Number(raw);
+  const out = $("vOut");
+  if (!Number.isInteger(n) || n < 1){
+    out.innerHTML = "<span style='color:var(--muted)'>escribí un entero ≥ 1</span>";
+    return;
+  }
+  let odd = n, k = 0;
+  while (odd % 2 === 0){ odd /= 2; k++; }
+  const pw = k === 0 ? "1" : "2<sup>" + k + "</sup>";
+  out.innerHTML = "= " + pw + " · " + fmt(odd)
+    + " &nbsp;⟹&nbsp; <b>v₂(" + fmt(n) + ") = " + k + "</b>"
+    + (k === 0 ? " <span style='color:var(--muted)'>(impar)</span>" : "");
+}
+$("vIn").addEventListener("input", syncV2);
+
+/* -------------------------------------------------------------- the planner */
+/* The cost model is only honest on the reference lattice, because that is the
+   only geometry whose f(B) is measured at all nineteen batches -- and section 4
+   showed the curve does NOT transfer between geometries. Off the reference the
+   planner reports the per-site floor instead and says so. */
+const REF = {Rd: 18.30, L: 5, nActive: 5245};
+const SWEEPS = 200 * 15000;           // the production convention
+const USD_PER_GPU_S = 0.001097;       // H100 on Modal, verified
+const US_PER_SITE_SWEEP = 4.0e-4;     // transfers within 15% across four lattices
+const PLAN = {S: 4, R: 128, D: 1, B: 512};
+
+const pBS = Object.keys(FB.stitched).map(Number).sort((a, b) => a - b);
+const feasible = (S, R, D, B) => (S * R) % (B * D) === 0;
+
+function buildSeg(host, values, label, get, set){
+  host.innerHTML = "";
+  for (const v of values){
+    const b = document.createElement("button");
+    b.textContent = label(v);
+    b.dataset.v = String(v);
+    b.setAttribute("aria-pressed", String(get() === v));
+    host.appendChild(b);
+  }
+  host.onclick = ev => {
+    const btn = ev.target.closest("button");
+    if (!btn || btn.disabled) return;
+    set(Number(btn.dataset.v));
+    syncPlan();
+  };
+}
+
+function syncPlan(){
+  const Rd = parseFloat($("pRd").value), L = parseInt($("pL").value, 10);
+  $("pRdO").textContent = Rd.toFixed(2);
+  $("pLO").textContent = L;
+  const geo = geometry(Rd, L);
+  const isRef = Math.abs(Rd - REF.Rd) < 0.005 && L === REF.L;
+  const {S, R, D, B} = PLAN;
+
+  // Mark unreachable batches instead of hiding them: which combinations close
+  // is itself part of the lesson.
+  for (const btn of $("pB").querySelectorAll("button")){
+    const v = Number(btn.dataset.v);
+    btn.disabled = !feasible(S, R, D, v);
+    btn.setAttribute("aria-pressed", String(v === B && !btn.disabled));
+  }
+  for (const [host, cur] of [["pS", S], ["pR", R], ["pD", D]]){
+    for (const btn of $(host).querySelectorAll("button"))
+      btn.setAttribute("aria-pressed", String(Number(btn.dataset.v) === cur));
+  }
+
+  const ve = v2(B) + v2(L), wd = widthOf(ve);
+  $("pAct").textContent = fmt(geo.nActive);
+  const pw = $("pW"); pw.textContent = wd; pw.className = wd === 4 ? "hot" : "cool";
+  const risk = $("pRisk");
+  if (v2(L) >= 2){ risk.textContent = "no"; risk.className = "cool"; }
+  else { risk.textContent = "sí"; risk.className = "hot"; }
+
+  const blank = ["pLaunch", "pTime", "pUsd", "pPer", "pRel"];
+  if (!feasible(S, R, D, B)){
+    $("pExplain").innerHTML = "<b>Este reparto no cierra.</b> " + fmt(S * R)
+      + " réplicas no se dividen en lanzamientos de " + B + " × " + D
+      + " = " + fmt(B * D) + ".";
+    let alt = null;
+    for (const b of pBS) if (feasible(S, R, D, b)) { alt = b; break; }
+    $("pSub").textContent = alt
+      ? "El menor B que sí cierra es " + alt + "."
+      : "Ningún B medido cierra con esta combinación.";
+    blank.forEach(id => { $(id).textContent = "—"; $(id).className = ""; });
+    $("pHint").textContent = "";
+    return;
+  }
+
+  const launches = (S * R) / (B * D);
+  $("pLaunch").textContent = fmt(launches);
+  $("pExplain").innerHTML = "<b>" + fmt(launches)
+    + (launches === 1 ? " lanzamiento" : " lanzamientos") + "</b> de "
+    + fmt(B * D) + " réplicas, " + B + " por GPU · "
+    + "<code>v₂(B) = " + v2(B) + "</code> + <code>v₂(L) = " + v2(L)
+    + "</code> = " + ve + " ⟹ ancho " + wd
+    + (wd === 4 ? " <b style='color:var(--up)'>(se paga el castigo)</b>"
+                : " <b style='color:var(--accent)'>(libre)</b>");
+  $("pSub").innerHTML = fmt(S * R) + " réplicas en total: " + S
+    + (S === 1 ? " estado" : " estados") + " × " + R + " por estado · red "
+    + "Rd " + Rd.toFixed(2) + ", L " + L + ", N " + geo.N + ", "
+    + fmt(geo.nActive) + " sitios";
+
+  if (isRef){
+    const us = FB.stitched[B];
+    const wall = launches * B * SWEEPS * us * 1e-6;
+    const usd = wall * D * USD_PER_GPU_S;
+    const bestB = pBS.reduce((a, b) =>
+      feasible(S, R, D, b) && FB.stitched[b] < FB.stitched[a] ? b : a,
+      pBS.find(b => feasible(S, R, D, b)));
+    const bestUsd = ((S * R) / (bestB * D)) * bestB * SWEEPS
+                    * FB.stitched[bestB] * 1e-6 * D * USD_PER_GPU_S;
+    $("pTime").textContent = wall < 3600 ? (wall / 60).toFixed(1) + " min"
+                                         : (wall / 3600).toFixed(2) + " h";
+    $("pUsd").textContent = "$" + usd.toFixed(2);
+    $("pPer").textContent = "$" + (usd / (S * R)).toFixed(5);
+    const rel = $("pRel");
+    rel.textContent = (usd / bestUsd).toFixed(3) + "×";
+    rel.className = usd / bestUsd < 1.001 ? "cool"
+                  : usd / bestUsd > 1.15 ? "hot" : "";
+    $("pHint").innerHTML = "Costo <b>medido</b>: " + us.toFixed(3)
+      + " µs por réplica-barrido en <code>B</code> = " + B + ", de la curva de "
+      + "diecinueve puntos. 200 temperaturas × 15 000 barridos, H100 a $"
+      + USD_PER_GPU_S + " por GPU-segundo. El mejor B alcanzable con esta "
+      + "combinación es <b>" + bestB + "</b>.";
+  } else {
+    const floor = geo.nActive * US_PER_SITE_SWEEP;
+    const wall = launches * B * SWEEPS * floor * 1e-6;
+    const usd = wall * D * USD_PER_GPU_S;
+    $("pTime").textContent = "≳ " + (wall < 3600 ? (wall / 60).toFixed(1) + " min"
+                                                 : (wall / 3600).toFixed(2) + " h");
+    $("pUsd").textContent = "≳ $" + usd.toFixed(2);
+    $("pPer").textContent = "≳ $" + (usd / (S * R)).toFixed(5);
+    $("pRel").textContent = "sin medir";
+    $("pRel").className = "";
+    $("pHint").innerHTML = "<b>Esta red no tiene curva medida</b>, así que no hay "
+      + "costo que darte en <code>B</code> = " + B + ". Lo que ves es el "
+      + "<b>piso</b>: " + fmt(geo.nActive) + " sitios × 4 × 10⁻⁴ µs = "
+      + floor.toFixed(3) + " µs por réplica-barrido, que es lo que costaría "
+      + "<em>con el mejor lote de esta red</em> — un lote que hay que encontrar "
+      + "midiendo. Vale dentro del 15 %. Lo que <b>sí</b> se puede afirmar sin "
+      + "medir es la columna del ancho: "
+      + (v2(L) >= 2
+          ? "con <code>v₂(L) = " + v2(L) + " ≥ 2</code> ningún lote es peor que "
+          + "su vecino por este motivo."
+          : v2(L) === 1
+            ? "con <code>v₂(L) = 1</code> el castigo cae en <b>todo lote par</b>."
+            : "con <code>v₂(L) = 0</code> el castigo cae en los <b>múltiplos de "
+            + "cuatro</b>.");
+  }
+}
+buildSeg($("pS"), [1, 2, 3, 4, 5, 6], v => String(v),
+         () => PLAN.S, v => { PLAN.S = v; });
+buildSeg($("pR"), [100, 128, 150, 256], v => String(v),
+         () => PLAN.R, v => { PLAN.R = v; });
+buildSeg($("pD"), [1, 2, 4], v => v + (v === 1 ? " GPU" : " GPUs"),
+         () => PLAN.D, v => { PLAN.D = v; });
+buildSeg($("pB"), pBS, v => String(v), () => PLAN.B, v => { PLAN.B = v; });
+$("pRd").addEventListener("input", syncPlan);
+$("pL").addEventListener("input", syncPlan);
+
 /* ------------------------------------------------------------------ startup */
 function redrawAll(){ drawCurve(); drawWindow(); syncGeometry(); }
-syncGeometry(); drawCurve(); drawWindow(); syncCalc();
+syncGeometry(); drawCurve(); drawWindow(); syncCalc(); syncV2(); syncPlan();
 let rt;
 window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(redrawAll, 120); });
 if (window.matchMedia){
