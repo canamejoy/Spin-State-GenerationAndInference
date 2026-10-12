@@ -1,0 +1,1372 @@
+<title>El tamaño del lote</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f7f5f2; --surface:#fffefc; --ink:#1c1a17; --muted:#6b645b; --rule:#e2ddd5;
+  --up:#c0392b; --dn:#2471a3; --accent:#1a7a6a; --warn:#b8651b; --dead:#9a9289;
+  --display:"Spectral",Georgia,serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#16161a; --surface:#1f1f24; --ink:#eceae6; --muted:#9d968c; --rule:#34343c;
+  --up:#e8604f; --dn:#4a9fe0; --accent:#39b8a2; --warn:#dc9346; --dead:#6a6560;
+  color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#16161a; --surface:#1f1f24; --ink:#eceae6; --muted:#9d968c; --rule:#34343c;
+  --up:#e8604f; --dn:#4a9fe0; --accent:#39b8a2; --warn:#dc9346; --dead:#6a6560;
+  color-scheme:dark;}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);
+     font-size:16px;line-height:1.6;margin:0}
+.wrap{max-width:980px;margin:0 auto;padding-inline:20px;padding-block:48px 72px}
+h1{font-family:var(--display);font-size:clamp(2rem,5vw,3rem);line-height:1.1;
+   margin:0 0 .4em;text-wrap:balance;font-weight:600}
+h2{font-family:var(--display);font-size:clamp(1.3rem,3vw,1.75rem);line-height:1.2;
+   margin:2.6em 0 .5em;text-wrap:balance;font-weight:600}
+h3{font-size:1.02rem;margin:1.8em 0 .4em;font-weight:600}
+p{margin:0 0 1em;max-width:66ch}
+ul,ol{max-width:64ch;padding-left:1.3em}
+li{margin:.3em 0}
+.lede{font-size:1.12rem;color:var(--muted);max-width:60ch}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.12em;
+         text-transform:uppercase;color:var(--accent);margin:0 0 .6em}
+code,.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.n{font-weight:500}
+hr{border:0;border-top:1px solid var(--rule);margin:3rem 0}
+.note{border-left:3px solid var(--accent);padding:.1rem 0 .1rem 1rem;margin:1.5em 0;
+      color:var(--muted);max-width:62ch}
+.note strong{color:var(--ink)}
+.note.warn{border-left-color:var(--warn)}
+.note.bad{border-left-color:var(--up)}
+
+.answer{background:var(--surface);border:1px solid var(--rule);border-left:3px solid var(--accent);
+        border-radius:10px;padding:18px 20px;margin:1.8em 0}
+.answer p{margin:0;max-width:64ch}
+.answer .eq{font-family:var(--mono);font-size:1.15rem;text-align:center;
+            margin:.7em 0 .4em;color:var(--accent);font-weight:500}
+
+/* table of contents */
+.toc{columns:2 220px;column-gap:26px;font-size:.9rem;margin:1.4em 0 0;
+     padding:0;list-style:none}
+.toc li{margin:.22em 0;break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--rule)}
+.toc a:hover{border-bottom-color:var(--accent);color:var(--accent)}
+.toc .sub{padding-left:1em;color:var(--muted);font-size:.86rem}
+
+/* hypothesis cards */
+.hyp{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+     padding:16px 18px;margin:1.6em 0}
+.hyp header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;
+            justify-content:space-between;margin-bottom:.6em}
+.hyp header h3{margin:0;font-size:1.04rem}
+.hyp p:last-child{margin-bottom:0}
+.badge{font-family:var(--mono);font-size:.68rem;letter-spacing:.09em;
+       text-transform:uppercase;padding:3px 9px;border-radius:20px;
+       border:1px solid currentColor;white-space:nowrap;flex:0 0 auto}
+.badge.no{color:var(--up)}
+.badge.part{color:var(--warn)}
+.badge.yes{color:var(--accent)}
+.claim{font-style:italic;color:var(--muted);max-width:64ch}
+
+.stage{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+       padding:20px;margin:1.5em 0}
+.controls{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:4px}
+.ctl{min-width:0}
+.ctl>span{display:block;font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
+          text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.seg{display:flex;flex-wrap:wrap;gap:4px}
+.seg button{font-family:var(--body);font-size:.86rem;padding:7px 12px;cursor:pointer;
+            background:transparent;color:var(--ink);border:1px solid var(--rule);
+            border-radius:6px;transition:background .15s,border-color .15s}
+.seg button:hover:not(:disabled){border-color:var(--accent)}
+.seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=range]{width:100%;max-width:300px;accent-color:var(--accent)}
+.rangerow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.rangerow output{font-family:var(--mono);font-size:1.05rem;font-weight:500;
+                 min-width:4.5ch;font-variant-numeric:tabular-nums}
+
+.readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
+         gap:14px;margin-top:16px;padding-top:14px;border-top:1px solid var(--rule)}
+.readout div{min-width:0}
+.readout div>span{display:block;font-family:var(--mono);font-size:.68rem;
+                  letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.readout div>b{font-family:var(--mono);font-size:1.26rem;font-weight:500;
+               font-variant-numeric:tabular-nums}
+.readout div>b.hot{color:var(--up)}
+.readout div>b.cool{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:var(--muted);
+        margin-top:14px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;
+          margin-right:5px;vertical-align:-1px}
+
+.lat{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start;margin:1.2em 0}
+.lat canvas{border:1px solid var(--rule);border-radius:6px;background:var(--bg);
+            max-width:100%;height:auto}
+.latinfo{min-width:0;flex:1 1 240px}
+
+.curvebox{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+          padding:16px;margin:1.5em 0}
+.curvebox canvas{width:100%;height:auto;display:block;cursor:crosshair;max-width:100%}
+.curvecap{font-size:.84rem;color:var(--muted);margin:10px 0 0}
+
+/* the width strip */
+.strip{display:flex;flex-wrap:wrap;gap:3px;margin:14px 0 6px}
+.cellb{font-family:var(--mono);font-size:.7rem;padding:5px 0;width:34px;
+       text-align:center;border-radius:4px;border:1px solid var(--rule);
+       background:var(--bg);color:var(--muted);cursor:default}
+.cellb.w4{background:var(--up);border-color:var(--up);color:#fff;font-weight:500}
+.cellb.w2{border-color:var(--dn);color:var(--dn)}
+.cellb.sel{outline:2px solid var(--ink);outline-offset:1px}
+
+table{border-collapse:collapse;width:100%;font-size:.9rem;margin:1em 0}
+th,td{text-align:right;padding:7px 9px;border-bottom:1px solid var(--rule)}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--mono);font-size:.7rem;letter-spacing:.07em;
+   text-transform:uppercase;color:var(--muted);font-weight:500}
+td.n{font-variant-numeric:tabular-nums}
+.best td{color:var(--accent);font-weight:600}
+td.off{color:var(--dead)}
+td.win{color:var(--accent);font-weight:600}
+td.bad{color:var(--up);font-weight:600}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+figure{margin:1.5em 0}
+figcaption{font-size:.84rem;color:var(--muted);margin-top:8px}
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">Monte Carlo · nanodiscos magnéticos · paralelización en GPU</p>
+<h1>El tamaño del lote</h1>
+<p class="lede">Empezamos buscando cuántas réplicas conviene poner en una GPU.
+Terminamos leyendo el código máquina que genera el compilador. Esta página
+recorre el camino completo: la hipótesis inicial, cada cosa que resultó falsa,
+y la regla que sí quedó demostrada.</p>
+
+<div class="answer">
+  <p><b>La respuesta, antes del recorrido.</b> El castigo que buscábamos no es
+  del hardware, no son las semillas, no es la memoria ni el paso entre réplicas.
+  Es XLA eligiendo cuántos elementos procesa cada hilo. Y la condición es
+  exacta:</p>
+  <p class="eq">v₂(B) + v₂(L) ≥ 2 &nbsp;⟹&nbsp; castigo</p>
+  <p style="color:var(--muted);font-size:.93rem"><code>B</code> son las réplicas
+  por GPU, <code>L</code> el número de capas, y <code>v₂(n)</code> cuenta cuántas
+  veces <code>n</code> es divisible por dos. La consecuencia útil cabe en una
+  frase: <b>elegí un número de capas divisible por cuatro y el tamaño del lote
+  deja de importar.</b></p>
+</div>
+
+<ul class="toc">
+  <li><a href="#trabajo">1 · Qué estamos paralelizando</a></li>
+  <li class="sub"><a href="#geometria">El explorador de geometría</a></li>
+  <li><a href="#h1">2 · Hipótesis 1: hay un número óptimo</a></li>
+  <li class="sub"><a href="#memoria">El techo de memoria no es el límite</a></li>
+  <li><a href="#problema">3 · El problema: la curva no es convexa</a></li>
+  <li class="sub"><a href="#descartes">Lo que descartamos de entrada</a></li>
+  <li><a href="#h2">4 · Hipótesis 2: es <code>B</code> × sitios</a></li>
+  <li><a href="#fina">5 · La estructura fina</a></li>
+  <li><a href="#h3">6 · Hipótesis 3: es el hardware</a></li>
+  <li><a href="#noes">7 · Todo lo que NO es</a></li>
+  <li><a href="#h4">8 · Hipótesis 4: es el paso entre réplicas</a></li>
+  <li><a href="#causa">9 · La causa</a></li>
+  <li class="sub"><a href="#calc">La calculadora del ancho</a></li>
+  <li><a href="#falsable">10 · La prueba que podía matarla</a></li>
+  <li><a href="#solucion">11 · La solución</a></li>
+  <li><a href="#abierto">12 · Lo que sigue sin explicación</a></li>
+  <li><a href="#metodo">13 · Cómo se midió</a></li>
+</ul>
+
+<hr>
+
+<h2 id="trabajo">1 · Qué estamos paralelizando</h2>
+<p>Simulamos la textura magnética de un nanodisco con Monte Carlo. El disco se
+discretiza en una rejilla cúbica: <code>L</code> capas de una rejilla de
+<code>N</code> × <code>N</code>, y se queda solo lo que cae <b>dentro del
+disco</b> de radio <code>Rd</code>. A eso le llamamos <b>sitios activos</b>.
+Cada sitio lleva un espín, que son tres números —las tres componentes de un
+vector unitario— en punto flotante de 32 bits.</p>
+
+<p>El algoritmo recorre temperaturas de arriba hacia abajo y en cada una propone
+girar espines uno por uno. Eso, literal, es secuencial. Hay <b>dos niveles</b>
+donde se puede paralelizar, y conviene tenerlos separados porque la página
+entera trata del segundo.</p>
+
+<h3>Nivel 1 · Dentro de una réplica</h3>
+<p>Un sitio solo interactúa con sus vecinos inmediatos, así que si se colorea la
+rejilla como un tablero de ajedrez —<code>(x+y+z) mod 2</code>— todos los sitios
+del mismo color son independientes entre sí y se pueden actualizar <b>a la
+vez</b>. Dos medios pasos, uno por color, y el barrido completo queda hecho.
+Esto no es una aproximación: es un reordenamiento exacto de la cadena de Markov.</p>
+
+<p>Pero no alcanza para llenar una GPU. La red de producción tiene 5245 sitios
+activos, o sea unos <b class="n">2622</b> por color, y una H100 tiene alrededor
+de <b class="n">16 896</b> núcleos. Una sola réplica le ofrece menos de un sexto
+del trabajo que puede hacer.</p>
+
+<h3>Nivel 2 · Apilar réplicas</h3>
+<p>Una <b>réplica</b> es una copia de la simulación con otra semilla. Sirven para
+promediar: la física que buscamos son promedios térmicos, y una sola trayectoria
+no los da. Y son <b>completamente independientes</b> entre sí — no se comunican
+nunca.</p>
+
+<p>Eso es lo que vuelve el problema paralelizable de verdad. Se apilan
+<code>B</code> réplicas como un eje más del arreglo, que pasa de
+<code>(L, N, N, 3)</code> a <code>(B, L, N, N, 3)</code>, y la GPU las corre
+todas en el mismo lanzamiento. <b><code>B</code> es el número del que trata todo
+lo que sigue.</b></p>
+
+<h3 id="geometria">El explorador de geometría</h3>
+<p>Mové el radio y las capas para ver cómo cambia todo lo demás. Las cantidades
+de abajo son las que van a aparecer en cada experimento, así que vale la pena
+ver primero cómo se relacionan: <code>N</code> y los sitios activos salen de la
+geometría, y el <b>paso entre réplicas</b> es cuántos bytes hay que saltar en
+memoria para pasar de una réplica a la siguiente.</p>
+
+<div class="stage">
+  <div class="controls">
+    <div class="ctl" style="flex:1 1 280px">
+      <span>Radio del disco · Rd</span>
+      <div class="rangerow">
+        <input type="range" id="gRd" min="4" max="42" step="0.05" value="18.30">
+        <output id="oRd">18.30</output>
+      </div>
+    </div>
+    <div class="ctl" style="flex:1 1 280px">
+      <span>Capas · L</span>
+      <div class="rangerow">
+        <input type="range" id="gL" min="1" max="16" step="1" value="5">
+        <output id="oL">5</output>
+      </div>
+    </div>
+  </div>
+
+  <div class="lat">
+    <canvas id="disk" width="300" height="300"
+      aria-label="Corte de una capa: los sitios dentro del disco, coloreados por el tablero de ajedrez"></canvas>
+    <div class="latinfo">
+      <div class="readout" style="margin-top:0;border-top:0;padding-top:0">
+        <div><span>Rejilla N</span><b id="rN">—</b></div>
+        <div><span>Sitios por capa</span><b id="rPer">—</b></div>
+        <div><span>Sitios activos</span><b id="rAct">—</b></div>
+        <div><span>Huella con B = 60</span><b id="rBy">—</b></div>
+        <div><span>Paso entre réplicas</span><b id="rStr">—</b></div>
+        <div><span>v₂ del paso</span><b id="rV2">—</b></div>
+      </div>
+      <p style="font-size:.86rem;color:var(--muted);margin:14px 0 0" id="gNote"></p>
+    </div>
+  </div>
+  <p class="curvecap">El corte muestra una capa. Verde y azul son los dos colores
+  del tablero, que se actualizan en medios pasos separados; el gris queda fuera
+  del disco y no se simula. <code>N = 2·(⌊Rd⌋+1)+1</code>, siempre
+  <b>impar</b> — un detalle que al final resulta ser la clave de todo.</p>
+</div>
+
+<h2 id="h1">2 · Hipótesis 1: hay un número óptimo de réplicas</h2>
+
+<div class="hyp">
+  <header>
+    <h3>Hipótesis 1</h3>
+    <span class="badge part">Parcialmente cierta</span>
+  </header>
+  <p class="claim">«Existe un número de réplicas por GPU que minimiza el costo.
+  Pocas réplicas desperdician la GPU; demasiadas la saturan. Debe haber un
+  óptimo suave en medio, y se encuentra midiendo unos cuantos valores.»</p>
+</div>
+
+<p>De dónde salía: es el razonamiento estándar de ocupación en GPU, y la
+convención heredada del proyecto era <b class="n">50</b> réplicas por
+dispositivo. La parte cierta es que <b>sí hay un óptimo y sí cuesta mucho
+errarle</b>. La parte falsa es «suave»: la curva resultó casi caótica, y es lo
+que nos ocupó los siguientes siete experimentos.</p>
+
+<h3 id="memoria">El techo de memoria no es el límite</h3>
+<p>Primera sospecha a descartar: ¿se nos acaba la memoria? No, ni de cerca. Con
+la red de producción una réplica ocupa <b class="n">118.8 kB</b> —
+<b class="n">89.1 kB</b> el arreglo de espines y el resto los arreglos
+auxiliares. En los 80 GB de una H100 caben del orden de
+<b class="n">670 000</b> réplicas, y dejando margen para la veintena de arreglos
+intermedios que arma el compilador, sigue siendo del orden de cientos de miles.</p>
+
+<div class="note"><strong>Así que 100 réplicas nunca fue un límite de
+hardware.</strong> Era el número que alguien eligió. El límite real es el
+rendimiento, y ahí la historia se complica.</div>
+
+<h2 id="problema">3 · El problema: la curva no es convexa</h2>
+<p>Medimos el costo por <b>réplica-barrido</b> —microsegundos de GPU por réplica
+y por barrido completo de la red— en diecinueve valores de <code>B</code>, de 10
+a 1024, con la compilación excluida del cronómetro. Si la hipótesis 1 fuera
+suave, esto debería ser una U.</p>
+
+<div class="curvebox">
+  <div class="controls" style="margin-bottom:12px">
+    <div class="ctl"><span>Medición</span>
+      <div class="seg" id="segMeas" role="group" aria-label="Medición a mostrar">
+        <button data-m="both" aria-pressed="true">las dos</button>
+        <button data-m="stitched" aria-pressed="false">empalmada</button>
+        <button data-m="single" aria-pressed="false">un contenedor</button>
+      </div>
+    </div>
+    <div class="ctl"><span>Colorear por ancho de vector</span>
+      <div class="seg" id="segWid" role="group" aria-label="Colorear por ancho">
+        <button data-w="off" aria-pressed="true">no</button>
+        <button data-w="on" aria-pressed="false">sí</button>
+      </div>
+    </div>
+  </div>
+  <canvas id="curve" width="900" height="400"
+    aria-label="Costo por réplica-barrido contra réplicas por GPU, escala logarítmica en el eje horizontal"></canvas>
+  <p class="curvecap" id="curveCap">Pasá el cursor —o tocá— sobre un punto para
+  ver sus valores. Escala logarítmica en el eje horizontal. Dos mediciones
+  independientes de la misma curva: la <b>empalmada</b> usa dos contenedores y
+  celdas largas, la de <b>un contenedor</b> repite los diecinueve lotes en una
+  sola GPU con identidad registrada y celdas diez veces más cortas.</p>
+</div>
+
+<p>No es una U. Es un dentado. El mínimo está en
+<b class="n">B = 512</b> con <b class="n">2.014 µs</b>, y su vecino de la derecha
+—<b class="n">768</b>— cuesta <b class="n">3.159 µs</b>, un <b class="n">57 %</b>
+más. <b>Interpolar esta curva no tiene sentido.</b></p>
+
+<p>Traducido a lo que importa: entre el mejor lote y el peor hay
+<b class="n">6.98 segundos de costo por réplica</b> en una corrida de producción
+(200 temperaturas × 20 000 barridos). Sobre las 2000 réplicas de una tanda de 40
+estados, son <b class="n">3.9 horas de tiempo de GPU</b> regaladas por elegir mal
+un número entero.</p>
+
+<div class="note"><strong>Son segundos de costo, no de espera.</strong> Las
+réplicas de un lanzamiento corren a la vez y terminan juntas, así que ninguna
+réplica individual tarda 8 s — ese es su parte del reloj total repartido entre
+todas. Lo que mejora al acertarle al lote es cuántas réplicas salen por segundo,
+no qué tan rápido sale una.</div>
+
+<h3 id="descartes">Lo que descartamos de entrada</h3>
+<p>Un dentado así invita a pensar en artefactos de medición. Fueron cuatro, y
+cada uno tiene su control:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>¿Podría ser…?</th><th>Cómo se descartó</th><th>Efecto</th></tr></thead>
+  <tbody>
+    <tr><td>Que fueran GPUs distintas</td>
+        <td>los 19 lotes repetidos en <b>un solo contenedor</b>, grabando el UUID
+        físico del dispositivo</td><td class="n">todos los saltos reproducen</td></tr>
+    <tr><td>Deriva entre cuentas o días</td>
+        <td>seis lotes repetidos en cuentas y fechas distintas</td>
+        <td class="n">acotada en 1.5 %</td></tr>
+    <tr><td>El tiempo de compilación</td>
+        <td><code>.lower().compile()</code> antes de arrancar el cronómetro</td>
+        <td class="n">excluido por construcción</td></tr>
+    <tr><td>Cuántos lanzamientos se hacen</td>
+        <td>mismo trabajo total repartido en 1, 4, 100 y 400 lanzamientos</td>
+        <td class="n">+0.9 %</td></tr>
+    <tr><td>Qué parámetros lleva el lote</td>
+        <td>cuatro estados distintos contra 100 réplicas de uno</td>
+        <td class="n">+0.3 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Las dos curvas —empalmada y de un contenedor— correlacionan a
+<b class="n">0.987</b>, y <b>el mínimo, los picos y los seis saltos caen en los
+mismos lotes en las dos</b>. La de un contenedor usa celdas diez veces más
+cortas, así que todos sus valores salen más altos, pero el desplazamiento no es
+constante: cae de <b class="n">1.129×</b> en <code>B</code> = 10 a
+<b class="n">1.027×</b> en los lotes grandes, que es exactamente el
+comportamiento de un costo fijo por celda que la celda larga diluye mejor.</p>
+
+<div class="note"><strong>El argumento tiene tres niveles.</strong> La forma se
+midió <em>dentro</em> de un dispositivo con identificador auditable; la variación
+<em>entre</em> dispositivos está acotada en 1.5 %; y las dos curvas coinciden.
+Para que el hardware cambiante explicara el salto del 57 %, la misma GPU tendría
+que cambiar su velocidad a la mitad entre dos celdas separadas por segundos.</div>
+
+<h2 id="h2">4 · Hipótesis 2: lo que importa es <code>B</code> × sitios</h2>
+
+<div class="hyp">
+  <header>
+    <h3>Hipótesis 2</h3>
+    <span class="badge no">Refutada</span>
+  </header>
+  <p class="claim">«El kernel no ve <code>B</code>, ve un arreglo
+  <code>(B, L, N, N, 3)</code>. Si el dentado viene de cómo esa forma se reparte
+  entre los multiprocesadores, la variable correcta no es <code>B</code> sino
+  <b><code>B</code> × sitios activos</b>. Entonces una red con el doble de
+  sitios debería tener su mínimo en la mitad del lote.»</p>
+</div>
+
+<p>Esta es falsable de forma directa y barata, y así se probó: tomamos los tres
+mínimos y los tres picos de la curva de referencia, los tradujimos a otras tres
+geometrías con la regla del producto, y pedimos que <b>seis posiciones por
+geometría</b> cayeran donde la regla predecía. No se buscó un mínimo libre —se
+pidió una coincidencia.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>red</th><th>sitios</th><th><code>B</code> predicho</th>
+    <th>papel esperado</th><th>medido</th><th></th></tr></thead>
+  <tbody>
+    <tr><td rowspan="3">Rd 12, L 5</td><td rowspan="3" class="n">2 205</td>
+        <td class="n">1218</td><td>mínimo</td><td class="n">1.002×</td><td class="win">✓</td></tr>
+    <tr><td class="n">357</td><td>mínimo</td><td class="n">1.276×</td><td class="off">✗</td></tr>
+    <tr><td class="n">1827</td><td>pico</td><td class="n">1.000× (es el mínimo)</td><td class="off">✗</td></tr>
+    <tr><td rowspan="2">Rd 18.3, L 10</td><td rowspan="2" class="n">10 490</td>
+        <td class="n">256</td><td>mínimo</td><td class="n">1.105×</td><td class="win">✓</td></tr>
+    <tr><td class="n">384</td><td>pico</td><td class="n">1.371×</td><td class="win">✓</td></tr>
+    <tr><td rowspan="3">Rd 24, L 5</td><td rowspan="3" class="n">8 965</td>
+        <td class="n">300</td><td>mínimo</td><td class="n">1.485× (casi el peor)</td><td class="off">✗</td></tr>
+    <tr><td class="n">449</td><td>pico</td><td class="n">1.000× (es el mínimo)</td><td class="off">✗</td></tr>
+    <tr><td class="n">234</td><td>pico</td><td class="n">1.002×</td><td class="off">✗</td></tr>
+  </tbody>
+</table></div>
+
+<p><b>La regla del producto falla.</b> En Rd = 24 la predicción sale
+literalmente invertida —donde esperaba mínimos hay picos y al revés, las seis
+veces. En Rd = 12 aciertan tres de seis. Solo la red de diez capas se comporta,
+y una de tres no es una regla.</p>
+
+<div class="note warn"><strong>Consecuencia práctica, y sigue vigente.</strong>
+Hay que medir la curva por geometría. Cambiar el radio o las capas mueve el
+óptimo a un lugar que no se puede predecir desde otra red. Una curva de diez
+puntos cuesta unos <b class="n">$0.60</b> y media hora, así que es manejable
+— pero es una medición por red, no una extrapolación.</div>
+
+<h3>Lo que sí transfiere entre geometrías: el costo por sitio</h3>
+<p>Lo que no se mueve es el costo por sitio en el <em>mejor</em> lote de cada
+red. Dentro del <b class="n">15 %</b> en las cuatro geometrías:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>red</th><th>sitios</th><th><code>B</code> óptimo</th>
+    <th>µs por réplica-barrido</th><th>µs por sitio-barrido</th></tr></thead>
+  <tbody>
+    <tr class="best"><td>Rd 18.3, L 5 <span style="color:var(--muted)">(referencia)</span></td>
+        <td class="n">5 245</td><td class="n">512</td><td class="n">2.014</td>
+        <td class="n">3.84 × 10⁻⁴</td></tr>
+    <tr><td>Rd 18.3, L 10</td><td class="n">10 490</td><td class="n">768</td>
+        <td class="n">4.231</td><td class="n">4.03 × 10⁻⁴</td></tr>
+    <tr><td>Rd 24, L 5</td><td class="n">8 965</td><td class="n">449</td>
+        <td class="n">3.813</td><td class="n">4.25 × 10⁻⁴</td></tr>
+    <tr><td>Rd 12, L 5</td><td class="n">2 205</td><td class="n">1827</td>
+        <td class="n">0.970</td><td class="n">4.40 × 10⁻⁴</td></tr>
+  </tbody>
+</table></div>
+
+<p>Así que para <em>presupuestar</em> una red nueva alcanza con multiplicar sus
+sitios por 4 × 10⁻⁴ µs. Lo que no se puede adivinar es <em>con qué lote</em> se
+consigue.</p>
+
+<h2 id="fina">5 · La estructura fina: el castigo de los múltiplos de cuatro</h2>
+<p>El giro vino de cambiar cómo se mide. La rejilla de 19 puntos salta de 400 a
+512 a 768: entre lotes tan separados cambia todo a la vez. Así que medimos una
+ventana <b>densa y contigua</b> — <code>B</code> = 48, 49, 50, … 64, donde de
+una celda a la siguiente cambia una sola réplica.</p>
+
+<p>Y ahí aparece algo que la rejilla gruesa no podía ver: un castigo
+<b>limpio y periódico en los múltiplos de cuatro</b>.</p>
+
+<div class="curvebox">
+  <div class="controls" style="margin-bottom:12px">
+    <div class="ctl"><span>Dispositivo</span>
+      <div class="seg" id="segDev" role="group" aria-label="GPU a mostrar">
+        <button data-d="L4" aria-pressed="false">L4</button>
+        <button data-d="A100" aria-pressed="false">A100</button>
+        <button data-d="H100" aria-pressed="true">H100</button>
+        <button data-d="H200" aria-pressed="false">H200</button>
+      </div>
+    </div>
+    <div class="ctl"><span>Normalizar</span>
+      <div class="seg" id="segNorm" role="group" aria-label="Normalizar la escala">
+        <button data-n="abs" aria-pressed="true">µs reales</button>
+        <button data-n="rel" aria-pressed="false">relativo al mínimo</button>
+      </div>
+    </div>
+  </div>
+  <canvas id="win" width="900" height="330"
+    aria-label="Costo por réplica-barrido en la ventana densa de 48 a 64 réplicas"></canvas>
+  <p class="curvecap" id="winCap">Las barras rojas son los múltiplos de cuatro.
+  Elegí otro dispositivo para ver que el patrón es el mismo y la amplitud no.
+  Dos repeticiones por celda, 30 000 barridos cada una, compilación excluida.</p>
+</div>
+
+<p>El patrón no deja lugar a dudas: <b>cuatro de cuatro</b> fronteras en la
+ventana, sin un solo cruce entre las dos distribuciones. En la H100 el salto más
+visible es <code>B</code> = 59 → 60, que cuesta <b class="n">+19.9 %</b> por
+agregar <b>una</b> réplica. Y al revés: pasar de <code>B</code> = 64 a 65 ahorra
+plata.</p>
+
+<h2 id="h3">6 · Hipótesis 3: es el hardware</h2>
+
+<div class="hyp">
+  <header>
+    <h3>Hipótesis 3</h3>
+    <span class="badge no">Refutada</span>
+  </header>
+  <p class="claim">«Un patrón periódico con el tamaño del lote, que aparece en
+  GPUs distintas y cuya amplitud se achica en las GPUs más rápidas, tiene que ser
+  del subsistema de memoria: los canales de DRAM, la caché L2 o el ancho del
+  bus. Algo del orden de los bancos y las particiones.»</p>
+</div>
+
+<p>Era la hipótesis más razonable, y tenía un nombre en la literatura:
+<em>partition camping</em>, el efecto por el que un patrón de acceso con un paso
+desafortunado concentra todo el tráfico en un subconjunto de las particiones de
+memoria. Es un mecanismo de manual. El problema es que <b>NVIDIA sostiene que
+murió con la arquitectura Fermi</b>, y aquí aparecía en cinco dispositivos
+posteriores a Fermi.</p>
+
+<p>Así que lo medimos en cinco GPUs, siempre la misma red y la misma ventana
+densa:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>GPU</th><th>L2</th><th>bus</th><th>GB/s</th>
+    <th>multiproc.</th><th>castigo</th><th>traslape</th></tr></thead>
+  <tbody>
+    <tr><td>Tesla T4</td><td class="n">4 MB</td><td class="n">256 bit</td>
+        <td class="n">320</td><td class="n">40</td><td class="bad">+42.0 %</td><td>ninguno</td></tr>
+    <tr><td>NVIDIA L4</td><td class="n">48 MB</td><td class="n">192 bit</td>
+        <td class="n">300</td><td class="n">58</td><td class="bad">+38.1 %</td><td>ninguno</td></tr>
+    <tr><td>A100-SXM4-40GB</td><td class="n">40 MB</td><td class="n">5120 bit</td>
+        <td class="n">1555</td><td class="n">108</td><td class="bad">+20.9 %</td><td>ninguno</td></tr>
+    <tr><td>H100 80GB HBM3</td><td class="n">50 MB</td><td class="n">5120 bit</td>
+        <td class="n">3350</td><td class="n">132</td><td class="bad">+12.1 %</td><td>ninguno</td></tr>
+    <tr><td><b>H200 141GB HBM3e</b></td><td class="n">50 MB</td><td class="n">6144 bit</td>
+        <td class="n">4800</td><td class="n">132</td><td class="bad">+14.0 %</td><td>ninguno</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Cómo se cayeron, en orden</h3>
+<p><b>La caché L2 murió con la L4.</b> Esa tarjeta se corrió a propósito porque
+tiene caché de clase H100 (48 MB, casi la más grande de las cinco) con ancho de
+banda de clase T4. Si fuera la caché debía parecerse a una H100. <b>Se comporta
+como una T4</b> (+38.1 % contra +42.0 %). La correlación con el tamaño de L2 es
+<b class="n">−0.68</b>, la peor de las cuatro variables.</p>
+
+<p><b>El ancho del bus murió con el par A100/H100.</b> Comparten el bus idéntico
+de 5120 bits y difieren <b class="n">1.73×</b> en el castigo. Y la L4, con el bus
+<em>más angosto</em> de las cinco, le gana a la T4 de 256 bits.</p>
+
+<p><b>El ancho de banda murió con la H200</b>, y esto fue el control decisivo.
+La H200 tiene <b>los mismos 132 multiprocesadores</b> que la H100 y
+<b class="n">1.43×</b> su ancho de banda. Si el castigo viniera de la memoria
+tenía que bajar; predijimos que caería al 10.1 %. Midió
+<b class="n">+14.0 %</b>: no bajó, subió un poco.</p>
+
+<div class="note bad"><strong>Qué quedó en pie, y por qué igual no alcanzaba.</strong>
+El número de multiprocesadores correlaciona a <b class="n">−0.998</b> sobre los
+cinco dispositivos y gana 7 de 9 comparaciones por pares. Pero una correlación de
+cinco puntos con cuatro variables colineales no es un mecanismo, y el propio par
+H100/H200 —mismos 132 multiprocesadores, castigos distintos— dice que tampoco es
+suficiente. Hacía falta otra clase de experimento.</div>
+
+<h2 id="noes">7 · Todo lo que NO es</h2>
+<p>En vez de seguir comparando dispositivos, cambiamos de estrategia: reproducir
+la misma situación <b>quitando una pieza a la vez</b>. Cada prueba de abajo usa
+la misma forma de arreglo, el mismo paso entre réplicas (91 260 B), la misma
+topología de vecinos y la misma paridad de tablero que el kernel real.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>#</th><th>Hipótesis</th><th>El experimento</th><th>Resultado</th></tr></thead>
+  <tbody>
+    <tr><td class="n">3b</td><td>Es intrínseco a este patrón de acceso en este hardware</td>
+        <td>un kernel CUDA escrito a mano —estencil de 7 puntos por nvrtc—
+        <b>sin XLA en el camino</b></td><td class="win">−0.1 %, traslape total</td></tr>
+    <tr><td class="n">3c</td><td>Es la alineación de los búferes hermanos en la arena de memoria</td>
+        <td>1, 2, 4 y 8 búferes de la misma forma en una arena contigua, con una
+        lectura coalescida por búfer</td><td class="win">−0.1 % a +0.4 %</td></tr>
+    <tr><td class="n">3d</td><td>Son los números aleatorios: su generación o su tráfico</td>
+        <td>tres modos — sin RNG, Box-Muller en registros (1.12× el costo), y un
+        búfer materializado que se escribe y se relee (1.33×)</td>
+        <td class="win">−0.2 % / −0.2 % / −0.1 %</td></tr>
+    <tr><td class="n">3a</td><td>XLA rellena la dimensión del lote con padding</td>
+        <td>bytes de argumento, temporales y salida por réplica, en cada
+        <code>B</code> de la ventana</td>
+        <td class="win">constante a 0.000 %, un solo layout</td></tr>
+    <tr><td class="n">—</td><td>Es la CPU pasándole los datos a la GPU</td>
+        <td>los tres argumentos ya son arreglos de dispositivo antes del
+        cronómetro, y el perfilador mide el tiempo <em>de GPU</em></td>
+        <td class="win">+15.3 % trazado dentro de los kernels</td></tr>
+  </tbody>
+</table></div>
+
+<p>El <b>3b</b> es el que partió el problema en dos. Mismo arreglo, mismo paso,
+mismo hardware, misma H100, y el kernel a mano <b>no reproduce nada</b>: −0.1 %
+con traslape total, donde el kernel real da +12.1 %. Si el hardware fuera capaz
+de producir este castigo con este patrón de acceso, el kernel a mano lo habría
+mostrado. No lo mostró.</p>
+
+<div class="note"><strong>Y la hipótesis del transfer se cae por dos caminos
+independientes.</strong> Por construcción: <code>pack()</code> devuelve
+<code>jnp.asarray</code>, <code>init_spins</code> devuelve un arreglo
+<code>jnp</code>, y una semilla de JAX ya es un arreglo de dispositivo — no hay
+copia CPU→GPU dentro de la región medida. Y por medición: el <b>tiempo de GPU
+trazado</b> por réplica sube <b class="n">+15.3 %</b> en los múltiplos de cuatro,
+que coincide con el reloj de pared. Si el costo estuviera en el host, el tiempo
+de GPU sería igual y solo crecería el de pared.</div>
+
+<p>Conclusión del bloque: <b>el castigo lo introduce el compilador</b>. Lo que
+quedaba era averiguar qué decide y cuándo.</p>
+
+<h2 id="h4">8 · Hipótesis 4: es el paso entre réplicas</h2>
+
+<div class="hyp">
+  <header>
+    <h3>Hipótesis 4</h3>
+    <span class="badge part">Parcialmente cierta, y por la razón equivocada</span>
+  </header>
+  <p class="claim">«Si no es el hardware en general pero sí depende de la
+  geometría, la variable debe ser el <b>paso entre réplicas</b> en bytes, y en
+  particular cuántos factores de dos tiene. Un paso de 4 × impar sufriría; uno de
+  16 × impar sería inmune.»</p>
+</div>
+
+<p>Esta hipótesis tiene una propiedad linda: el paso es
+<code>12 · L · N²</code> bytes, y como <code>N</code> es siempre impar y
+12 = 4 · 3, los únicos factores de dos vienen de las capas. Es decir</p>
+
+<p style="text-align:center;font-size:1.05rem"><code>v₂(paso) = 2 + v₂(L)</code>
+&nbsp;&nbsp;exacto, verificado en 192 de 192 pares</p>
+
+<p>Eso convierte una hipótesis sobre bytes en una hipótesis sobre el
+<b>número de capas</b>, que se puede barrer. Armamos ocho geometrías con
+<code>v₂(paso)</code> de 2 a 6, manteniendo fijo el trabajo por réplica. Y lo
+corrimos <b>dos veces</b>, porque el primer intento tenía un error de diseño.</p>
+
+<h3>Brazo A — y el error que cometí</h3>
+<p>Fijé los sitios activos cerca de 2125 para que el trabajo por réplica fuera
+constante. Resultado: <b>null en todos los <code>v₂</code></b>, de −2.2 % a
++0.8 %, con traslape en las ocho geometrías. Parecía que la hipótesis estaba
+muerta.</p>
+
+<div class="note warn"><strong>Pero controlé la cantidad equivocada.</strong>
+Fijar los sitios en 2125 fijó también la huella del arreglo cerca de
+<b>2.1 MB</b>, y la red de referencia que muestra el castigo vive en
+<b>5.1 MB</b>. El brazo A estaba midiendo en un régimen donde el efecto no
+existe. No era una refutación: era un experimento ciego.</div>
+
+<h3>Brazo B — el mismo barrido en el régimen correcto</h3>
+<p>Idéntico diseño con los sitios en 5245 en vez de 2125. Y ahí separa perfecto:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>Rd</th><th>L</th><th>paso (B)</th><th>v₂(paso)</th>
+    <th>sitios</th><th>castigo · brazo B (5 MB)</th><th>castigo · brazo A (2 MB)</th></tr></thead>
+  <tbody>
+    <tr><td class="n">40.85</td><td class="n">1</td><td class="n">82 668</td><td class="n">2</td>
+        <td class="n">5 241</td><td class="bad">+13.8 %</td><td class="off">−0.6 %</td></tr>
+    <tr><td class="n">23.55</td><td class="n">3</td><td class="n">86 436</td><td class="n">2</td>
+        <td class="n">5 247</td><td class="bad">+14.4 %</td><td class="off">−0.9 %</td></tr>
+    <tr><td class="n">28.90</td><td class="n">2</td><td class="n">83 544</td><td class="n">3</td>
+        <td class="n">5 234</td><td class="bad">+12.9 %</td><td class="off">+0.8 %</td></tr>
+    <tr><td class="n">16.65</td><td class="n">6</td><td class="n">88 200</td><td class="n">3</td>
+        <td class="n">5 262</td><td class="bad">+19.7 %</td><td class="off">+0.8 %</td></tr>
+    <tr class="best"><td class="n">20.40</td><td class="n">4</td><td class="n">88 752</td><td class="n">4</td>
+        <td class="n">5 252</td><td class="win">−2.9 %</td><td class="off">−2.1 %</td></tr>
+    <tr class="best"><td class="n">11.75</td><td class="n">12</td><td class="n">90 000</td><td class="n">4</td>
+        <td class="n">5 244</td><td class="win">−5.6 %</td><td class="off">−2.2 %</td></tr>
+    <tr class="best"><td class="n">14.35</td><td class="n">8</td><td class="n">92 256</td><td class="n">5</td>
+        <td class="n">5 256</td><td class="win">−7.9 %</td><td class="off">−1.6 %</td></tr>
+    <tr class="best"><td class="n">10.05</td><td class="n">16</td><td class="n">101 568</td><td class="n">6</td>
+        <td class="n">5 200</td><td class="win">−5.4 %</td><td class="off">−2.2 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>La separación es total y <b>el signo se invierte</b>. Con
+<code>v₂(paso)</code> ≤ 3 el castigo va de +12.9 % a +19.7 %, media +15.2 %. Con
+<code>v₂(paso)</code> ≥ 4 va de −2.9 % a −7.9 %, media −5.4 %. Una brecha de
+<b class="n">15.8 puntos porcentuales</b> y <b>0 de 8 mal clasificadas</b>.</p>
+
+<p>Dos correcciones que salieron de aquí, y las dos eran mías:</p>
+<ul>
+  <li>Había dicho que <code>v₂</code> = 3 sería «más leve» que <code>v₂</code> = 2.
+  <b>Falso.</b> La geometría de seis capas (<code>v₂</code> = 3) es la peor celda
+  medida de todas, +19.7 %.</li>
+  <li>Hacen falta <b>las dos condiciones</b>: una huella suficientemente grande
+  <em>y</em> <code>v₂(paso)</code> ≤ 3. Ninguna sola alcanza.</li>
+</ul>
+
+<div class="note"><strong>Por qué «parcialmente cierta, y por la razón
+equivocada».</strong> La regla <code>v₂(paso) ≥ 4 ⟹ inmune</code> es correcta y
+predice las ocho geometrías. Pero el paso en bytes no causa nada: como
+<code>v₂(paso) = 2 + v₂(L)</code>, decir «<code>v₂(paso)</code> ≥ 4» es decir
+«<code>L</code> divisible por cuatro». La hipótesis acertó el <em>predictor</em>
+y erró el <em>mecanismo</em>, y para distinguirlos hubo que ir a leer lo que
+emite el compilador.</div>
+
+<h2 id="causa">9 · La causa: cuántos elementos procesa cada hilo</h2>
+<p>El paso siguiente fue dejar de inferir y <b>leer lo que el compilador
+escribe</b>. Con <code>XLA_FLAGS=--xla_dump_to</code>, XLA deja en disco el
+programa que generó, incluida su <em>secuencia de thunks</em>: la lista de
+kernels con la geometría exacta de cada lanzamiento.</p>
+
+<p>Lo primero que dice es que el tamaño de bloque <b>no cambia nunca</b>. Son 128
+hilos por bloque en todos los kernels pesados y en todos los <code>B</code>. Lo
+único que se mueve es la <b>grilla</b>, el número de bloques — y se mueve por un
+factor de casi exactamente cuatro:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>kernel</th><th><code>B</code> = 59</th><th><code>B</code> = 60</th>
+    <th><code>B</code> = 63</th><th><code>B</code> = 64</th></tr></thead>
+  <tbody>
+    <tr><td><code>loop_select_fusion_1</code> / <code>loop_maximum_fusion_1</code></td>
+        <td class="n">10 517</td><td class="bad n">2 674</td>
+        <td class="n">11 230</td><td class="bad n">2 852</td></tr>
+    <tr><td><code>loop_and_fusion_2</code></td>
+        <td class="n">3 506</td><td class="bad n">892</td>
+        <td class="n">3 744</td><td class="bad n">951</td></tr>
+    <tr><td>factor</td><td class="n">—</td><td class="bad n">3.93×</td>
+        <td class="n">—</td><td class="bad n">3.94×</td></tr>
+  </tbody>
+</table></div>
+
+<p>Un bloque de 128 hilos con cuatro veces menos bloques para el mismo arreglo
+significa una sola cosa: <b>cada hilo pasó de procesar un elemento a procesar
+cuatro</b>. XLA está vectorizando el bucle, y lo hace únicamente cuando
+<code>B</code> es múltiplo de cuatro.</p>
+
+<h3>La derivación</h3>
+<p>Si eso es lo que pasa, la grilla tiene que ser predecible exactamente. El
+número de elementos del arreglo de espines es</p>
+
+<p style="text-align:center;font-size:1.05rem"><code>elementos = B · L · N² · 3</code></p>
+
+<p>y acá entra el detalle que venía arrastrándose desde la primera sección:
+<b><code>N</code> es siempre impar</b>, porque
+<code>N = 2·(⌊Rd⌋+1)+1</code>. Entonces <code>N² · 3</code> es impar, y todos los
+factores de dos del producto vienen de <code>B</code> y de <code>L</code>:</p>
+
+<div class="answer">
+  <p class="eq">v₂(elementos) = v₂(B) + v₂(L)</p>
+  <p class="eq">ancho = min(4, 2<sup>v₂(elementos)</sup>)</p>
+  <p class="eq">grilla = ⌈elementos / (128 · ancho)⌉</p>
+</div>
+
+<p>Esa fórmula predice <b class="n">89</b> valores de grilla, de tres volcados
+distintos del compilador, <b>sin un solo fallo</b>. Y revela algo que la primera
+lectura se había perdido: no hay dos caminos, hay <b>tres anchos</b>. La
+geometría de tres capas los recorre todos en la misma red:</p>
+
+<div class="tw"><table>
+  <thead><tr><th><code>B</code></th><th class="n">57</th><th class="n">58</th>
+    <th class="n">59</th><th class="n">60</th><th class="n">62</th><th class="n">63</th></tr></thead>
+  <tbody>
+    <tr><td>v₂(elementos)</td><td class="n">0</td><td class="n">1</td><td class="n">0</td>
+        <td class="n">2</td><td class="n">1</td><td class="n">0</td></tr>
+    <tr><td>ancho</td><td class="n">1</td><td class="n">2</td><td class="n">1</td>
+        <td class="n">4</td><td class="n">2</td><td class="n">1</td></tr>
+    <tr><td>grilla <b>predicha</b></td><td class="n">9 623</td><td class="n">4 896</td>
+        <td class="n">9 961</td><td class="n">2 533</td><td class="n">5 234</td><td class="n">10 636</td></tr>
+    <tr class="best"><td>grilla <b>observada</b></td><td class="n">9 623</td><td class="n">4 896</td>
+        <td class="n">9 961</td><td class="n">2 533</td><td class="n">5 234</td><td class="n">10 636</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Pero solo el ancho 4 se paga</h3>
+<p>La escalera existe en el compilador. En el reloj, no. Esa misma geometría de
+tres capas mide:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>ancho</th><th>en qué <code>B</code></th>
+    <th>µs por réplica-barrido</th><th>contra ancho 1</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td class="n">57, 59, 61, 63</td><td class="n">2.4263</td><td>—</td></tr>
+    <tr><td class="n">2</td><td class="n">58, 62</td><td class="n">2.4285</td><td class="win">+0.09 %</td></tr>
+    <tr><td class="n">4</td><td class="n">60, 64</td><td class="n">2.7720</td><td class="bad">+14.25 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Se ve incluso sin promediar, mirando vecinos:
+<code>B</code> = 57 → <b>58</b> → 59 da 2.470 → <b>2.484</b> → 2.502 µs. El de
+ancho 2 cae justo entre los dos de ancho 1. No hay escalón.</p>
+
+<div class="answer">
+  <p><b>Por eso los tres anchos colapsan a una sola desigualdad.</b></p>
+  <p class="eq">castigo ⟺ ancho 4 ⟺ v₂(B) + v₂(L) ≥ 2</p>
+</div>
+
+<p>Y de paso explica el resultado 3b, el del kernel a mano que no mostraba nada:
+ese kernel <b>asigna un sitio por hilo para todo <code>B</code></b>, así que no
+existe ninguna decisión de generación de código que dependa del lote. No es que
+el hardware no pueda producir el efecto — es que a ese kernel nadie le cambia la
+forma del lanzamiento.</p>
+
+<h3 id="calc">La calculadora del ancho</h3>
+<p>Elegí réplicas y capas y la fórmula te dice qué va a hacer el compilador.
+La tira de abajo muestra la ventana completa de 48 a 72, para ver el patrón que
+produce cada número de capas.</p>
+
+<div class="stage">
+  <div class="controls">
+    <div class="ctl" style="flex:1 1 260px">
+      <span>Réplicas por GPU · B</span>
+      <div class="rangerow">
+        <input type="range" id="cB" min="48" max="72" step="1" value="60">
+        <output id="oB">60</output>
+      </div>
+    </div>
+    <div class="ctl" style="flex:1 1 260px">
+      <span>Capas · L</span>
+      <div class="rangerow">
+        <input type="range" id="cL" min="1" max="16" step="1" value="5">
+        <output id="oL2">5</output>
+      </div>
+    </div>
+  </div>
+
+  <div class="readout">
+    <div><span>v₂(B)</span><b id="cv2b">—</b></div>
+    <div><span>v₂(L)</span><b id="cv2l">—</b></div>
+    <div><span>v₂(elementos)</span><b id="cv2e">—</b></div>
+    <div><span>Ancho elegido</span><b id="cw">—</b></div>
+    <div><span>Grilla · bloque</span><b id="cg">—</b></div>
+    <div><span>Veredicto</span><b id="cverd">—</b></div>
+  </div>
+
+  <div class="strip" id="strip" aria-label="Ventana de 48 a 72 réplicas, coloreada por el ancho de vector"></div>
+  <div class="legend">
+    <span><i style="background:var(--up)"></i>ancho 4 · se paga el castigo</span>
+    <span><i style="border:1px solid var(--dn);background:transparent"></i>ancho 2 · gratis</span>
+    <span><i style="border:1px solid var(--rule);background:var(--bg)"></i>ancho 1 · gratis</span>
+  </div>
+  <p class="curvecap" id="cNote"></p>
+</div>
+
+<h2 id="falsable">10 · La prueba que podía matar la explicación</h2>
+<p>Una derivación que solo reproduce lo que ya se midió no vale mucho. Esta hace
+una predicción que <b>ninguna ventana anterior podía haber visto</b>, y que es
+fácil de refutar.</p>
+
+<p>Si <code>L</code> ≡ 2 (mod 4), entonces <code>v₂(L)</code> = 1, y la condición
+<code>v₂(B) + 1 ≥ 2</code> se cumple con que <code>B</code> sea simplemente
+<b>par</b>. Es decir: con seis capas, el castigo debería caer en
+<code>B</code> = 58 y 62, no solo en 60 y 64.</p>
+
+<p>Y acá está la razón por la que nunca se vio: <b>todas las ventanas medidas
+hasta ese momento</b> —51, 52, 53, 59, 60, 61, 63, 64, 65— <b>contenían solo
+impares entre los no-múltiplos de cuatro</b>. El experimento era ciego a la
+diferencia por construcción.</p>
+
+<p>Entonces se midió <code>B</code> = 57…64 en tres geometrías, eligiendo los
+tres regímenes a propósito:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>red</th><th><code>v₂(L)</code></th><th>predicción</th>
+    <th>partición por ancho 4</th><th>partición por <code>B</code> mod 4</th></tr></thead>
+  <tbody>
+    <tr class="best"><td>Rd 16.65, <b>L = 6</b></td><td class="n">1</td>
+        <td>caro en <b>todo B par</b></td>
+        <td class="win">+14.7 %, sin traslape</td><td class="bad">+10.2 %, con traslape</td></tr>
+    <tr><td>Rd 23.55, L = 3</td><td class="n">0</td><td>caro en múltiplos de 4</td>
+        <td class="win">+14.2 %, sin traslape</td><td class="win">+14.2 %, sin traslape</td></tr>
+    <tr><td>Rd 20.40, L = 4</td><td class="n">2</td><td>caro siempre ⟹ plano</td>
+        <td>no existe partición</td><td class="win">−2.5 %, con traslape</td></tr>
+  </tbody>
+</table></div>
+
+<p>Los números por celda de la red de seis capas, que es la prueba:</p>
+
+<div class="tw"><table>
+  <thead><tr><th><code>B</code></th><th class="n">57</th><th class="n">58</th><th class="n">59</th>
+    <th class="n">60</th><th class="n">61</th><th class="n">62</th><th class="n">63</th><th class="n">64</th></tr></thead>
+  <tbody>
+    <tr><td>ancho</td><td class="n">2</td><td class="bad n">4</td><td class="n">2</td><td class="bad n">4</td>
+        <td class="n">2</td><td class="bad n">4</td><td class="n">2</td><td class="bad n">4</td></tr>
+    <tr><td>µs</td><td class="n">2.210</td><td class="bad n">2.510</td><td class="n">2.202</td>
+        <td class="bad n">2.618</td><td class="n">2.192</td><td class="bad n">2.481</td>
+        <td class="n">2.144</td><td class="bad n">2.429</td></tr>
+  </tbody>
+</table></div>
+
+<p><b>El lote par más rápido (2.429) sigue por encima del impar más lento
+(2.210)</b>, una brecha mínima de +9.9 % sin una sola celda cruzada. Las
+posiciones 58 y 62 cayeron del lado caro, que es donde el mecanismo las puso
+<em>antes</em> de medirlas.</p>
+
+<div class="note"><strong>Y la regla vieja falla acá, lo cual es el punto.</strong>
+Partir por <code>B % 4</code> en esta geometría da +10.2 % <em>con traslape</em>:
+clasifica mal. Partir por el ancho predicho da +14.7 % sin traslape, 8 de 8. La
+regla de los múltiplos de cuatro funcionaba porque todo lo medido antes tenía un
+número impar de capas, donde las dos particiones coinciden.</div>
+
+<h2 id="solucion">11 · La solución</h2>
+
+<div class="answer">
+  <p><b>Elegí un número de capas divisible por cuatro.</b> Con eso
+  <code>v₂(L) ≥ 2</code>, la condición se cumple en <em>todo</em> <code>B</code>,
+  y el tamaño del lote deja de ser un riesgo. No es que el castigo desaparezca:
+  es que <b>ya está pagado en todas las celdas</b>, así que ningún lote es peor
+  que su vecino por este motivo.</p>
+  <p>Si la física fija las capas, calculá <code>v₂(B) + v₂(L)</code> y
+  mantenelo <b>por debajo de 2</b>:</p>
+</div>
+
+<div class="tw"><table>
+  <thead><tr><th>capas <code>L</code></th><th>qué evitar</th><th>ejemplos seguros</th></tr></thead>
+  <tbody>
+    <tr><td><code>L</code> impar (1, 3, 5, 7…)</td><td>los múltiplos de cuatro</td>
+        <td class="n">513, 1025, 65, 150</td></tr>
+    <tr><td><code>L</code> ≡ 2 (mod 4) (2, 6, 10…)</td><td><b>todo lote par</b></td>
+        <td class="n">513, 1025, 65, 57</td></tr>
+    <tr class="best"><td><code>L</code> divisible por 4 (4, 8, 12, 16…)</td>
+        <td>nada, por este motivo</td><td class="n">cualquiera</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Lo que esta regla NO reemplaza</h3>
+<p>Hay que ser preciso con el alcance, porque es fácil pasarse. La regla explica
+<b>el salto entre lotes vecinos</b> y la inmunidad por geometría. No explica la
+curva ancha.</p>
+
+<p>En la red de referencia <code>L</code> = 5 es impar, así que los <b>catorce</b>
+lotes divisibles por cuatro de la curva de 19 puntos están <em>todos</em> en
+ancho 4 — incluido <b class="n">512</b>, que es el mejor de los diecinueve, y
+<b class="n">768</b>, que es de los peores. Dentro de ese grupo la dispersión es
+<b class="n">1.76×</b>, más grande que el castigo mismo, y el grupo de ancho 4
+contra el resto da <b class="n">+2.7 %</b> en una medición y
+<b class="n">−0.7 %</b> en la otra.</p>
+
+<div class="note warn"><strong>Así que siguen vigentes las dos reglas
+prácticas de antes.</strong> Primero, <b>medir la curva por geometría</b>, porque
+el óptimo no se extrapola de una red a otra. Segundo, <b>apuntar a una meseta y
+no a un punto</b>: en la H100, <code>B</code> = 1025, 2049 y 4097 difieren solo
+<b class="n">2.2 %</b> entre sí, y no hace falta el óptimo exacto — hace falta
+esquivar los picos. La regla del ancho quita de encima el castigo que sí tiene
+explicación; el resto todavía se mide.</div>
+
+<h3>El costo concreto de la convención heredada</h3>
+<p>La convención de 50 réplicas por dispositivo cuesta <b class="n">+25.9 %</b>
+por réplica contra <code>B</code> = 513 en una H100. Es un número «seguro» —50 no
+es múltiplo de cuatro— pero está 26 % arriba de la meseta. Y en la configuración
+de producción completa: cuatro estados con 100 réplicas en 4 GPUs cuestan
+<b class="n">$0.00798</b> por réplica, mientras que los mismos cuatro estados con
+128 réplicas, <b>en una sola GPU</b> y un único lanzamiento de 512, cuestan
+<b class="n">$0.00665</b> — un 17 % menos, y entregan 28 % más réplicas para
+promediar.</p>
+
+<h2 id="abierto">12 · Lo que sigue sin explicación</h2>
+<p>Tres cosas, y las tres están observadas pero no entendidas:</p>
+
+<ul>
+  <li><b>Por qué el ancho 4 cuesta y el ancho 2 no.</b> Cuatro flotantes son 16
+  bytes por hilo, así que el tamaño de transacción es el sospechoso obvio. No se
+  midió.</li>
+  <li><b>Por qué no pasa nada con huellas de ~2 MB.</b> El brazo A del
+  experimento 4 da null en todos los <code>v₂</code>, y a 5 MB separa limpio en
+  todos los casos. La frontera entre los dos regímenes no está mapeada, y ahí
+  también vectoriza — simplemente no cuesta.</li>
+  <li><b>Por qué 512 gana y 768 pierde.</b> Los dos están en ancho 4. La curva
+  ancha no tiene mecanismo.</li>
+</ul>
+
+<p>También quedó pendiente si la estructura de módulo 8 que se vio en mediciones
+tempranas es una ruta más ancha a <code>v₂</code> más alto. Los anchos observados
+en los volcados se detienen en 4.</p>
+
+<h2 id="metodo">13 · Cómo se midió</h2>
+
+<h3>Protocolo</h3>
+<ul>
+  <li><b>Compilación excluida siempre.</b> <code>jax.jit(body).lower(*args).compile()</code>
+  antes de arrancar el cronómetro, así que el tiempo medido es solo ejecución.</li>
+  <li><b>Dos repeticiones por celda</b> como mínimo, con la desviación estándar
+  reportada. En las ventanas densas la desviación quedó por debajo del 0.5 % del
+  valor, mucho menor que los efectos discutidos.</li>
+  <li><b>Identidad del dispositivo registrada</b> —UUID físico, no solo el
+  modelo— en toda medición posterior a la curva empalmada.</li>
+  <li><b>Ventanas contiguas.</b> Es lo único que hace visible la estructura fina;
+  una rejilla sin vecinos no puede verla, y así fue como la rejilla original de
+  19 puntos la escondió.</li>
+</ul>
+
+<h3>Una trampa metodológica que vale guardar</h3>
+<p>Los nombres de fusión de XLA <b>no son estables entre lotes</b>.
+<code>loop_select_fusion_2</code> recorre el arreglo completo en
+<code>B</code> = 58 y los arreglos de un valor por sitio en el resto;
+<code>loop_maximum_negate_fusion_1</code> existe solo en <code>B</code> = 60; y
+el número de kernels pasa de 43 a 45 a 43 a 40 entre <code>B</code> = 59, 60, 63
+y 64. Puntuar la geometría de lanzamiento <em>por nombre de kernel</em> reporta
+fallos que no son fallos — me pasó, con dos falsos negativos. Hay que puntuarla
+<b>entrada por entrada</b>, contra todas las formas de arreglo que recorre el
+módulo.</p>
+
+<h3>Procedencia de los datos</h3>
+<div class="tw"><table>
+  <thead><tr><th>sección</th><th>archivo de resultados</th></tr></thead>
+  <tbody>
+    <tr><td>La curva de 19 puntos (§3)</td>
+        <td><code>results/curves/fB_reference_lattice.json</code></td></tr>
+    <tr><td>Los cinco dispositivos (§6)</td>
+        <td><code>results/curves/mod4_penalty_five_devices.json</code></td></tr>
+    <tr><td>Las exclusiones y el barrido de <code>v₂</code> (§7, §8)</td>
+        <td><code>results/curves/mod4_mechanism_v2_and_xla.json</code></td></tr>
+    <tr><td>La geometría de lanzamiento (§9)</td>
+        <td><code>results/curves/mod4_cause_xla_vectorisation.json</code></td></tr>
+    <tr><td>La prueba de paridad (§10)</td>
+        <td><code>results/curves/mod4_rule_is_vector_width.json</code></td></tr>
+  </tbody>
+</table></div>
+
+<p style="color:var(--muted);font-size:.9rem">Todo se corrió en Modal con
+<code>notebooks/simulation/modal/app.py</code>. Las entradas relevantes son
+<code>f_curve</code>, <code>stride_discriminator</code>,
+<code>xla_confound</code>, <code>metro_probe</code>, <code>buffer_probe</code>,
+<code>xla_dump</code> y <code>launch_dims</code>. Gasto total de la campaña: unos
+<b class="n">$25</b> de GPU.</p>
+
+<div class="note"><strong>Nada de esto cambia la física.</strong> Las
+paralelizaciones medidas coinciden en la energía al <b class="n">0.07 %</b>. Lo
+que cambia es la realización concreta: los skyrmiones salen en posiciones
+distintas — la misma distribución, otra muestra.</div>
+
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (x, d = 0) => x.toLocaleString("es", {minimumFractionDigits: d,
+                                                  maximumFractionDigits: d});
+
+/* v2(n): how many times n is divisible by two. v2(0) is undefined, and every
+   quantity here is a positive count, so the guard is an assertion not a case. */
+function v2(n){
+  if (!(n > 0)) throw new Error("v2 needs a positive integer, got " + n);
+  let k = 0;
+  while (n % 2 === 0){ n /= 2; k++; }
+  return k;
+}
+const widthOf = k => Math.min(4, 2 ** k);
+
+/* Canvases are sized in CSS pixels but drawn at device resolution, otherwise
+   every label is blurry on a retina screen. */
+function prep(cv, h){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || cv.width;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  cv.style.height = h + "px";
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  return {g, w, h};
+}
+function seg(hostId, cb){
+  const host = $(hostId);
+  host.addEventListener("click", ev => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    [...host.querySelectorAll("button")]
+      .forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    cb(b.dataset);
+  });
+}
+
+/* ---------------------------------------------------------------- geometry */
+/* Mirrors sim_core.build_geometry exactly: L2 = floor(Rd)+1, N = 2*L2+1, and a
+   site is active when x^2 + y^2 <= Rd^2 on the integer grid [-L2, L2]. */
+function geometry(Rd, L){
+  const L2 = Math.floor(Rd) + 1, N = 2 * L2 + 1, r2 = Rd * Rd;
+  const inDisk = [];
+  let perLayer = 0;
+  for (let y = -L2; y <= L2; y++){
+    const row = [];
+    for (let x = -L2; x <= L2; x++){
+      const ok = x * x + y * y <= r2;
+      row.push(ok);
+      if (ok) perLayer++;
+    }
+    inDisk.push(row);
+  }
+  const stride = 12 * L * N * N;          // (L, N, N, 3) float32, in bytes
+  return {L2, N, L, Rd, inDisk, perLayer, nActive: perLayer * L,
+          stride, v2stride: v2(stride)};
+}
+
+function drawDisk(geo){
+  const cv = $("disk"), side = 300;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = side * dpr; cv.height = side * dpr;
+  cv.style.width = side + "px"; cv.style.height = side + "px";
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, side, side);
+  const N = geo.N, pad = 6, cell = (side - 2 * pad) / N;
+  const ACC = css("--accent"), DN = css("--dn"), RULE = css("--rule");
+  for (let iy = 0; iy < N; iy++){
+    for (let ix = 0; ix < N; ix++){
+      const on = geo.inDisk[iy][ix];
+      // the checkerboard is (x+y+z) mod 2; this view is layer z = 0
+      g.fillStyle = on ? ((ix + iy) % 2 === 0 ? ACC : DN) : RULE;
+      g.globalAlpha = on ? 1 : 0.35;
+      const s = Math.max(cell - (cell > 3 ? 0.6 : 0), 0.7);
+      g.fillRect(pad + ix * cell, pad + iy * cell, s, s);
+    }
+  }
+  g.globalAlpha = 1;
+}
+
+function syncGeometry(){
+  const Rd = parseFloat($("gRd").value), L = parseInt($("gL").value, 10);
+  $("oRd").textContent = Rd.toFixed(2);
+  $("oL").textContent = L;
+  const geo = geometry(Rd, L);
+  drawDisk(geo);
+  $("rN").textContent = geo.N;
+  $("rPer").textContent = fmt(geo.perLayer);
+  $("rAct").textContent = fmt(geo.nActive);
+  $("rBy").textContent = (60 * geo.stride / 1048576).toFixed(1) + " MB";
+  $("rStr").textContent = fmt(geo.stride) + " B";
+  const v2s = $("rV2");
+  v2s.textContent = geo.v2stride;
+  const immune = v2(L) >= 2;
+  v2s.className = immune ? "cool" : "hot";
+  $("gNote").innerHTML = immune
+    ? "<b>v₂(L) = " + v2(L) + " ≥ 2</b>, así que esta geometría es "
+      + "<b>inmune</b> al tamaño del lote: XLA vectoriza por 4 en todo "
+      + "<code>B</code>. El paso es " + fmt(geo.stride / 2 ** geo.v2stride)
+      + " × 2<sup>" + geo.v2stride + "</sup>."
+    : "<b>v₂(L) = " + v2(L) + "</b>, así que esta geometría "
+      + (v2(L) === 1 ? "paga el castigo en <b>todo lote par</b>."
+                     : "paga el castigo en los <b>múltiplos de cuatro</b>.")
+      + " El paso es " + fmt(geo.stride / 2 ** geo.v2stride)
+      + " × 2<sup>" + geo.v2stride + "</sup>.";
+}
+$("gRd").addEventListener("input", syncGeometry);
+$("gL").addEventListener("input", syncGeometry);
+
+/* --------------------------------------------------------------- f(B) curve */
+const FB = {
+  stitched: {10:3.758,16:3.548,25:2.900,32:2.511,40:2.552,50:2.426,64:2.530,
+             75:2.295,80:2.560,100:3.193,128:2.698,150:2.143,200:2.915,
+             256:2.918,320:2.816,400:3.063,512:2.014,768:3.159,1024:2.401},
+  single:   {10:4.242,16:3.861,25:3.114,32:2.694,40:2.725,50:2.572,64:2.667,
+             75:2.410,80:2.680,100:3.311,128:2.775,150:2.225,200:2.990,
+             256:2.983,320:2.882,400:3.125,512:2.081,768:3.238,1024:2.467}
+};
+const FB_L = 5;                       // the reference lattice has five layers
+let fbMeas = "both", fbWidth = false, fbHover = null;
+
+function drawCurve(){
+  const cv = $("curve"), {g, w, h} = prep(cv, 400);
+  const BS = Object.keys(FB.stitched).map(Number).sort((a, b) => a - b);
+  const all = [...Object.values(FB.stitched), ...Object.values(FB.single)];
+  const yMax = Math.ceil(Math.max(...all) * 1.08 * 10) / 10, yMin = 0;
+  const m = {l: 52, r: 14, t: 16, b: 40};
+  const px = B => m.l + (Math.log(B) - Math.log(10)) /
+                  (Math.log(1024) - Math.log(10)) * (w - m.l - m.r);
+  const py = v => m.t + (1 - (v - yMin) / (yMax - yMin)) * (h - m.t - m.b);
+  const INK = css("--ink"), MUT = css("--muted"), RULE = css("--rule"),
+        ACC = css("--accent"), DN = css("--dn"), UP = css("--up");
+
+  g.strokeStyle = RULE; g.lineWidth = 1;
+  g.font = "11px " + css("--mono") + ", monospace";
+  g.fillStyle = MUT; g.textAlign = "right"; g.textBaseline = "middle";
+  for (let v = 0; v <= yMax; v += 1){
+    g.beginPath(); g.moveTo(m.l, py(v)); g.lineTo(w - m.r, py(v)); g.stroke();
+    g.fillText(v.toFixed(0), m.l - 8, py(v));
+  }
+  g.textAlign = "center"; g.textBaseline = "top";
+  for (const B of [10, 25, 50, 100, 256, 512, 1024]){
+    g.fillText(String(B), px(B), h - m.b + 8);
+  }
+  g.save(); g.translate(13, (h - m.b + m.t) / 2); g.rotate(-Math.PI / 2);
+  g.textAlign = "center"; g.textBaseline = "top";
+  g.fillText("µs por réplica-barrido", 0, 0); g.restore();
+  g.textAlign = "center"; g.textBaseline = "bottom";
+  g.fillText("réplicas por GPU (B), escala logarítmica", (m.l + w - m.r) / 2, h - 4);
+
+  const series = fbMeas === "both" ? ["stitched", "single"] : [fbMeas];
+  series.forEach((name, si) => {
+    const d = FB[name];
+    g.strokeStyle = si === 0 ? ACC : DN;
+    g.lineWidth = fbMeas === "both" && si === 1 ? 1.2 : 1.8;
+    if (fbMeas === "both" && si === 1) g.setLineDash([4, 3]);
+    g.beginPath();
+    BS.forEach((B, i) => i ? g.lineTo(px(B), py(d[B])) : g.moveTo(px(B), py(d[B])));
+    g.stroke(); g.setLineDash([]);
+    for (const B of BS){
+      const w4 = fbWidth && widthOf(v2(B) + v2(FB_L)) === 4;
+      g.fillStyle = w4 ? UP : (si === 0 ? ACC : DN);
+      g.beginPath();
+      g.arc(px(B), py(d[B]), B === 512 ? 5 : 3.4, 0, 7); g.fill();
+      if (B === 512){
+        g.strokeStyle = g.fillStyle; g.lineWidth = 1.4;
+        g.beginPath(); g.arc(px(B), py(d[B]), 8.5, 0, 7); g.stroke();
+      }
+    }
+  });
+
+  if (fbHover !== null){
+    const B = fbHover;
+    g.strokeStyle = MUT; g.lineWidth = 1; g.setLineDash([2, 3]);
+    g.beginPath(); g.moveTo(px(B), m.t); g.lineTo(px(B), h - m.b); g.stroke();
+    g.setLineDash([]);
+    const wd = widthOf(v2(B) + v2(FB_L));
+    const lines = ["B = " + B,
+                   "empalmada  " + FB.stitched[B].toFixed(3) + " µs",
+                   "contenedor " + FB.single[B].toFixed(3) + " µs",
+                   "v₂(B) = " + v2(B) + " · ancho " + wd];
+    g.font = "11px " + css("--mono") + ", monospace";
+    const bw = Math.max(...lines.map(t => g.measureText(t).width)) + 16;
+    let bx = px(B) + 12;
+    if (bx + bw > w - m.r) bx = px(B) - bw - 12;
+    const by = m.t + 6, bh = lines.length * 15 + 10;
+    g.fillStyle = css("--surface"); g.strokeStyle = RULE;
+    g.beginPath();
+    if (g.roundRect) g.roundRect(bx, by, bw, bh, 6);
+    else g.rect(bx, by, bw, bh);
+    g.fill(); g.stroke();
+    g.fillStyle = INK; g.textAlign = "left"; g.textBaseline = "top";
+    lines.forEach((t, i) => g.fillText(t, bx + 8, by + 6 + i * 15));
+  }
+  $("curve")._px = px;
+}
+function curveHover(ev){
+  const cv = $("curve"), r = cv.getBoundingClientRect();
+  const x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+  const px = cv._px;
+  if (!px) return;
+  const BS = Object.keys(FB.stitched).map(Number);
+  let best = null, bd = 1e9;
+  for (const B of BS){ const d = Math.abs(px(B) - x); if (d < bd){ bd = d; best = B; } }
+  fbHover = bd < 26 ? best : null;
+  drawCurve();
+}
+$("curve").addEventListener("mousemove", curveHover);
+$("curve").addEventListener("touchmove", ev => { ev.preventDefault(); curveHover(ev); },
+                            {passive: false});
+$("curve").addEventListener("mouseleave", () => { fbHover = null; drawCurve(); });
+seg("segMeas", d => { fbMeas = d.m; drawCurve(); });
+seg("segWid", d => {
+  fbWidth = d.w === "on";
+  $("curveCap").innerHTML = fbWidth
+    ? "En <b>rojo</b>, los lotes que XLA vectoriza por 4 en esta red de cinco "
+    + "capas. Son catorce de los diecinueve, e incluyen tanto el mejor "
+    + "(<b>512</b>) como uno de los peores (<b>768</b>): <b>el ancho de vector "
+    + "no ordena esta curva</b>. Explica el salto entre vecinos, no el dentado."
+    : "Pasá el cursor —o tocá— sobre un punto para ver sus valores. Escala "
+    + "logarítmica en el eje horizontal. Dos mediciones independientes de la "
+    + "misma curva: la <b>empalmada</b> usa dos contenedores y celdas largas, "
+    + "la de <b>un contenedor</b> repite los diecinueve lotes en una sola GPU "
+    + "con identidad registrada y celdas diez veces más cortas.";
+  drawCurve();
+});
+
+/* ------------------------------------------------------- the dense windows */
+const DEV = {
+  L4:   {label: "NVIDIA L4", pen: 38.1, sm: 58,
+         us: {48:5.1457,49:3.7047,50:3.8779,51:3.6502,52:5.0568,53:3.9049,
+              54:3.7760,55:3.8885,56:5.3672,57:3.6284,58:3.8194,59:3.5885,
+              60:5.1030,61:3.7081,62:3.7456,63:3.6904,64:5.2133}},
+  A100: {label: "A100-SXM4-40GB", pen: 20.9, sm: 108,
+         us: {48:4.4147,49:3.7917,50:3.8139,51:3.7585,52:4.4030,53:3.7492,
+              54:3.7495,55:3.6600,56:4.5411,57:3.7941,58:3.8173,59:3.7763,
+              60:4.5877,61:3.7313,62:3.8457,63:3.9669,64:4.9508}},
+  H100: {label: "H100 80GB HBM3", pen: 12.1, sm: 132,
+         us: {48:2.4796,49:2.4497,50:2.4137,51:2.4274,52:2.7987,53:2.2690,
+              54:2.3226,55:2.2919,56:2.5053,57:2.3952,58:2.4144,59:2.2343,
+              60:2.6795,61:2.1860,62:2.2246,63:2.2121,64:2.5354}},
+  H200: {label: "H200 141GB HBM3e", pen: 14.0, sm: 132,
+         us: {48:2.6796,49:2.3722,50:2.3744,51:2.4082,52:2.7097,53:2.3889,
+              54:2.3869,55:2.3897,56:2.6875,57:2.3049,58:2.3062,59:2.2963,
+              60:2.6704,61:2.3584,62:2.3424,63:2.3433,64:2.6788}}
+};
+let devKey = "H100", devNorm = "abs";
+
+function drawWindow(){
+  const cv = $("win"), {g, w, h} = prep(cv, 330);
+  const dev = DEV[devKey], BS = Object.keys(dev.us).map(Number).sort((a, b) => a - b);
+  const vals = BS.map(B => dev.us[B]);
+  const base = Math.min(...vals);
+  const show = B => devNorm === "rel" ? dev.us[B] / base : dev.us[B];
+  const top = Math.max(...BS.map(show)) * 1.14;
+  const m = {l: 54, r: 14, t: 16, b: 42};
+  const bw = (w - m.l - m.r) / BS.length;
+  const py = v => m.t + (1 - v / top) * (h - m.t - m.b);
+  const MUT = css("--muted"), RULE = css("--rule"), ACC = css("--accent"),
+        UP = css("--up"), INK = css("--ink");
+
+  g.font = "11px " + css("--mono") + ", monospace";
+  g.strokeStyle = RULE; g.lineWidth = 1;
+  g.fillStyle = MUT; g.textAlign = "right"; g.textBaseline = "middle";
+  const step = devNorm === "rel" ? 0.1 : (top > 4 ? 1 : 0.5);
+  for (let v = devNorm === "rel" ? 1 : 0; v <= top; v += step){
+    g.beginPath(); g.moveTo(m.l, py(v)); g.lineTo(w - m.r, py(v)); g.stroke();
+    g.fillText(devNorm === "rel" ? v.toFixed(1) + "×" : v.toFixed(1), m.l - 8, py(v));
+  }
+  const floor = devNorm === "rel" ? 1 : 0;
+  BS.forEach((B, i) => {
+    const hot = B % 4 === 0;
+    g.fillStyle = hot ? UP : ACC;
+    const x = m.l + i * bw + bw * 0.16, bwid = bw * 0.68;
+    g.fillRect(x, py(show(B)), bwid, py(floor) - py(show(B)));
+    g.fillStyle = hot ? UP : MUT;
+    g.textAlign = "center"; g.textBaseline = "top";
+    g.font = (hot ? "500 " : "") + "11px " + css("--mono") + ", monospace";
+    g.fillText(String(B), x + bwid / 2, h - m.b + 8);
+    g.fillStyle = INK; g.textBaseline = "bottom";
+    g.font = "10px " + css("--mono") + ", monospace";
+    if (bw > 30) g.fillText(show(B).toFixed(2), x + bwid / 2, py(show(B)) - 3);
+  });
+  g.fillStyle = MUT; g.textAlign = "left"; g.textBaseline = "top";
+  g.font = "12px " + css("--body") + ", sans-serif";
+  g.fillText(dev.label + " · " + dev.sm + " multiprocesadores · castigo +"
+             + dev.pen.toFixed(1) + " %", m.l, m.t);
+  g.textAlign = "center"; g.textBaseline = "bottom";
+  g.font = "11px " + css("--mono") + ", monospace";
+  g.fillText("réplicas por GPU (B)", (m.l + w - m.r) / 2, h - 4);
+}
+seg("segDev", d => { devKey = d.d; drawWindow(); });
+seg("segNorm", d => { devNorm = d.n; drawWindow(); });
+
+/* ---------------------------------------------------- the width calculator */
+function syncCalc(){
+  const B = parseInt($("cB").value, 10), L = parseInt($("cL").value, 10);
+  $("oB").textContent = B; $("oL2").textContent = L;
+  const vb = v2(B), vl = v2(L), ve = vb + vl, wd = widthOf(ve);
+  // the reference lattice's N, so the grid is a real number and not a toy
+  const N = 39, elements = B * L * N * N * 3;
+  const grid = Math.ceil(elements / (128 * wd));
+  $("cv2b").textContent = vb;
+  $("cv2l").textContent = vl;
+  $("cv2e").textContent = ve;
+  const cw = $("cw"); cw.textContent = wd; cw.className = wd === 4 ? "hot" : "cool";
+  $("cg").textContent = fmt(grid) + " × 128";
+  const cv = $("cverd");
+  cv.textContent = wd === 4 ? "castigo" : "libre";
+  cv.className = wd === 4 ? "hot" : "cool";
+
+  const strip = $("strip");
+  strip.innerHTML = "";
+  for (let b = 48; b <= 72; b++){
+    const k = v2(b) + vl, wv = widthOf(k);
+    const el = document.createElement("div");
+    el.className = "cellb" + (wv === 4 ? " w4" : wv === 2 ? " w2" : "")
+                 + (b === B ? " sel" : "");
+    el.textContent = b;
+    el.title = "B = " + b + " · v₂(elementos) = " + k + " · ancho " + wv;
+    strip.appendChild(el);
+  }
+  const nHot = [...Array(25).keys()].filter(i => widthOf(v2(48 + i) + vl) === 4).length;
+  $("cNote").innerHTML =
+    "Con <b>" + L + " capas</b>, " + nHot + " de los 25 lotes de esta ventana "
+    + "pagan el castigo. " + (vl >= 2
+      ? "Como v₂(L) = " + vl + " ≥ 2, la condición se cumple en todos: la "
+      + "geometría es <b>inmune</b> porque ningún lote es peor que su vecino."
+      : vl === 1
+        ? "Como v₂(L) = 1, basta que <code>B</code> sea <b>par</b> — y la regla "
+        + "de los múltiplos de cuatro clasificaría mal la mitad de ellos."
+        : "Como v₂(L) = 0, el castigo cae exactamente en los <b>múltiplos de "
+        + "cuatro</b>.")
+    + " La grilla usa <code>N</code> = 39, la red de referencia.";
+}
+$("cB").addEventListener("input", syncCalc);
+$("cL").addEventListener("input", syncCalc);
+
+/* ------------------------------------------------------------------ startup */
+function redrawAll(){ drawCurve(); drawWindow(); syncGeometry(); }
+syncGeometry(); drawCurve(); drawWindow(); syncCalc();
+let rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(redrawAll, 120); });
+if (window.matchMedia){
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  (mq.addEventListener ? mq.addEventListener.bind(mq, "change")
+                       : mq.addListener.bind(mq))(redrawAll);
+}
+</script>
