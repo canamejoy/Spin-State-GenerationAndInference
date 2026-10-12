@@ -858,6 +858,74 @@ existe ninguna decisión de generación de código que dependa del lote. No es q
 el hardware no pueda producir el efecto — es que a ese kernel nadie le cambia la
 forma del lanzamiento.</p>
 
+<h3>Por qué el ancho 4 cuesta: no es el ancho, es el reparto</h3>
+<p>Que el ancho 4 fuera caro y el 2 gratis quedó sin explicar un buen rato. La
+respuesta salió de un microbenchmark en <b>CUDA puro, sin XLA en ninguna
+parte</b>: un kernel elementwise sobre 1 368 900 floats, con el bloque de 128
+hilos que usa XLA, el mismo trabajo total en todas las celdas, y variando solo
+<em>cuántos</em> elementos toma cada hilo y <b>cuáles</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>esquema</th><th>VEC=1</th><th>VEC=2</th><th>VEC=4</th>
+    <th>GB/s en VEC=4</th><th>4 vs 1</th></tr></thead>
+  <tbody>
+    <tr><td><b>bloqueado</b> — elementos consecutivos por hilo</td>
+        <td class="n">8.41 µs</td><td class="n">6.13 µs</td>
+        <td class="bad n">9.67 µs</td><td class="bad n">1699</td>
+        <td class="bad">+14.9 %</td></tr>
+    <tr class="best"><td><b>escalonado</b> — coalescido</td>
+        <td class="n">8.41 µs</td><td class="n">5.60 µs</td>
+        <td class="win n">4.60 µs</td><td class="win n">3571</td>
+        <td class="win">−45.3 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>El kernel de JAX paga <b class="n">+14.25 %</b>. El esquema bloqueado paga
+<b class="n">+14.9 %</b> — coincide dentro de 0.65 puntos, reproducido sin
+compilador. Y el <b>mismo ancho</b>, repartido de forma coalescida, es
+<b class="n">45 % más rápido</b> y alcanza 3571 GB/s, por encima del pico nominal
+de HBM3 porque la L2 ayuda.</p>
+
+<p><b>Así que el ancho no es el problema: el problema es que XLA le da a cada
+hilo elementos consecutivos.</b> La aritmética es elemental. Con
+<code>VEC</code> floats consecutivos por hilo, una sola instrucción de carga a lo
+largo de un warp de 32 hilos toca direcciones separadas <code>4·VEC</code> bytes,
+así que el pedido abarca <code>VEC·128</code> bytes y necesita
+<b><code>VEC</code> transacciones de 128 B para entregar 128 B útiles</b>:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>VEC</th><th>la instrucción abarca</th><th>transacciones</th>
+    <th>desperdicio</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td class="n">128 B</td><td class="n">1</td><td class="n">—</td></tr>
+    <tr><td class="n">2</td><td class="n">256 B</td><td class="n">2</td><td class="n">2×</td></tr>
+    <tr><td class="n">4</td><td class="n">512 B</td><td class="n">4</td><td class="bad n">4×</td></tr>
+  </tbody>
+</table></div>
+
+<p>Y eso explica el escalón que faltaba: ensanchar <em>también</em> reduce el
+número de bloques y sube el paralelismo de instrucciones, lo cual gana. En
+<code>VEC</code> = 2 ese beneficio supera el desperdicio ×2. En
+<code>VEC</code> = 4 el desperdicio ×4 lo sobrepasa y el signo se invierte.
+<b>Ancho 2 gratis, ancho 4 caro</b> — exactamente la firma medida.</p>
+
+<div class="note warn"><strong>Esto corrige la narrativa de esta página.</strong>
+«Es el compilador, no el hardware» era una <b>falsa dicotomía</b>. XLA toma la
+<b>decisión</b> —qué ancho, y consecutivo en vez de escalonado— y el sistema de
+memoria pone el <b>precio</b>. Por eso el castigo correlaciona con las
+propiedades del dispositivo <em>y</em> desaparece en los kernels a mano: el
+<a href="#noes">3b</a> usaba un sitio por hilo en todo <code>B</code>, así que
+ninguna decisión de ancho variaba nunca. Forzando el ancho en CUDA puro, el
+castigo vuelve.</div>
+
+<div class="note"><strong>Un límite de esta prueba.</strong> El microbenchmark
+reproduce la magnitud del ancho 4 pero <b>no la del ancho 2</b>: ahí sale 27 %
+más rápido, mientras que el kernel real queda neutro (+0.09 %). Lo que coincide
+es el <em>orden</em> —el ancho 4 bloqueado es la única celda más lenta que el
+ancho 1— y la magnitud en ancho 4. El kernel real tiene lecturas de vecinos,
+números aleatorios y muchos más arreglos, así que no había por qué esperar una
+coincidencia exacta en todos los escalones.</div>
+
 <h3 id="calc">La calculadora del ancho</h3>
 <p>Elegí réplicas y capas y la fórmula te dice qué va a hacer el compilador.
 La tira de abajo muestra la ventana completa de 48 a 72, para ver el patrón que
@@ -926,7 +994,8 @@ tres regímenes a propósito:</p>
         <td class="win">+14.7 %, sin traslape</td><td class="bad">+10.2 %, con traslape</td></tr>
     <tr><td>Rd 23.55, L = 3</td><td class="n">0</td><td>caro en múltiplos de 4</td>
         <td class="win">+14.2 %, sin traslape</td><td class="win">+14.2 %, sin traslape</td></tr>
-    <tr><td>Rd 20.40, L = 4</td><td class="n">2</td><td>caro siempre ⟹ plano</td>
+    <tr><td>Rd 20.40, L = 4</td><td class="n">2</td>
+        <td>ancho 4 siempre ⟹ sin estructura mod-4</td>
         <td>no existe partición</td><td class="win">−2.5 %, con traslape</td></tr>
   </tbody>
 </table></div>
@@ -970,8 +1039,9 @@ número impar de capas, donde las dos particiones coinciden.</div>
         <td class="win">sólido en NVIDIA</td></tr>
     <tr><td><b>Que las capas deciden</b>: inmunidad con <code>L</code> divisible
             por 4, castigo en todo lote par con <code>L</code> ≡ 2 (mod 4)</td>
-        <td><b>H100 solamente</b></td>
-        <td class="bad">un solo dispositivo</td></tr>
+        <td>H100, y la inmunidad también en <b>T4</b> (84 % del castigo se va,
+            con un residuo del 4 % sin explicar)</td>
+        <td class="n">dos arquitecturas</td></tr>
     <tr><td><b>El ancho de vector y las grillas</b> (89 valores predichos)</td>
         <td><b>H100 solamente</b></td>
         <td class="bad">un solo dispositivo</td></tr>
@@ -1013,13 +1083,55 @@ paridad se corrieron todos en H100.</div>
   <li><b>Fuera de NVIDIA no hay nada medido.</b> Ni ROCm ni TPU ni Metal.</li>
 </ul>
 
-<div class="note warn"><strong>El experimento que cerraría esto cuesta
-centavos.</strong> Correr la ventana densa con <code>L</code> = 4 y con
-<code>L</code> = 5 en una <b>T4</b>, que es la que tiene el castigo más grande y
-por lo tanto la señal más clara. Si con cuatro capas sale plana, la mitad
-geométrica de la regla pasa de un dispositivo a dos arquitecturas muy separadas.
-Si no sale plana, el ancho de vector es específico de Hopper y hay que decirlo.
-<b>Está sin hacer.</b></div>
+<h3>El experimento se hizo, y la respuesta es «en gran parte sí»</h3>
+<p>Corrimos la ventana densa con <code>L</code> = 5 y con <code>L</code> = 4 en
+una <b>T4</b> —dos generaciones de arquitectura desde Hopper, y el dispositivo
+con el castigo más grande— con las huellas emparejadas al 0.1 % en sitios
+activos.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>T4 · red</th><th>castigo mod-4</th><th>traslape</th><th>veredicto</th></tr></thead>
+  <tbody>
+    <tr><td>Rd 18.30, <b>L = 5</b> (impar)</td><td class="bad">+25.7 %</td>
+        <td>ninguno</td><td>la regla se cumple</td></tr>
+    <tr class="best"><td>Rd 20.40, <b>L = 4</b> (divisible)</td>
+        <td class="win">+4.0 %</td><td>ninguno</td>
+        <td><b>84 % del castigo desaparece</b></td></tr>
+  </tbody>
+</table></div>
+
+<p><b>La escalera de anchos también aparece en la T4</b>, y se mueve en la
+dirección que el mecanismo de coalescencia predice:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>ancho</th><th>T4 · µs</th><th>vs ancho 1</th>
+    <th>H100 · vs ancho 1</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td class="n">15.572</td><td>—</td><td>—</td></tr>
+    <tr><td class="n">2</td><td class="n">16.630</td><td class="bad">+6.8 %</td>
+        <td class="n">+0.09 %</td></tr>
+    <tr><td class="n">4</td><td class="n">20.023</td><td class="bad">+28.6 %</td>
+        <td class="n">+14.25 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>En la H100 el ancho 2 es gratis; en la T4 cuesta <b class="n">+6.8 %</b>. Con
+4 MB de L2 y 320 GB/s no puede absorber el desperdicio ×2 de transacciones que la
+H100 esconde con paralelismo de instrucciones. <b>El punto de cruce se corre con
+el ancho de banda</b> — predicho antes de medirlo, en otra arquitectura.</p>
+
+<div class="note bad"><strong>Pero no cierra del todo, y hay que decirlo.</strong>
+Ese <b class="n">+4.0 %</b> con <code>L</code> = 4 en la T4 sale
+<em>sin traslape</em>, o sea que es una separación limpia. Y el ancho de vector
+<b>no puede explicarlo</b>: las ocho celdas están en ancho 4 por el tope. Es
+marginal —la brecha entre el múltiplo de cuatro más lento y el no-múltiplo más
+rápido es de 0.052 µs, un 0.25 %, unas tres desviaciones estándar— y quitar
+<code>B</code> = 64, que es potencia de dos, todavía deja +3.6 %.
+<b>La hipótesis natural:</b> que en <code>sm_75</code> XLA tome una ruta
+<em>más ancha</em> que 4 con <code>v₂</code> alto. El tope de 4 se estableció
+solo con volcados de H100, y esto conectaría con la estructura de módulo ocho que
+vimos en mediciones tempranas. <b>Sin probar</b> — hace falta
+<code>--xla_dump_to</code> en una T4.</div>
 
 <h2 id="solucion">12 · La solución</h2>
 
@@ -1033,6 +1145,46 @@ Si no sale plana, el ancho de vector es específico de Hopper y hay que decirlo.
   mantenelo <b>por debajo de 2</b>:</p>
 </div>
 
+<div class="note bad"><strong>Y la inmunidad no es gratis — es un seguro, con
+una prima que depende del dispositivo.</strong> La inmunidad consiste en pagar
+ancho 4 en <em>todas</em> las celdas, y el ancho 4 es justamente lo que más duele
+en una tarjeta con poco ancho de banda. Con las huellas emparejadas al 0.1 %:</div>
+
+<div class="tw"><table>
+  <thead><tr><th>dispositivo</th><th><code>L</code> impar · celdas buenas</th>
+    <th><code>L</code> impar · celdas malas</th><th><code>L</code> div. 4 · todas</th>
+    <th>prima contra acertar</th><th>ahorro contra errar</th></tr></thead>
+  <tbody>
+    <tr><td>H100</td><td class="n">2.426</td><td class="n">2.772</td>
+        <td class="n">2.563</td><td class="n">+5.6 %</td><td class="win">7.5 %</td></tr>
+    <tr><td>T4</td><td class="n">15.572</td><td class="n">20.023</td>
+        <td class="n">20.352</td><td class="bad">+30.7 %</td><td class="n">1.6 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>En la H100 el seguro cuesta 5.6 % y te ahorra 7.5 %: razonable cuando no
+controlás el lote. <b>En la T4 cuesta 30.7 % y te ahorra 1.6 %</b>, o sea que es
+casi equivalente a pagar siempre el peor caso. <b>Mi recomendación general estaba
+mal</b>, escrita con datos de H100 y extendida sin medir. La versión correcta:</p>
+
+<div class="answer">
+  <p><b>Si podés elegir <code>B</code>:</b> usá un número impar de capas y
+  mantené <code>v₂(B) + v₂(L) &lt; 2</code>. Eso cae en las celdas más baratas de
+  los dos dispositivos.</p>
+  <p><b>Si <code>B</code> no está en tus manos</b> —te lo fija el total de
+  réplicas, o el reparto entre GPUs— entonces sí elegí capas divisibles por
+  cuatro, y preferentemente en una GPU de alto ancho de banda, donde la prima es
+  chica.</p>
+</div>
+
+<div class="note warn"><strong>«Inmune» tampoco quiere decir «plano».</strong>
+Las ocho celdas de <code>L</code> = 4 se dispersan <b class="n">16 %</b> en la
+H100 (2.376 a 2.755 µs) y <b class="n">9 %</b> en la T4. Lo que desaparece es
+<b>la estructura de módulo cuatro</b>: ningún lote es peor que su vecino por el
+ancho de vector. El dentado ancho sigue ahí, porque
+<a href="#abierto">ese no tiene mecanismo</a>. Elegir capas divisibles por cuatro
+te saca un problema de encima, no los dos.</div>
+
 <div class="tw"><table>
   <thead><tr><th>capas <code>L</code></th><th>qué evitar</th><th>ejemplos seguros</th></tr></thead>
   <tbody>
@@ -1041,7 +1193,8 @@ Si no sale plana, el ancho de vector es específico de Hopper y hay que decirlo.
     <tr><td><code>L</code> ≡ 2 (mod 4) (2, 6, 10…)</td><td><b>todo lote par</b></td>
         <td class="n">513, 1025, 65, 57</td></tr>
     <tr class="best"><td><code>L</code> divisible por 4 (4, 8, 12, 16…)</td>
-        <td>nada, por este motivo</td><td class="n">cualquiera</td></tr>
+        <td>nada, por este motivo</td>
+        <td class="n">cualquiera — pero la curva ancha sigue</td></tr>
   </tbody>
 </table></div>
 
@@ -1194,20 +1347,24 @@ descubiertos acá— pero su efecto se mide, no se interpola.</div>
 <p>Tres cosas, y las tres están observadas pero no entendidas:</p>
 
 <ul>
-  <li><b>Por qué el ancho 4 cuesta y el ancho 2 no.</b> Cuatro flotantes son 16
-  bytes por hilo, así que el tamaño de transacción es el sospechoso obvio. No se
-  midió.</li>
   <li><b>Por qué no pasa nada con huellas de ~2 MB.</b> El brazo A del
   experimento 4 da null en todos los <code>v₂</code>, y a 5 MB separa limpio en
-  todos los casos. La frontera entre los dos regímenes no está mapeada, y ahí
-  también vectoriza — simplemente no cuesta.</li>
-  <li><b>Por qué 512 gana y 768 pierde.</b> Los dos están en ancho 4. La curva
-  ancha no tiene mecanismo.</li>
+  todos los casos. <b>Mi explicación favorita murió midiéndola:</b> pensé que era
+  el working set cayendo dentro de la L2, pero XLA asigna 0.676 MB por réplica
+  (7.8× el arreglo de espines), así que en <code>B</code> = 60 el brazo A son
+  16.4 MB y el B son 40.6 MB — <b>los dos caben</b> en los 50 MB de la H100, y
+  solo el B paga. Peor: el microbenchmark de arriba toca 15.7 MB, comparable al
+  brazo A, y el castigo aparece igual.</li>
+  <li><b>El residuo del 4 % con <code>L</code> = 4 en la T4.</b> Las ocho celdas
+  están en ancho 4, así que el tope de 4 no puede explicarlo. La hipótesis
+  natural es que en <code>sm_75</code> XLA tome una ruta más ancha con
+  <code>v₂</code> alto — lo que conectaría con la estructura de módulo ocho de
+  las mediciones tempranas. Falta <code>--xla_dump_to</code> en una T4.</li>
+  <li><b>Por qué 512 gana y 768 pierde.</b> Los dos están en ancho 4, y el
+  dentado ancho sobrevive dentro de la clase de ancho 4 en los dos dispositivos:
+  <code>B</code> = 60 contra 64 difieren +27.5 % en la T4 y −4.7 % en la H100,
+  siendo los dos ancho 4. La curva ancha no tiene mecanismo.</li>
 </ul>
-
-<p>También quedó pendiente si la estructura de módulo 8 que se vio en mediciones
-tempranas es una ruta más ancha a <code>v₂</code> más alto. Los anchos observados
-en los volcados se detienen en 4.</p>
 
 <h2 id="metodo">15 · Cómo se midió</h2>
 
@@ -1250,6 +1407,10 @@ módulo.</p>
         <td><code>results/curves/mod4_cause_xla_vectorisation.json</code></td></tr>
     <tr><td>La prueba de paridad (§10)</td>
         <td><code>results/curves/mod4_rule_is_vector_width.json</code></td></tr>
+    <tr><td>Por qué el ancho 4 cuesta (§9)</td>
+        <td><code>results/curves/width4_is_uncoalesced.json</code></td></tr>
+    <tr><td>La regla en una T4 (§11)</td>
+        <td><code>results/curves/geometry_rule_on_a_t4.json</code></td></tr>
   </tbody>
 </table></div>
 
@@ -1257,7 +1418,7 @@ módulo.</p>
 <code>notebooks/simulation/modal/app.py</code>. Las entradas relevantes son
 <code>f_curve</code>, <code>stride_discriminator</code>,
 <code>xla_confound</code>, <code>metro_probe</code>, <code>buffer_probe</code>,
-<code>xla_dump</code> y <code>launch_dims</code>. Gasto total de la campaña: unos
+<code>xla_dump</code>, <code>launch_dims</code> y <code>vector_width</code>. Gasto total de la campaña: unos
 <b class="n">$25</b> de GPU.</p>
 
 <div class="note"><strong>Nada de esto cambia la física.</strong> Las

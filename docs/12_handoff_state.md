@@ -183,7 +183,34 @@ It is the last extrapolated figure in the study. Everything else is measured.
   verified. Generating a dataset needs that wrapper changed.
 - **Parts 2 and 3 of the test plan are untouched**: the generative-model
   comparison and the remaining cycle-integration cells.
-- **The geometry half of the rule is measured on ONE device.** The five-device
+- **Width 4 costs because XLA gives each thread CONSECUTIVE elements.** A raw
+  CUDA elementwise kernel at XLA's own 128-thread block, identical total work:
+  blocked VEC=4 is +14.9% against VEC=1 (1699 GB/s) while strided VEC=4 is
+  -45.3% (3571 GB/s). The JAX kernel pays +14.25%. One warp-wide load blocked
+  spans VEC*128 bytes and needs VEC transactions for 128 useful bytes; widening
+  also cuts blocks and raises ILP, which wins at 2 and loses at 4. So
+  "compiler, not hardware" was a false dichotomy: XLA picks the width and the
+  layout, the memory system prices it. Confirmed on a second architecture — the
+  crossover moves with bandwidth, width 2 costing +6.8% on a T4 against +0.09%
+  on an H100. Caveat: the microbenchmark matches the width-4 magnitude but not
+  the width-2 cell (-27.2% there).
+- **Immunity is insurance with a device-dependent premium, and the blanket
+  advice was wrong.** `L` divisible by four means paying width 4 in every cell,
+  and width 4 hurts most where bandwidth is scarce. Footprints matched to 0.1%:
+  on an H100 it costs +5.6% against hitting a good odd-`L` cell and saves 7.5%
+  against missing; on a T4 it costs **+30.7%** and saves 1.6%. Revised: if you
+  can choose `B`, take an odd `L` and keep `v2(B) + v2(L) < 2`; take `L`
+  divisible by four only when `B` is out of your hands. Also, "immune" is not
+  "flat" — the eight `L = 4` cells span 16% on an H100 and 9% on a T4.
+- **The geometry half of the rule now holds on two architectures, with a
+  residue.** On a T4, going from `L = 5` to `L = 4` cuts the mod-4 penalty from
+  +25.7% to +4.0%, an 84% reduction. But that +4.0% separates cleanly and the
+  width cap of 4 cannot explain it, since all eight cells are width 4. The gap
+  is marginal (0.052 us, ~0.25%, about 3 sd) and survives dropping B=64.
+  Hypothesis: on `sm_75` XLA takes a path wider than 4 at higher `v2`, which
+  would also connect to the unexplained mod-8 structure. Needs
+  `--xla_dump_to` on a T4.
+- **The ~2 MB footprint threshold is NOT an L2-capacity effect.** The five-device
   campaign (T4, L4, A100, H100, H200) only established that the penalty exists
   at multiples of four with `L = 5`, which is odd — the special case where the
   `B % 4` rule and `v2(B) + v2(L) >= 2` coincide. Every measurement of the layer
@@ -203,9 +230,10 @@ It is the last extrapolated figure in the study. Everything else is measured.
   thread, so transaction size is the obvious suspect. Measured on `L = 3`, which
   spans all three widths in one lattice: width 2 is +0.09% against width 1,
   width 4 is +14.25%.
-- **The footprint threshold is observed, not explained.** Holding active sites
-  near 2125 (about 2 MB) gives a null result at every `v2`, while 5245 sites
-  (about 5 MB) separates cleanly. The boundary between the two is unmapped.
+  XLA allocates 0.676 MB per replica (7.8x the spin array), so at B=60 arm A is
+  16.4 MB and arm B 40.6 MB — both inside the H100's 50 MB L2, yet only arm B
+  pays. The vector-width microbenchmark touches 15.7 MB, comparable to arm A,
+  and pays anyway. Still unexplained, but better posed.
 
 ## 8. Methodological rules earned the hard way
 
