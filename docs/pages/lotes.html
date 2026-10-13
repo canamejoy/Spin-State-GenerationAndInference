@@ -971,6 +971,54 @@ ancho 1— y la magnitud en ancho 4. El kernel real tiene lecturas de vecinos,
 números aleatorios y muchos más arreglos, así que no había por qué esperar una
 coincidencia exacta en todos los escalones.</div>
 
+<h3>¿Y no se puede simplemente apagar?</h3>
+<p>Es la pregunta natural, y tiene dos respuestas: una que ya está medida y otra
+que es un «no».</p>
+
+<p><b>Lo que pasa si forzás un elemento por hilo: el castigo desaparece y los
+tiempos se estandarizan.</b> Eso es precisamente lo que hace el
+<a href="#noes">kernel a mano del 3b</a>, que asigna un sitio por hilo para
+<em>todo</em> <code>B</code>. Sobre los mismos 17 lotes de la ventana densa, en
+la misma H100:</p>
+
+<div class="tw"><table>
+  <thead><tr><th><code>B</code></th><th>48</th><th>52</th><th>56</th><th>60</th>
+    <th>63</th><th>64</th></tr></thead>
+  <tbody>
+    <tr><td>µs por réplica-barrido</td><td class="n">0.4871</td>
+        <td class="n">0.4725</td><td class="n">0.4637</td><td class="n">0.4559</td>
+        <td class="n">0.4505</td><td class="win n">0.4474</td></tr>
+  </tbody>
+</table></div>
+
+<p>Castigo mod-4: <b class="n">−0.07 %</b>, con traslape total. Y
+<b><code>B</code> = 64 pasa a ser la celda <em>más rápida</em> de las
+diecisiete</b>, no la más lenta. Lo que queda es una bajada suave y monótona —
+esa dispersión del 8.9 % es el término <code>10.9/B</code> del
+<a href="#especs">lanzamiento desde el host</a>, no estructura de módulo cuatro.
+El diente desaparece por completo.</p>
+
+<div class="note warn"><strong>Pero no se puede apagar en el kernel real.</strong>
+Volcamos la lista de flags que publica el build instalado: de los <b>16</b>
+flags <code>xla_gpu</code>, <b>ninguno controla la vectorización</b>.
+<code>--xla_cpu_prefer_vector_width</code> existe, pero solo para CPU. Y por la
+forma tampoco: forzar ancho 1 exige <code>v₂(B) + v₂(L) &lt; 2</code>, y en
+<code>B</code> = 64 el término <code>v₂(64) = 6</code> ya supera el umbral por sí
+solo, sin importar las capas. <b>La decisión del ancho no es configurable</b> —
+por eso la única palanca práctica es elegir <code>B</code>.
+<em>Matiz honesto:</em> <code>--help</code> publica un subconjunto curado; el
+conjunto completo vive en <code>xla.proto</code> y es mucho mayor, así que no
+puedo descartar un flag interno no documentado.</div>
+
+<div class="note"><strong>Y «organizar» no es una fase que se pueda cronometrar
+aparte.</strong> No hay un paso de preparación antes de procesar: cada hilo
+calcula cuatro direcciones y emite cuatro cargas en vez de una, sin costo de
+montaje. Lo que cambia es <em>cómo esas cargas caen en transacciones de
+memoria</em>. La prueba de que no es trabajo de organización es que
+<b>el mismo ancho 4, repartido de forma coalescida, es la configuración más
+rápida de las seis</b> (4.60 µs contra 8.41 del ancho 1). Si organizar de a
+cuatro costara, esa también sería lenta.</div>
+
 <h3 id="calc">La calculadora del ancho</h3>
 <p>Elegí réplicas y capas y la fórmula te dice qué va a hacer el compilador.
 La tira de abajo muestra la ventana completa de 48 a 72, para ver el patrón que

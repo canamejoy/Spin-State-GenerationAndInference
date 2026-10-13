@@ -3064,6 +3064,45 @@ def pair_t4(b, r, tag, Rd, L, nt, th, me, seed, label):
     return _pair(b, r, tag, Rd, L, nt, th, me, seed, label)
 
 
+@app.function(image=image, cpu=2.0, timeout=600)
+def xla_flag_list():
+    """Dump every XLA flag the installed build exposes, and filter it.
+
+    `XLA_FLAGS=--help` makes the backend print its whole flag table and exit
+    the initialisation, so this runs on CPU: we only need the names, not a GPU.
+    The question is whether this build lets us turn the vectorisation pass off,
+    which would let the width rule be tested inside the real kernel instead of
+    only in hand-written CUDA.
+    """
+    import os, subprocess, sys, re
+    env = dict(os.environ, XLA_FLAGS="--help")
+    r = subprocess.run([sys.executable, "-c", "import jax; jax.devices()"],
+                       env=env, capture_output=True, text=True, timeout=540)
+    txt = r.stdout + r.stderr
+    flags = sorted(set(re.findall(r"--([a-z0-9_]{6,})", txt)))
+    print(f"captured {len(txt):,} chars, {len(flags)} distinct flags", flush=True)
+    want = ("vector", "emitter", "loop", "tile", "unroll", "coalesc",
+            "simd", "width", "codegen")
+    hits = [f for f in flags if any(w in f for w in want)]
+    print(f"\n=== flags matching {want} ===", flush=True)
+    for f in hits:
+        print(f"  --{f}", flush=True)
+    if not hits:
+        print("  (none)", flush=True)
+    print(f"\n=== every xla_gpu flag ({sum(1 for f in flags if 'xla_gpu' in f)}) ===",
+          flush=True)
+    for f in flags:
+        if "xla_gpu" in f:
+            print(f"  --{f}", flush=True)
+    return dict(n_flags=len(flags), matches=hits, all_flags=flags)
+
+
+@app.local_entrypoint()
+def xla_flags():
+    """Which knobs does this XLA build actually expose?"""
+    xla_flag_list.remote()
+
+
 @app.local_entrypoint()
 def pair(batches: str = "64,65", repeats: int = 3, runs: int = 3,
          rd: float = 18.30, layers: int = 5, n_temps: int = 40,
