@@ -1070,7 +1070,7 @@ clasifica mal. Partir por el ancho predicho da +14.7 % sin traslape, 8 de 8. La
 regla de los múltiplos de cuatro funcionaba porque todo lo medido antes tenía un
 número impar de capas, donde las dos particiones coinciden.</div>
 
-<h3 id="pair">La demostración más simple: 64 contra 65</h3>
+<h3 id="pair">La demostración más simple: 64 contra sus dos vecinos</h3>
 <p>Todo lo anterior son ventanas, promedios y particiones. El experimento más
 chico que muestra la regla es un par de lotes separados por <b>una réplica</b>.
 Con cinco capas:</p>
@@ -1086,13 +1086,60 @@ Con cinco capas:</p>
   </tbody>
 </table></div>
 
+<p>El primer intento comparó <code>B</code> = 64 contra <b>un solo</b> vecino,
+el 65. Y el control en H100 mostró el agujero de ese diseño: si el vecino elegido
+cae en una loma del dentado ancho, el contraste se subestima — ahí 3.5 veces. Así
+que la versión buena <b>encierra</b> al 64 entre sus <em>dos</em> vecinos
+escalares, 63 y 65, los dos de ancho 1. Si 64 pierde contra los dos, ningún
+vecino desafortunado puede explicarlo.</p>
+
 <p>Se corrió en <b>cuatro cuentas de Kaggle a la vez</b>, cada una en su propia
 T4 física y su propia sesión, con <b>tres repeticiones intercaladas</b>
-(64, 65, 64, 65, …) para que una GPU que se calienta no cargue la deriva sobre un
-solo brazo. El código es <b>idéntico</b> en todas: <code>sim_core.py</code> y
-<code>pair_test.py</code> van embebidos en el notebook con su SHA-256
-verificado byte a byte contra el repositorio, así que no hay reimplementación
-posible.</p>
+(63, 64, 65, 63, 64, 65, …) para que una GPU que se calienta no cargue la deriva
+sobre un brazo. El código es <b>idéntico</b> en todas: <code>sim_core.py</code> y
+<code>pair_test.py</code> van embebidos en el notebook con su SHA-256 verificado
+byte a byte contra el repositorio, así que no hay reimplementación posible.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>cuenta</th><th><code>B</code>=63 · ancho 1</th>
+    <th><code>B</code>=64 · ancho 4</th><th><code>B</code>=65 · ancho 1</th>
+    <th>64 vs 63</th><th>64 vs 65</th></tr></thead>
+  <tbody>
+    <tr><td>camilaordonez</td><td class="n">16.208</td><td class="bad n">23.189</td>
+        <td class="n">12.796</td><td class="bad">+43.1 %</td><td class="bad">+81.2 %</td></tr>
+    <tr><td>alegriaandres</td><td class="n">17.922</td><td class="bad n">27.103</td>
+        <td class="n">14.970</td><td class="bad">+51.2 %</td><td class="bad">+81.1 %</td></tr>
+    <tr><td>alegriacarlos</td><td class="n">16.378</td><td class="bad n">23.520</td>
+        <td class="n">12.982</td><td class="bad">+43.6 %</td><td class="bad">+81.2 %</td></tr>
+    <tr><td>andrescanamejoy</td><td class="n">17.197</td><td class="bad n">26.060</td>
+        <td class="n">14.443</td><td class="bad">+51.5 %</td><td class="bad">+80.4 %</td></tr>
+    <tr class="best"><td><b>agregado · 36 medidas</b></td>
+        <td class="n">16.926 ± 0.807<br><span style="font-weight:400">64.0 s</span></td>
+        <td class="bad n">24.968 ± 1.661<br><span style="font-weight:400">95.9 s</span></td>
+        <td class="n">13.798 ± 0.932<br><span style="font-weight:400">53.8 s</span></td>
+        <td class="bad"><b>+47.5 %</b></td><td class="bad"><b>+81.0 %</b></td></tr>
+  </tbody>
+</table></div>
+
+<p><b><code>B</code> = 64 pierde contra los dos vecinos</b>, y
+<b>sin traslape contra ninguno</b> de los dos: la celda de 64 más rápida sigue
+por encima de la de 63 más lenta <em>y</em> de la de 65 más lenta. El encierre
+funcionó — no hay vecino desafortunado del que culpar.</p>
+
+<div class="note warn"><strong>Pero los dos vecinos difieren 18.5 % entre
+sí</strong> —16.926 contra 13.798— y <b>la regla no dice nada de eso</b>: los dos
+son ancho 1. Es el <a href="#abierto">dentado ancho</a> otra vez, ahora visible
+en la T4. Y explica la asimetría de las columnas: «64 vs 65» es
+notablemente estable (+80.4 % a +81.2 %, solo 0.8 pp de amplitud) mientras «64 vs
+63» se dispersa (+43.1 % a +51.5 %, 8.4 pp).
+<b>La regla queda confirmada por el encierre; su magnitud no es un número único</b>,
+porque la referencia con que comparás también lleva el dentado encima.</div>
+
+<p style="color:var(--muted);font-size:.9rem">Dos de las cuatro T4 corrieron
+uniformemente más rápido que las otras dos (<code>B</code> = 64 en 23.2–23.5
+contra 26.1–27.1), probablemente otro estado de reloj u otra variante de placa.
+Las <em>razones</em> se mantuvieron igual, que es justamente para lo que se
+corren cuatro.</p>
 
 <div class="curvebox">
   <div class="controls" style="margin-bottom:12px">
@@ -1111,54 +1158,20 @@ posible.</p>
   </div>
   <canvas id="pairc" width="900" height="400"
     aria-label="Costo por réplica-barrido en B=64 y B=65, cuatro cuentas de Kaggle, tres repeticiones cada una"></canvas>
-  <p class="curvecap">Cada punto es una medición. <b>Rojo</b> es
-  <code>B</code> = 64 (ancho 4), <b>verde</b> es <code>B</code> = 65 (ancho 1).
-  La banda gris marca la brecha entre el <code>B</code> = 65 más lento y el
-  <code>B</code> = 64 más rápido: <b>no hay una sola medición dentro</b>.</p>
+  <p class="curvecap">Cada punto es una medición: <b>36 en total</b>, cuatro
+  cuentas × tres repeticiones × tres lotes. <b>Rojo</b> es <code>B</code> = 64
+  (ancho 4); <b>azul</b> y <b>verde</b> son sus dos vecinos de ancho 1. La banda
+  gris va del vecino más lento al <code>B</code> = 64 más rápido —
+  <b>no hay una sola medición dentro</b>, así que 64 supera a los dos.</p>
 </div>
 
 <p>En reloj real, que es lo que se siente: cada celda son 60 000 barridos, así
-que <code>B</code> = 64 tarda <b class="n">89 segundos</b> y
-<code>B</code> = 65 tarda <b class="n">50</b> — con una réplica <em>más</em> de
-trabajo.</p>
-
-<div class="tw"><table>
-  <thead><tr><th rowspan="2">cuenta</th>
-    <th colspan="2"><code>B</code> = 64 · ancho 4</th>
-    <th colspan="2"><code>B</code> = 65 · ancho 1</th>
-    <th rowspan="2">castigo</th><th rowspan="2">traslape</th></tr>
-    <tr><th>µs/rép-barrido</th><th>reloj</th>
-        <th>µs/rép-barrido</th><th>reloj</th></tr></thead>
-  <tbody>
-    <tr><td>andrescanamejoy</td><td class="n">23.361</td><td class="bad n">89.7 s</td>
-        <td class="n">13.054</td><td class="win n">50.9 s</td>
-        <td class="bad">+79.0 %</td><td class="win">ninguno</td></tr>
-    <tr><td>camilaordonez</td><td class="n">23.733</td><td class="bad n">91.1 s</td>
-        <td class="n">13.147</td><td class="win n">51.3 s</td>
-        <td class="bad">+80.5 %</td><td class="win">ninguno</td></tr>
-    <tr><td>alegriaandres</td><td class="n">22.863</td><td class="bad n">87.8 s</td>
-        <td class="n">12.602</td><td class="win n">49.1 s</td>
-        <td class="bad">+81.4 %</td><td class="win">ninguno</td></tr>
-    <tr><td>alegriacarlos</td><td class="n">22.841</td><td class="bad n">87.7 s</td>
-        <td class="n">12.545</td><td class="win n">48.9 s</td>
-        <td class="bad">+82.1 %</td><td class="win">ninguno</td></tr>
-    <tr class="best"><td><b>agregado · 24 medidas</b></td>
-        <td class="n">23.200 ± 0.465</td><td class="bad n"><b>89.1 s</b></td>
-        <td class="n">12.837 ± 0.345</td><td class="win n"><b>50.1 s</b></td>
-        <td class="bad"><b>+80.7 %</b></td><td class="win"><b>ninguno</b></td></tr>
-  </tbody>
-</table></div>
-
-<p>Son <b class="n">39 segundos</b> de diferencia por celda. Sobre una corrida
-de producción (200 temperaturas × 20 000 barridos) esos mismos dos lotes se
-separan <b class="n">1.65 horas contra 0.93 horas</b> de GPU — <b>43 minutos
-regalados por una réplica.</b></p>
-
-<p>Los cuatro castigos caben en <b class="n">3.1 puntos porcentuales</b>
-(+79.0 % a +82.1 %). Globalmente, el <code>B</code> = 65 más lento de las 24
-medidas (13.330 µs) sigue <b class="n">69.6 %</b> por debajo del
-<code>B</code> = 64 más rápido (22.607 µs). <b>Una réplica de diferencia, el
-costo casi se duplica, y se repite en cuatro dispositivos independientes.</b></p>
+que <code>B</code> = 64 tarda <b class="n">96 segundos</b> y <code>B</code> = 65
+tarda <b class="n">54</b> — con una réplica <em>más</em> de trabajo. Son
+<b class="n">42 segundos</b> por celda. Sobre una corrida de producción (200
+temperaturas × 20 000 barridos) esos dos lotes se separan
+<b class="n">1.78 h contra 1.00 h</b> de GPU: <b>47 minutos regalados por una
+réplica.</b></p>
 
 <div class="note warn"><strong>Pero este par no sirve igual en todos los
 dispositivos, y el control lo explica.</strong> El mismo experimento en
@@ -1844,6 +1857,8 @@ módulo.</p>
         <td><code>results/curves/width_cap_is_xla_not_hopper.json</code></td></tr>
     <tr><td>64 contra 65, cuatro T4 (§10)</td>
         <td><code>results/curves/pair_64_vs_65.json</code></td></tr>
+    <tr><td>63/64/65 encerrado, cuatro T4 (§10)</td>
+        <td><code>results/curves/trio_63_64_65.json</code></td></tr>
     <tr><td>Especificaciones y pistas (§15)</td>
         <td><code>docs/planning/hardware_compiler_leads.md</code></td></tr>
   </tbody>
@@ -2343,12 +2358,16 @@ buildSeg($("pD"), [1, 2, 4], v => v + (v === 1 ? " GPU" : " GPUs"),
 buildSeg($("pB"), pBS, v => String(v), () => PLAN.B, v => { PLAN.B = v; });
 
 /* --------------------------------------------------- the 64 vs 65 dot plot */
+/* The trio run: B=64 bracketed between its two scalar neighbours, so neither
+   comparison can rest on one unlucky odd batch. Four Kaggle accounts, three
+   interleaved repeats each. */
 const PAIR = [
-  {acc: "andrescanamejoy", b64: [22.647, 23.602, 23.836], b65: [12.513, 13.321, 13.330]},
-  {acc: "camilaordonez",   b64: [23.650, 23.770, 23.780], b65: [13.000, 13.210, 13.230]},
-  {acc: "alegriaandres",   b64: [22.720, 22.930, 22.930], b65: [12.620, 12.580, 12.600]},
-  {acc: "alegriacarlos",   b64: [22.610, 22.850, 23.070], b65: [12.290, 12.620, 12.730]},
+  {acc: "camilaordonez",   b63: [15.88, 16.36, 16.38], b64: [23.18, 23.19, 23.19], b65: [12.82, 12.79, 12.78]},
+  {acc: "alegriaandres",   b63: [17.70, 18.00, 18.07], b64: [27.05, 27.11, 27.15], b65: [14.88, 15.00, 15.03]},
+  {acc: "alegriacarlos",   b63: [16.19, 16.42, 16.52], b64: [23.44, 23.52, 23.60], b65: [12.88, 13.01, 13.06]},
+  {acc: "andrescanamejoy", b63: [17.02, 17.22, 17.35], b64: [25.94, 26.06, 26.18], b65: [14.32, 14.45, 14.56]},
 ];
+const ARMS = [["b63", 63, "dn"], ["b64", 64, "up"], ["b65", 65, "accent"]];
 let pairMode = "all", pairUnit = "us";
 const PAIR_SWEEPS = 60000;          // 40 temperatures x 1500 sweeps per cell
 
@@ -2360,8 +2379,8 @@ const conv = (us, B) => pairUnit === "wall" ? toWall(us, B) : us;
 
 function drawPair(){
   const cv = $("pairc"), {g, w, h} = prep(cv, 400);
-  const all = PAIR.flatMap(r => [...r.b64.map(v => conv(v, 64)),
-                                 ...r.b65.map(v => conv(v, 65))]);
+  const all = PAIR.flatMap(r => ARMS.flatMap(
+      ([k, B]) => r[k].map(v => conv(v, B))));
   const lo = 0, hi = Math.ceil(Math.max(...all) * 1.12);
   const m = {l: 56, r: 16, t: 20, b: 58};
   const py = v => m.t + (1 - (v - lo) / (hi - lo)) * (h - m.t - m.b);
@@ -2370,8 +2389,12 @@ function drawPair(){
         ACC = css("--accent"), INK = css("--ink");
   const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
 
-  // the non-overlap band: slowest B=65 up to fastest B=64
-  const hi65 = Math.max(...PAIR.flatMap(r => r.b65.map(v => conv(v, 65))));
+  // the non-overlap band: the slowest scalar cell up to the fastest width-4
+  // one. B=64 clears BOTH neighbours, so the band is drawn against the worse
+  // of the two, which is the harder comparison.
+  const hiLo = Math.max(...PAIR.flatMap(r => [...r.b63.map(v => conv(v, 63)),
+                                              ...r.b65.map(v => conv(v, 65))]));
+  const hi65 = hiLo;
   const lo64 = Math.min(...PAIR.flatMap(r => r.b64.map(v => conv(v, 64))));
   g.fillStyle = MUT; g.globalAlpha = 0.12;
   g.fillRect(m.l, py(lo64), w - m.l - m.r, py(hi65) - py(lo64));
@@ -2395,16 +2418,18 @@ function drawPair(){
     const x0 = m.l + i * colW;
     g.strokeStyle = RULE;
     if (i){ g.beginPath(); g.moveTo(x0, m.t); g.lineTo(x0, h - m.b); g.stroke(); }
-    [["b64", UP, 0.3, 64], ["b65", ACC, 0.7, 65]].forEach(([k, col, frac, B]) => {
+    const COL = {up: UP, accent: ACC, dn: css("--dn")};
+    ARMS.forEach(([k, B, cname], ai) => {
+      const col = COL[cname], frac = 0.22 + ai * 0.28;
       const vals = r[k].map(v => conv(v, B));
       const cx = x0 + colW * frac, mu = mean(vals);
       g.strokeStyle = col; g.lineWidth = 2.4;
-      g.beginPath(); g.moveTo(cx - 20, py(mu)); g.lineTo(cx + 20, py(mu)); g.stroke();
+      g.beginPath(); g.moveTo(cx - 15, py(mu)); g.lineTo(cx + 15, py(mu)); g.stroke();
       if (pairMode === "all"){
         g.fillStyle = col;
         vals.forEach((v, j) => {
           g.beginPath();
-          g.arc(cx + (j - 1) * 7, py(v), 3.6, 0, 7); g.fill();
+          g.arc(cx + (j - 1) * 5, py(v), 3.2, 0, 7); g.fill();
         });
       }
       g.fillStyle = col; g.textAlign = "center"; g.textBaseline = "bottom";
@@ -2415,24 +2440,28 @@ function drawPair(){
     g.fillStyle = MUT; g.textAlign = "center"; g.textBaseline = "top";
     g.font = "10px " + css("--mono") + ", monospace";
     g.fillText(r.acc.slice(0, 15), x0 + colW / 2, h - m.b + 8);
-    // always the per-replica-sweep ratio: the wall ratio would be diluted by
-    // B=65 doing one replica more work
-    const pen = mean(r.b64) / mean(r.b65) - 1;
-    g.fillStyle = UP; g.font = "500 11px " + css("--mono") + ", monospace";
-    g.fillText("+" + (100 * pen).toFixed(1) + "%", x0 + colW / 2, h - m.b + 24);
+    // always per-replica-sweep ratios: a wall ratio would be diluted by the
+    // neighbours carrying a different replica count
+    const p63 = mean(r.b63), p64 = mean(r.b64), p65 = mean(r.b65);
+    g.fillStyle = UP; g.font = "500 10px " + css("--mono") + ", monospace";
+    g.fillText("+" + (100 * (p64 / p63 - 1)).toFixed(0) + "% / +"
+               + (100 * (p64 / p65 - 1)).toFixed(0) + "%",
+               x0 + colW / 2, h - m.b + 24);
   });
 
   g.fillStyle = INK; g.textAlign = "left"; g.textBaseline = "top";
   g.font = "12px " + css("--body") + ", sans-serif";
-  const gapUs = Math.min(...PAIR.flatMap(r => r.b64))
-              / Math.max(...PAIR.flatMap(r => r.b65)) - 1;
+  const worstLow = Math.max(...PAIR.flatMap(r => [...r.b63, ...r.b65]));
+  const gapUs = Math.min(...PAIR.flatMap(r => r.b64)) / worstLow - 1;
   g.fillText("Tesla T4 · 4 cuentas × 3 repeticiones intercaladas · "
-             + "brecha global " + (100 * gapUs).toFixed(1) + "%"
-             + (pairUnit === "wall" ? "  ·  60 000 barridos por celda" : ""),
+             + "B=64 supera a AMBOS vecinos, brecha mínima +"
+             + (100 * gapUs).toFixed(1) + "%"
+             + (pairUnit === "wall" ? "  ·  60 000 barridos/celda" : ""),
              m.l + 6, m.t + 4);
   g.font = "11px " + css("--mono") + ", monospace";
-  g.fillStyle = UP; g.fillText("● B=64, ancho 4", m.l + 6, m.t + 24);
-  g.fillStyle = ACC; g.fillText("● B=65, ancho 1", m.l + 130, m.t + 24);
+  g.fillStyle = css("--dn"); g.fillText("● 63, ancho 1", m.l + 6, m.t + 24);
+  g.fillStyle = UP;          g.fillText("● 64, ancho 4", m.l + 112, m.t + 24);
+  g.fillStyle = ACC;         g.fillText("● 65, ancho 1", m.l + 218, m.t + 24);
 }
 seg("segPair", d => { pairMode = d.p; drawPair(); });
 seg("segUnit", d => { pairUnit = d.u; drawPair(); });
