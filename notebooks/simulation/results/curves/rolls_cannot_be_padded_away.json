@@ -1,0 +1,66 @@
+{
+ "question": "The per-kernel profile says input_concatenate_fusion is 10.6% to 22.1% of GPU time, and those kernels are the six jnp.roll calls in substep, each materialising a full (B,L,N,N,3) copy. At B=64 that is 33 MB written per substep against ~17 MB for the useful work. Can the rolls be replaced by one pad and six static slices?",
+ "design": "x and y wrap and z is zeroed, so the padding is natural: mode='constant' on z then mode='wrap' on y and x, followed by six static slices. Equivalence checked before timing, because this touches the physics engine.",
+ "equivalence": {
+  "result": "BIT-IDENTICAL on all six neighbour arrays, max |roll - pad| = 0.0",
+  "note": "so the two forms are interchangeable and the timing is comparable"
+ },
+ "device": "NVIDIA H100 80GB HBM3",
+ "rows": [
+  {
+   "B": 51,
+   "roll_ms": 0.262,
+   "pad_ms": 0.303,
+   "pad_speedup": -0.135
+  },
+  {
+   "B": 52,
+   "roll_ms": 0.31,
+   "pad_ms": 0.316,
+   "pad_speedup": -0.018
+  },
+  {
+   "B": 63,
+   "roll_ms": 0.325,
+   "pad_ms": 0.322,
+   "pad_speedup": 0.008
+  },
+  {
+   "B": 64,
+   "roll_ms": 0.307,
+   "pad_ms": 0.356,
+   "pad_speedup": -0.136
+  }
+ ],
+ "result": {
+  "mean_speedup": -0.07,
+  "range": [
+   -0.136,
+   0.008
+  ],
+  "verdict": "REFUTED. pad+slice is 7.0% SLOWER on average and never meaningfully faster. XLA lowers the pad to the same kind of materialising op as the roll, so trading six rolls for two pads plus six slices buys nothing and costs a little. This route is closed at the JAX level."
+ },
+ "what_this_leaves": {
+  "closed": [
+   "Replacing the rolls with pad+slice (this experiment).",
+   "Disabling XLA's vectorisation by flag (no xla_gpu flag exists).",
+   "Forcing width 1 by shape at B=64 (v2(64)=6 clears the threshold alone).",
+   "Wave quantisation and buffer-offset conflicts as sawtooth causes (both refuted by arithmetic).",
+   "The reduction emitter as the sawtooth cause -- the reduce kernels never appear in the top-8 of any batch, so the time is not there. This corrects an earlier lead of mine."
+  ]
+ },
+ "remaining_option": {
+  "name": "Pallas",
+  "what": "JAX's kernel language. Write `substep` as an explicit tiled kernel: read neighbours by index with no materialisation, fuse the whole Metropolis step into one launch, and choose the elements-per-thread ourselves instead of inheriting XLA's choice.",
+  "why_it_addresses_both": "It removes the roll traffic AND makes the vector width our decision, which are the two things we have measured and cannot otherwise control.",
+  "scope": "Only `substep` needs porting -- the hot loop. `anneal`, the scan over temperatures, the observables and the ladder stay in JAX.",
+  "head_start": "Experiment 3d already has most of the physics in CUDA: counter-based RNG, the Metropolis acceptance and the uniaxial term, measured flat across B.",
+  "risks": [
+   "Pallas on GPU is less mature than on TPU.",
+   "RNG inside the kernel needs a counter-based scheme, which 3d has.",
+   "Correctness burden: needs the equivalence test this experiment demonstrates, against the JAX substep, bit-identical or within float tolerance."
+  ],
+  "estimate": "days for a first working version, not weeks"
+ },
+ "honest_position": "The mod-4 effect is identified, explained and mitigable for free by choosing B. The broad sawtooth is NOT explained, and every cheap route to it is now closed. Pallas is the only remaining option that addresses it, and it is a real project rather than an experiment."
+}

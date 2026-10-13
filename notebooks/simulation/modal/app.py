@@ -3064,6 +3064,119 @@ def pair_t4(b, r, tag, Rd, L, nt, th, me, seed, label):
     return _pair(b, r, tag, Rd, L, nt, th, me, seed, label)
 
 
+# --------------------------------------------------------------------------
+# Experiment 8: the rolls are 2x the traffic of the computation. Can they go?
+#
+# The per-kernel profile says `input_concatenate_fusion` is 10.6% to 22.1% of
+# GPU time, and those kernels are the six `jnp.roll` calls in `substep`: each
+# one MATERIALISES a full (B, L, N, N, 3) copy to produce a shifted view. At
+# B=64 that is 33 MB written per substep against ~17 MB for the useful work.
+#
+# `jnp.roll` on a non-leading axis lowers to concatenate(slice, slice), which
+# XLA does not fuse into the consumer. The alternative: pad ONCE and take six
+# static slices of that single array. Slices fuse more readily than
+# concatenates, and two pads replace six rolls.
+#
+# The boundary conditions make the padding natural rather than a trick: x and y
+# wrap, z does not and is zeroed, which is exactly `mode="constant"` on z
+# followed by `mode="wrap"` on y and x.
+#
+# EQUIVALENCE IS CHECKED FIRST. This touches the physics engine, so the variant
+# has to produce bit-identical neighbour arrays and an identical substep output
+# for the same key before any timing is believed.
+def _roll_free(batches, repeats, tag, Rd, L, n_temps, n_therm, n_meas):
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N = int(geo["N"])
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={N}  array {12*L*N*N:,} B/replica", flush=True)
+
+    def neigh_roll(sp):
+        """What sim_core does today: six rolls, six materialised copies."""
+        return (jnp.roll(sp, -1, 3), jnp.roll(sp, 1, 3),
+                jnp.roll(sp, -1, 2), jnp.roll(sp, 1, 2),
+                jnp.roll(sp, -1, 1).at[:, -1].set(0.0),
+                jnp.roll(sp, 1, 1).at[:, 0].set(0.0))
+
+    def neigh_pad(sp):
+        """Pad once, slice six times. z is zeroed, y and x wrap."""
+        P = jnp.pad(sp, ((0, 0), (1, 1), (0, 0), (0, 0), (0, 0)))
+        P = jnp.pad(P, ((0, 0), (0, 0), (1, 1), (1, 1), (0, 0)), mode="wrap")
+        return (P[:, 1:-1, 1:-1, 2:, :],  P[:, 1:-1, 1:-1, :-2, :],
+                P[:, 1:-1, 2:, 1:-1, :],  P[:, 1:-1, :-2, 1:-1, :],
+                P[:, 2:, 1:-1, 1:-1, :],  P[:, :-2, 1:-1, 1:-1, :])
+
+    # ---- equivalence, before anything is timed --------------------------
+    sp = S.init_spins(jax.random.PRNGKey(3), geo, 5)
+    a = jax.jit(neigh_roll)(sp)
+    b = jax.jit(neigh_pad)(sp)
+    names = ("x+", "x-", "y+", "y-", "z+", "z-")
+    worst = 0.0
+    for nm, u, v in zip(names, a, b):
+        d = float(jnp.max(jnp.abs(u - v)))
+        worst = max(worst, d)
+        print(f"  neighbour {nm}: max |roll - pad| = {d:.3e}"
+              f"{'  OK' if d == 0.0 else '  MISMATCH'}", flush=True)
+    if worst != 0.0:
+        raise AssertionError(f"the variants differ by {worst:g}; not comparable")
+    print("  -> the two forms are BIT-IDENTICAL on every neighbour\n", flush=True)
+
+    # ---- time the neighbour stage on its own ----------------------------
+    rows = []
+    for B in batches:
+        sp = S.init_spins(jax.random.PRNGKey(11), geo, B)
+        cell = {}
+        for lbl, fn in (("roll", neigh_roll), ("pad", neigh_pad)):
+            f = jax.jit(lambda x, _f=fn: sum(_f(x))).lower(sp).compile()
+            jax.block_until_ready(f(sp))
+            ts = []
+            for _ in range(repeats):
+                t0 = time.perf_counter()
+                jax.block_until_ready(f(sp))
+                ts.append(time.perf_counter() - t0)
+            cell[lbl] = float(np.mean(ts))
+        gain = cell["roll"] / cell["pad"] - 1
+        rows.append(dict(B=int(B), roll_s=cell["roll"], pad_s=cell["pad"],
+                         pad_speedup=gain))
+        print(f"  B={B:4d}  roll {cell['roll']*1e3:8.3f} ms   "
+              f"pad {cell['pad']*1e3:8.3f} ms   "
+              f"pad es {gain:+.1%} {'mas rapido' if gain > 0 else 'mas lento'}",
+              flush=True)
+
+    print("\n=== neighbour stage, roll vs pad+slice ===", flush=True)
+    g = [r["pad_speedup"] for r in rows]
+    print(f"  ganancia media {np.mean(g):+.1%}  "
+          f"(min {min(g):+.1%}, max {max(g):+.1%})", flush=True)
+    print("  Si la ganancia es grande, vale reescribir substep; si es nula, "
+          "XLA baja el pad a concatenate igual que el roll y hay que ir a "
+          "Pallas para controlarlo.", flush=True)
+    res = dict(rows=rows, equivalence="bit-identical on all six neighbours",
+               Rd=float(Rd), L=int(L), N=N, repeats=repeats,
+               device=device_identity())
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", **_BS)
+def roll_free_h100(b, r, tag, Rd, L, nt, th, me):
+    return _roll_free(b, r, tag, Rd, L, nt, th, me)
+
+
+@app.local_entrypoint()
+def roll_free(batches: str = "51,52,63,64", repeats: int = 3, rd: float = 18.30,
+              layers: int = 5, n_temps: int = 20, n_therm: int = 500,
+              n_meas: int = 250, tag: str = "exp8_rollfree"):
+    """Experiment 8: can the six materialising rolls be replaced?"""
+    roll_free_h100.remote([int(x) for x in batches.split(",") if x], repeats,
+                          tag, rd, layers, n_temps, n_therm, n_meas)
+
+
 @app.function(image=image, cpu=2.0, timeout=600)
 def xla_flag_list():
     """Dump every XLA flag the installed build exposes, and filter it.
