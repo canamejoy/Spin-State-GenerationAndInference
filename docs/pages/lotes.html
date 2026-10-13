@@ -1019,6 +1019,36 @@ memoria</em>. La prueba de que no es trabajo de organización es que
 rápida de las seis</b> (4.60 µs contra 8.41 del ancho 1). Si organizar de a
 cuatro costara, esa también sería lenta.</div>
 
+<div class="answer">
+  <p><b>Cómo encajan las dos cosas.</b> Son dos kernels distintos y manda
+  alguien distinto en cada uno:</p>
+</div>
+
+<div class="tw"><table>
+  <thead><tr><th>kernel</th><th>quién elige el ancho</th><th>qué sabemos</th></tr></thead>
+  <tbody>
+    <tr><td>El <b>escrito a mano</b> (CUDA, experimento 3b)</td>
+        <td>nosotros, en el código</td>
+        <td class="win">con ancho 1 el castigo <b>desaparece</b> y los tiempos
+            se estandarizan</td></tr>
+    <tr><td>El <b>real</b> (JAX / XLA, el que usa la simulación)</td>
+        <td><b>XLA</b>, a partir de la forma del arreglo</td>
+        <td class="bad">no hay flag que lo cambie, ni forma de forzarlo en
+            <code>B</code> = 64</td></tr>
+  </tbody>
+</table></div>
+
+<p>Así que el diagnóstico está completo —<b>sabemos cuál sería el arreglo</b>— y
+no lo podemos aplicar en el kernel real. Lo único que nos queda es
+<b>elegir <code>B</code> para que XLA nunca escoja el ancho 4</b>.</p>
+
+<div class="note"><strong>Y por eso la regla importa.</strong> Si existiera un
+flag para apagar la vectorización, no habría regla que encontrar: se apagaba y
+listo. Que la decisión sea del compilador y <em>no sea configurable</em> es
+exactamente la razón por la que vale la pena saber <b>cuándo</b> la toma — que es
+<code>v₂(B) + v₂(L) ≥ 2</code>, y es lo único sobre lo que sí tenemos
+control.</div>
+
 <h3 id="calc">La calculadora del ancho</h3>
 <p>Elegí réplicas y capas y la fórmula te dice qué va a hacer el compilador.
 La tira de abajo muestra la ventana completa de 48 a 72, para ver el patrón que
