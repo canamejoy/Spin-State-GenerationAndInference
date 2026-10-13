@@ -169,11 +169,48 @@ que la misma simulación, con el mismo resultado, <b>tarda más tiempo de GPU y 
 lo tanto cuesta más plata</b>.</p>
 
 <p>La unidad que usamos en toda la página es <b>microsegundos por
-réplica-barrido</b>: cuánto tiempo de GPU consume una réplica para completar un
-barrido de la red. Así los números se comparan entre lotes de tamaños distintos.
-Cuando decimos «+14 % de castigo» queremos decir que esa celda consume 14 % más
-microsegundos por el mismo trabajo. Sobre una corrida de producción eso son horas
-y dólares, no milisegundos.</p>
+réplica-barrido</b>: el tiempo de GPU que consume <em>una</em> réplica para
+completar <em>un</em> barrido de la red. Está normalizada por las dos cosas, y
+eso es lo que permite comparar lotes de tamaños distintos — pero también hace
+que el número suene diminuto. Para volver al reloj hay que multiplicar por
+<b>las dos</b>:</p>
+
+<p style="text-align:center;font-size:1.05rem"><code>tiempo = µs × réplicas ×
+barridos / 10⁶</code></p>
+
+<p>El factor que se escapa es el <b>número de barridos</b>, que acá son
+<b class="n">60 000</b> por celda (40 temperaturas × 1500 barridos). Con eso, los
+20 µs de una T4 no son 1.2 milisegundos: son un minuto y medio.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>caso</th><th>µs por réplica-barrido</th><th>× réplicas</th>
+    <th>× barridos</th><th>reloj real</th></tr></thead>
+  <tbody>
+    <tr><td>T4, <code>B</code> = 64</td><td class="n">23.200</td>
+        <td class="n">64</td><td class="n">60 000</td>
+        <td class="bad n">89.1 s</td></tr>
+    <tr><td>T4, <code>B</code> = 65</td><td class="n">12.837</td>
+        <td class="n">65</td><td class="n">60 000</td>
+        <td class="win n">50.1 s</td></tr>
+    <tr><td>H100, <code>B</code> = 64</td><td class="n">2.538</td>
+        <td class="n">64</td><td class="n">60 000</td>
+        <td class="n">9.7 s</td></tr>
+  </tbody>
+</table></div>
+
+<p>Así que el «+80 %» de la T4 son <b class="n">39 segundos de diferencia en una
+sola celda</b> — y encima el caso rápido hace <em>más</em> trabajo, 65 réplicas
+contra 64. Y una corrida de producción no son 60 000 barridos sino
+<b class="n">4 000 000</b> (200 temperaturas × 20 000), donde esos mismos dos
+lotes se separan <b class="n">1.65 h contra 0.93 h</b> de GPU:
+<b>43 minutos regalados por una réplica.</b></p>
+
+<div class="note"><strong>Por qué no reportamos solo el reloj.</strong> Porque el
+reloj mezcla dos cosas: cuántas réplicas hay y cuánto cuesta cada una. Un lote de
+1024 réplicas tarda más que uno de 10 <em>y es mucho más eficiente</em>. Los
+microsegundos por réplica-barrido aíslan la eficiencia, que es la variable que
+estamos estudiando; el reloj aparece al lado para que el número signifique
+algo.</div>
 
 <h3 id="quev2">Y <code>v₂</code> es «cuántas veces entra el 2»</h3>
 <p>Cualquier número entero se puede escribir, de una sola manera, como
@@ -1059,6 +1096,12 @@ posible.</p>
         <button data-p="means" aria-pressed="false">solo las medias</button>
       </div>
     </div>
+    <div class="ctl"><span>Unidad</span>
+      <div class="seg" id="segUnit" role="group" aria-label="Unidad del eje">
+        <button data-u="us" aria-pressed="true">µs por réplica-barrido</button>
+        <button data-u="wall" aria-pressed="false">segundos de reloj</button>
+      </div>
+    </div>
   </div>
   <canvas id="pairc" width="900" height="400"
     aria-label="Costo por réplica-barrido en B=64 y B=65, cuatro cuentas de Kaggle, tres repeticiones cada una"></canvas>
@@ -1068,23 +1111,42 @@ posible.</p>
   <code>B</code> = 64 más rápido: <b>no hay una sola medición dentro</b>.</p>
 </div>
 
+<p>En reloj real, que es lo que se siente: cada celda son 60 000 barridos, así
+que <code>B</code> = 64 tarda <b class="n">89 segundos</b> y
+<code>B</code> = 65 tarda <b class="n">50</b> — con una réplica <em>más</em> de
+trabajo.</p>
+
 <div class="tw"><table>
-  <thead><tr><th>cuenta</th><th><code>B</code> = 64 · media</th>
-    <th><code>B</code> = 65 · media</th><th>castigo</th><th>traslape</th></tr></thead>
+  <thead><tr><th rowspan="2">cuenta</th>
+    <th colspan="2"><code>B</code> = 64 · ancho 4</th>
+    <th colspan="2"><code>B</code> = 65 · ancho 1</th>
+    <th rowspan="2">castigo</th><th rowspan="2">traslape</th></tr>
+    <tr><th>µs/rép-barrido</th><th>reloj</th>
+        <th>µs/rép-barrido</th><th>reloj</th></tr></thead>
   <tbody>
-    <tr><td>andrescanamejoy</td><td class="n">23.361</td><td class="n">13.054</td>
+    <tr><td>andrescanamejoy</td><td class="n">23.361</td><td class="bad n">89.7 s</td>
+        <td class="n">13.054</td><td class="win n">50.9 s</td>
         <td class="bad">+79.0 %</td><td class="win">ninguno</td></tr>
-    <tr><td>camilaordonez</td><td class="n">23.733</td><td class="n">13.147</td>
+    <tr><td>camilaordonez</td><td class="n">23.733</td><td class="bad n">91.1 s</td>
+        <td class="n">13.147</td><td class="win n">51.3 s</td>
         <td class="bad">+80.5 %</td><td class="win">ninguno</td></tr>
-    <tr><td>alegriaandres</td><td class="n">22.863</td><td class="n">12.602</td>
+    <tr><td>alegriaandres</td><td class="n">22.863</td><td class="bad n">87.8 s</td>
+        <td class="n">12.602</td><td class="win n">49.1 s</td>
         <td class="bad">+81.4 %</td><td class="win">ninguno</td></tr>
-    <tr><td>alegriacarlos</td><td class="n">22.841</td><td class="n">12.545</td>
+    <tr><td>alegriacarlos</td><td class="n">22.841</td><td class="bad n">87.7 s</td>
+        <td class="n">12.545</td><td class="win n">48.9 s</td>
         <td class="bad">+82.1 %</td><td class="win">ninguno</td></tr>
     <tr class="best"><td><b>agregado · 24 medidas</b></td>
-        <td class="n">23.200 ± 0.465</td><td class="n">12.837 ± 0.345</td>
+        <td class="n">23.200 ± 0.465</td><td class="bad n"><b>89.1 s</b></td>
+        <td class="n">12.837 ± 0.345</td><td class="win n"><b>50.1 s</b></td>
         <td class="bad"><b>+80.7 %</b></td><td class="win"><b>ninguno</b></td></tr>
   </tbody>
 </table></div>
+
+<p>Son <b class="n">39 segundos</b> de diferencia por celda. Sobre una corrida
+de producción (200 temperaturas × 20 000 barridos) esos mismos dos lotes se
+separan <b class="n">1.65 horas contra 0.93 horas</b> de GPU — <b>43 minutos
+regalados por una réplica.</b></p>
 
 <p>Los cuatro castigos caben en <b class="n">3.1 puntos porcentuales</b>
 (+79.0 % a +82.1 %). Globalmente, el <code>B</code> = 65 más lento de las 24
@@ -2208,11 +2270,19 @@ const PAIR = [
   {acc: "alegriaandres",   b64: [22.720, 22.930, 22.930], b65: [12.620, 12.580, 12.600]},
   {acc: "alegriacarlos",   b64: [22.610, 22.850, 23.070], b65: [12.290, 12.620, 12.730]},
 ];
-let pairMode = "all";
+let pairMode = "all", pairUnit = "us";
+const PAIR_SWEEPS = 60000;          // 40 temperatures x 1500 sweeps per cell
+
+/* us per replica-sweep -> seconds of wall clock for that cell. The conversion
+   needs BOTH the replica count and the sweep count, which is exactly the factor
+   that makes the microsecond figure look impossibly small. */
+const toWall = (us, B) => us * B * PAIR_SWEEPS / 1e6;
+const conv = (us, B) => pairUnit === "wall" ? toWall(us, B) : us;
 
 function drawPair(){
   const cv = $("pairc"), {g, w, h} = prep(cv, 400);
-  const all = PAIR.flatMap(r => [...r.b64, ...r.b65]);
+  const all = PAIR.flatMap(r => [...r.b64.map(v => conv(v, 64)),
+                                 ...r.b65.map(v => conv(v, 65))]);
   const lo = 0, hi = Math.ceil(Math.max(...all) * 1.12);
   const m = {l: 56, r: 16, t: 20, b: 58};
   const py = v => m.t + (1 - (v - lo) / (hi - lo)) * (h - m.t - m.b);
@@ -2222,8 +2292,8 @@ function drawPair(){
   const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
 
   // the non-overlap band: slowest B=65 up to fastest B=64
-  const hi65 = Math.max(...PAIR.flatMap(r => r.b65));
-  const lo64 = Math.min(...PAIR.flatMap(r => r.b64));
+  const hi65 = Math.max(...PAIR.flatMap(r => r.b65.map(v => conv(v, 65))));
+  const lo64 = Math.min(...PAIR.flatMap(r => r.b64.map(v => conv(v, 64))));
   g.fillStyle = MUT; g.globalAlpha = 0.12;
   g.fillRect(m.l, py(lo64), w - m.l - m.r, py(hi65) - py(lo64));
   g.globalAlpha = 1;
@@ -2231,36 +2301,43 @@ function drawPair(){
   g.font = "11px " + css("--mono") + ", monospace";
   g.strokeStyle = RULE; g.lineWidth = 1;
   g.fillStyle = MUT; g.textAlign = "right"; g.textBaseline = "middle";
-  for (let v = 0; v <= hi; v += 5){
+  const step = pairUnit === "wall" ? 20 : 5;
+  for (let v = 0; v <= hi; v += step){
     g.beginPath(); g.moveTo(m.l, py(v)); g.lineTo(w - m.r, py(v)); g.stroke();
     g.fillText(String(v), m.l - 8, py(v));
   }
   g.save(); g.translate(14, (h - m.b + m.t) / 2); g.rotate(-Math.PI / 2);
   g.textAlign = "center"; g.textBaseline = "top";
-  g.fillText("µs por réplica-barrido", 0, 0); g.restore();
+  g.fillText(pairUnit === "wall" ? "segundos de reloj por celda"
+                                 : "µs por réplica-barrido", 0, 0);
+  g.restore();
 
   PAIR.forEach((r, i) => {
     const x0 = m.l + i * colW;
     g.strokeStyle = RULE;
     if (i){ g.beginPath(); g.moveTo(x0, m.t); g.lineTo(x0, h - m.b); g.stroke(); }
-    [["b64", UP, 0.3], ["b65", ACC, 0.7]].forEach(([k, col, frac]) => {
-      const cx = x0 + colW * frac, mu = mean(r[k]);
+    [["b64", UP, 0.3, 64], ["b65", ACC, 0.7, 65]].forEach(([k, col, frac, B]) => {
+      const vals = r[k].map(v => conv(v, B));
+      const cx = x0 + colW * frac, mu = mean(vals);
       g.strokeStyle = col; g.lineWidth = 2.4;
       g.beginPath(); g.moveTo(cx - 20, py(mu)); g.lineTo(cx + 20, py(mu)); g.stroke();
       if (pairMode === "all"){
         g.fillStyle = col;
-        r[k].forEach((v, j) => {
+        vals.forEach((v, j) => {
           g.beginPath();
           g.arc(cx + (j - 1) * 7, py(v), 3.6, 0, 7); g.fill();
         });
       }
       g.fillStyle = col; g.textAlign = "center"; g.textBaseline = "bottom";
       g.font = "500 11px " + css("--mono") + ", monospace";
-      g.fillText(mu.toFixed(2), cx, py(mu) - 8);
+      g.fillText(pairUnit === "wall" ? mu.toFixed(1) + " s" : mu.toFixed(2),
+                 cx, py(mu) - 8);
     });
     g.fillStyle = MUT; g.textAlign = "center"; g.textBaseline = "top";
     g.font = "10px " + css("--mono") + ", monospace";
     g.fillText(r.acc.slice(0, 15), x0 + colW / 2, h - m.b + 8);
+    // always the per-replica-sweep ratio: the wall ratio would be diluted by
+    // B=65 doing one replica more work
     const pen = mean(r.b64) / mean(r.b65) - 1;
     g.fillStyle = UP; g.font = "500 11px " + css("--mono") + ", monospace";
     g.fillText("+" + (100 * pen).toFixed(1) + "%", x0 + colW / 2, h - m.b + 24);
@@ -2268,14 +2345,18 @@ function drawPair(){
 
   g.fillStyle = INK; g.textAlign = "left"; g.textBaseline = "top";
   g.font = "12px " + css("--body") + ", sans-serif";
+  const gapUs = Math.min(...PAIR.flatMap(r => r.b64))
+              / Math.max(...PAIR.flatMap(r => r.b65)) - 1;
   g.fillText("Tesla T4 · 4 cuentas × 3 repeticiones intercaladas · "
-             + "brecha global " + (100 * (lo64 / hi65 - 1)).toFixed(1) + "%",
+             + "brecha global " + (100 * gapUs).toFixed(1) + "%"
+             + (pairUnit === "wall" ? "  ·  60 000 barridos por celda" : ""),
              m.l + 6, m.t + 4);
   g.font = "11px " + css("--mono") + ", monospace";
   g.fillStyle = UP; g.fillText("● B=64, ancho 4", m.l + 6, m.t + 24);
   g.fillStyle = ACC; g.fillText("● B=65, ancho 1", m.l + 130, m.t + 24);
 }
 seg("segPair", d => { pairMode = d.p; drawPair(); });
+seg("segUnit", d => { pairUnit = d.u; drawPair(); });
 
 /* ------------------------------------------------------------------ startup */
 function redrawAll(){ drawCurve(); drawWindow(); syncGeometry(); drawPair(); }
