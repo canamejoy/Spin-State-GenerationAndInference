@@ -155,9 +155,14 @@ y la regla que sí quedó demostrada.</p>
   <p class="eq">v₂(B) + v₂(L) ≥ 2 &nbsp;⟹&nbsp; castigo</p>
   <p style="color:var(--muted);font-size:.93rem"><code>B</code> son las réplicas
   por GPU, <code>L</code> el número de capas, y <code>v₂(n)</code> cuenta cuántas
-  veces <code>n</code> es divisible por dos. La consecuencia útil cabe en una
-  frase: <b>elegí un número de capas divisible por cuatro y el tamaño del lote
-  deja de importar.</b></p>
+  veces <code>n</code> es divisible por dos. La consecuencia útil:
+  <b>con un número impar de capas, evitá los lotes múltiplos de cuatro</b> — ahí
+  están las celdas más baratas.</p>
+  <p style="color:var(--muted);font-size:.93rem"><b>Cuidado con una confusión
+  fácil:</b> lo que dispara el castigo es que <b><code>B</code></b> sea múltiplo
+  de cuatro. Que <b><code>L</code></b> lo sea hace lo contrario — vuelve la red
+  <em>indiferente</em> al lote, pero <a href="#solucion">pagando el costo alto
+  en todas las celdas</a>. No son la misma variable y no hacen lo mismo.</p>
 </div>
 
 <h2 id="palabras">Dos palabras, antes de empezar</h2>
@@ -1356,18 +1361,49 @@ emitido depende del destino.</div>
 
 <h2 id="solucion">12 · La solución</h2>
 
+<h3>Primero, una distinción que es fácil confundir</h3>
+<p>La condición es sobre una <b>suma</b>, <code>v₂(B) + v₂(L) ≥ 2</code>, y las
+dos variables entran igual pero <b>se eligen distinto</b>. Eso hace que «múltiplo
+de cuatro» signifique cosas opuestas según de qué hable:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>si es múltiplo de 4…</th><th>qué pasa</th><th>por qué</th></tr></thead>
+  <tbody>
+    <tr><td><b><code>B</code></b>, las réplicas</td>
+        <td class="bad"><b>dispara el castigo</b></td>
+        <td><code>v₂(B) ≥ 2</code> por sí solo llega al umbral, así que esas
+            celdas son las caras y sus vecinas no</td></tr>
+    <tr><td><b><code>L</code></b>, las capas</td>
+        <td class="n">vuelve la red <b>indiferente</b> al lote</td>
+        <td><code>v₂(L) ≥ 2</code> hace que la suma supere el umbral
+            <em>con cualquier <code>B</code></em>, así que ya no hay celdas
+            baratas de las que caerse</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Y por eso «inmune» no quiere decir «barato».</strong>
+Con <code>L</code> múltiplo de cuatro el costo alto <b>se paga en todas las
+celdas</b>. Lo que ganás no es velocidad: es que ningún lote sea peor que su
+vecino, o sea <b>previsibilidad</b>. Si tu intuición era que múltiplo de cuatro
+debería ser lo <em>malo</em>, tenías razón — lo es, cuando se trata de
+<code>B</code>.</div>
+
+<h3>La recomendación, en orden</h3>
 <div class="answer">
-  <p><b>Elegí un número de capas divisible por cuatro.</b> Con eso
-  <code>v₂(L) ≥ 2</code>, la condición se cumple en <em>todo</em> <code>B</code>,
-  y el tamaño del lote deja de ser un riesgo. No es que el castigo desaparezca:
-  es que <b>ya está pagado en todas las celdas</b>, así que ningún lote es peor
-  que su vecino por este motivo.</p>
-  <p>Si la física fija las capas, calculá <code>v₂(B) + v₂(L)</code> y
-  mantenelo <b>por debajo de 2</b>:</p>
+  <p><b>1 · Si podés elegir <code>B</code>:</b> usá un número <b>impar</b> de
+  capas y mantené <code>v₂(B) + v₂(L) &lt; 2</code>. Con <code>L</code> impar eso
+  es simplemente <b>evitar los múltiplos de cuatro</b>. Ahí están las celdas más
+  baratas de todas.</p>
+  <p><b>2 · Si <code>B</code> no está en tus manos</b> —te lo fija el total de
+  réplicas, o el reparto entre GPUs— entonces sí elegí <b><code>L</code>
+  divisible por cuatro</b>, y preferentemente en una GPU de alto ancho de banda,
+  donde la prima es chica. Cambiás un costo alto pero <em>parejo</em> por el
+  riesgo de caer en una celda cara sin darte cuenta.</p>
 </div>
 
-<div class="note bad"><strong>Y la inmunidad no es gratis — es un seguro, con
-una prima que depende del dispositivo.</strong> La inmunidad consiste en pagar
+<p>Las dos opciones, con la tabla de <code>v₂(B) + v₂(L)</code> explícita:</p>
+
+<div class="note warn"><strong>Cuánto cuesta ese seguro, con número.</strong> La inmunidad consiste en pagar
 ancho 4 en <em>todas</em> las celdas, y el ancho 4 es justamente lo que más duele
 en una tarjeta con poco ancho de banda. Con las huellas emparejadas al 0.1 %:</div>
 
