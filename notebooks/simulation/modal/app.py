@@ -1723,6 +1723,11 @@ def _fcurve(batches, repeats, n_temps, n_therm, n_meas, tag,
 
 LATTICES = [(18.30, 5), (15.00, 3), (7.50, 12)]   # v2(stride) = 2, 2, 4
 
+# Just the reference lattice, for using the known-good harness as a control
+# against a new one. `_stride_disc` is the code path that produced +12.1% and
+# +14.2%, so running it alone isolates the harness from the effect.
+REF_ONLY = [(18.30, 5)]
+
 
 def _stride_disc(lattices, batches, repeats, n_temps, n_therm, n_meas, tag):
     import sys, json, time
@@ -3096,7 +3101,7 @@ def stride_discriminator(batches: str = "51,52,53,59,60,61,63,64,65",
           "t4": stride_disc_t4}[device.lower()]
     lat = {"control": LATTICES, "sweep": STRIDE_SWEEP,
            "sweepbig": STRIDE_SWEEP_BIG, "parity": PARITY_SWEEP,
-           "geompair": GEOM_PAIR}[lattices.lower()]
+           "geompair": GEOM_PAIR, "ref": REF_ONLY}[lattices.lower()]
     fn.remote(lat, bl, repeats, n_temps, n_therm, n_meas, tag)
 
 

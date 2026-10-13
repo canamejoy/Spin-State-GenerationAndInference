@@ -242,6 +242,7 @@ decorativa: es la variable que resultó controlar el efecto.</div>
   <li><a href="#causa">9 · La causa</a></li>
   <li class="sub"><a href="#calc">La calculadora del ancho</a></li>
   <li><a href="#falsable">10 · La prueba que podía matarla</a></li>
+  <li class="sub"><a href="#pair">64 contra 65, la prueba más simple</a></li>
   <li><a href="#gpus">11 · ¿Funciona en cualquier GPU?</a></li>
   <li><a href="#solucion">12 · La solución</a></li>
   <li><a href="#grados">13 · Los cinco grados de libertad</a></li>
@@ -1024,6 +1025,113 @@ Partir por <code>B % 4</code> en esta geometría da +10.2 % <em>con traslape</em
 clasifica mal. Partir por el ancho predicho da +14.7 % sin traslape, 8 de 8. La
 regla de los múltiplos de cuatro funcionaba porque todo lo medido antes tenía un
 número impar de capas, donde las dos particiones coinciden.</div>
+
+<h3 id="pair">La demostración más simple: 64 contra 65</h3>
+<p>Todo lo anterior son ventanas, promedios y particiones. El experimento más
+chico que muestra la regla es un par de lotes separados por <b>una réplica</b>.
+Con cinco capas:</p>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>v₂(L)</th><th>v₂(B)</th><th>v₂(elementos)</th>
+    <th>ancho</th><th>predicción</th></tr></thead>
+  <tbody>
+    <tr><td><b><code>B</code> = 64</b></td><td class="n">0</td><td class="n">6</td>
+        <td class="n">6</td><td class="bad n">4</td><td class="bad">castigo</td></tr>
+    <tr><td><b><code>B</code> = 65</b></td><td class="n">0</td><td class="n">0</td>
+        <td class="n">0</td><td class="win n">1</td><td class="win">libre</td></tr>
+  </tbody>
+</table></div>
+
+<p>Se corrió en <b>cuatro cuentas de Kaggle a la vez</b>, cada una en su propia
+T4 física y su propia sesión, con <b>tres repeticiones intercaladas</b>
+(64, 65, 64, 65, …) para que una GPU que se calienta no cargue la deriva sobre un
+solo brazo. El código es <b>idéntico</b> en todas: <code>sim_core.py</code> y
+<code>pair_test.py</code> van embebidos en el notebook con su SHA-256
+verificado byte a byte contra el repositorio, así que no hay reimplementación
+posible.</p>
+
+<div class="curvebox">
+  <div class="controls" style="margin-bottom:12px">
+    <div class="ctl"><span>Mostrar</span>
+      <div class="seg" id="segPair" role="group" aria-label="Qué mostrar">
+        <button data-p="all" aria-pressed="true">las 24 medidas</button>
+        <button data-p="means" aria-pressed="false">solo las medias</button>
+      </div>
+    </div>
+  </div>
+  <canvas id="pairc" width="900" height="400"
+    aria-label="Costo por réplica-barrido en B=64 y B=65, cuatro cuentas de Kaggle, tres repeticiones cada una"></canvas>
+  <p class="curvecap">Cada punto es una medición. <b>Rojo</b> es
+  <code>B</code> = 64 (ancho 4), <b>verde</b> es <code>B</code> = 65 (ancho 1).
+  La banda gris marca la brecha entre el <code>B</code> = 65 más lento y el
+  <code>B</code> = 64 más rápido: <b>no hay una sola medición dentro</b>.</p>
+</div>
+
+<div class="tw"><table>
+  <thead><tr><th>cuenta</th><th><code>B</code> = 64 · media</th>
+    <th><code>B</code> = 65 · media</th><th>castigo</th><th>traslape</th></tr></thead>
+  <tbody>
+    <tr><td>andrescanamejoy</td><td class="n">23.361</td><td class="n">13.054</td>
+        <td class="bad">+79.0 %</td><td class="win">ninguno</td></tr>
+    <tr><td>camilaordonez</td><td class="n">23.733</td><td class="n">13.147</td>
+        <td class="bad">+80.5 %</td><td class="win">ninguno</td></tr>
+    <tr><td>alegriaandres</td><td class="n">22.863</td><td class="n">12.602</td>
+        <td class="bad">+81.4 %</td><td class="win">ninguno</td></tr>
+    <tr><td>alegriacarlos</td><td class="n">22.841</td><td class="n">12.545</td>
+        <td class="bad">+82.1 %</td><td class="win">ninguno</td></tr>
+    <tr class="best"><td><b>agregado · 24 medidas</b></td>
+        <td class="n">23.200 ± 0.465</td><td class="n">12.837 ± 0.345</td>
+        <td class="bad"><b>+80.7 %</b></td><td class="win"><b>ninguno</b></td></tr>
+  </tbody>
+</table></div>
+
+<p>Los cuatro castigos caben en <b class="n">3.1 puntos porcentuales</b>
+(+79.0 % a +82.1 %). Globalmente, el <code>B</code> = 65 más lento de las 24
+medidas (13.330 µs) sigue <b class="n">69.6 %</b> por debajo del
+<code>B</code> = 64 más rápido (22.607 µs). <b>Una réplica de diferencia, el
+costo casi se duplica, y se repite en cuatro dispositivos independientes.</b></p>
+
+<div class="note warn"><strong>Pero este par no sirve igual en todos los
+dispositivos, y el control lo explica.</strong> El mismo experimento en
+<b>H100</b>, también tres veces en tres GPUs físicas distintas, dio apenas
+<b class="n">+1.5 %, +1.8 % y +2.5 %</b>, con traslape. Las tres concuerdan
+entre sí, así que no es ruido. Corrimos entonces un control con el arnés que
+había producido el +12.1 %, sobre cuatro lotes contiguos y tres
+repeticiones.</div>
+
+<div class="tw"><table>
+  <thead><tr><th>H100 · <code>B</code></th><th class="n">63</th><th class="n">64</th>
+    <th class="n">65</th><th class="n">66</th></tr></thead>
+  <tbody>
+    <tr><td>ancho</td><td class="n">1</td><td class="bad n">4</td><td class="n">1</td>
+        <td class="n">2</td></tr>
+    <tr><td>µs</td><td class="win n">2.216</td><td class="bad n">2.538</td>
+        <td class="n">2.438</td><td class="n">2.326</td></tr>
+  </tbody>
+</table></div>
+
+<p>El arnés está bien: <code>B</code> = 63 da 2.216 contra 2.2121 de la medición
+vieja (+0.18 %) y <code>B</code> = 64 da 2.538 contra 2.5354 (+0.10 %).
+<b>El problema es que <code>B</code> = 65 es genuinamente lento en esa GPU</b>:
+2.438 contra 2.216 de <code>B</code> = 63, un <b class="n">+10 %</b> entre dos
+lotes <em>del mismo ancho</em>. Eso no lo explica la regla — es el dentado ancho,
+el que <a href="#abierto">sigue sin mecanismo</a>.</p>
+
+<p>Y cambia todo el contraste del par:</p>
+<ul>
+  <li><code>B</code> = 64 contra <b>63</b>: <b class="n">+14.5 %</b> — el par que
+  había que elegir en una H100.</li>
+  <li><code>B</code> = 64 contra <b>65</b>: <b class="n">+4.1 %</b> — el que
+  elegimos, que <b>subestima el efecto 3.5 veces</b>.</li>
+</ul>
+
+<div class="note"><strong>La lección metodológica, que es el saldo honesto de
+este experimento.</strong> Un par aislado es <em>débil</em>: funciona cuando el
+efecto domina la ondulación de fondo —la T4 con su +80 %— y falla cuando no. En
+una H100 el mismo par mide +4.1 % o +14.5 % según con qué impar lo compares, y
+la diferencia no es el efecto: es el dentado ancho. Por eso las mediciones
+serias de esta página son <b>ventanas densas contiguas</b> de 8 a 17 lotes, y
+el +12.1 % de la H100 es un promedio de ventana, no un par.</div>
 
 <h2 id="gpus">11 · ¿Funciona en cualquier GPU?</h2>
 <p>Esta es la pregunta correcta y la respuesta honesta tiene dos mitades, porque
@@ -1954,9 +2062,86 @@ buildSeg($("pD"), [1, 2, 4], v => v + (v === 1 ? " GPU" : " GPUs"),
          () => PLAN.D, v => { PLAN.D = v; });
 buildSeg($("pB"), pBS, v => String(v), () => PLAN.B, v => { PLAN.B = v; });
 
+/* --------------------------------------------------- the 64 vs 65 dot plot */
+const PAIR = [
+  {acc: "andrescanamejoy", b64: [22.647, 23.602, 23.836], b65: [12.513, 13.321, 13.330]},
+  {acc: "camilaordonez",   b64: [23.650, 23.770, 23.780], b65: [13.000, 13.210, 13.230]},
+  {acc: "alegriaandres",   b64: [22.720, 22.930, 22.930], b65: [12.620, 12.580, 12.600]},
+  {acc: "alegriacarlos",   b64: [22.610, 22.850, 23.070], b65: [12.290, 12.620, 12.730]},
+];
+let pairMode = "all";
+
+function drawPair(){
+  const cv = $("pairc"), {g, w, h} = prep(cv, 400);
+  const all = PAIR.flatMap(r => [...r.b64, ...r.b65]);
+  const lo = 0, hi = Math.ceil(Math.max(...all) * 1.12);
+  const m = {l: 56, r: 16, t: 20, b: 58};
+  const py = v => m.t + (1 - (v - lo) / (hi - lo)) * (h - m.t - m.b);
+  const colW = (w - m.l - m.r) / PAIR.length;
+  const MUT = css("--muted"), RULE = css("--rule"), UP = css("--up"),
+        ACC = css("--accent"), INK = css("--ink");
+  const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+
+  // the non-overlap band: slowest B=65 up to fastest B=64
+  const hi65 = Math.max(...PAIR.flatMap(r => r.b65));
+  const lo64 = Math.min(...PAIR.flatMap(r => r.b64));
+  g.fillStyle = MUT; g.globalAlpha = 0.12;
+  g.fillRect(m.l, py(lo64), w - m.l - m.r, py(hi65) - py(lo64));
+  g.globalAlpha = 1;
+
+  g.font = "11px " + css("--mono") + ", monospace";
+  g.strokeStyle = RULE; g.lineWidth = 1;
+  g.fillStyle = MUT; g.textAlign = "right"; g.textBaseline = "middle";
+  for (let v = 0; v <= hi; v += 5){
+    g.beginPath(); g.moveTo(m.l, py(v)); g.lineTo(w - m.r, py(v)); g.stroke();
+    g.fillText(String(v), m.l - 8, py(v));
+  }
+  g.save(); g.translate(14, (h - m.b + m.t) / 2); g.rotate(-Math.PI / 2);
+  g.textAlign = "center"; g.textBaseline = "top";
+  g.fillText("µs por réplica-barrido", 0, 0); g.restore();
+
+  PAIR.forEach((r, i) => {
+    const x0 = m.l + i * colW;
+    g.strokeStyle = RULE;
+    if (i){ g.beginPath(); g.moveTo(x0, m.t); g.lineTo(x0, h - m.b); g.stroke(); }
+    [["b64", UP, 0.3], ["b65", ACC, 0.7]].forEach(([k, col, frac]) => {
+      const cx = x0 + colW * frac, mu = mean(r[k]);
+      g.strokeStyle = col; g.lineWidth = 2.4;
+      g.beginPath(); g.moveTo(cx - 20, py(mu)); g.lineTo(cx + 20, py(mu)); g.stroke();
+      if (pairMode === "all"){
+        g.fillStyle = col;
+        r[k].forEach((v, j) => {
+          g.beginPath();
+          g.arc(cx + (j - 1) * 7, py(v), 3.6, 0, 7); g.fill();
+        });
+      }
+      g.fillStyle = col; g.textAlign = "center"; g.textBaseline = "bottom";
+      g.font = "500 11px " + css("--mono") + ", monospace";
+      g.fillText(mu.toFixed(2), cx, py(mu) - 8);
+    });
+    g.fillStyle = MUT; g.textAlign = "center"; g.textBaseline = "top";
+    g.font = "10px " + css("--mono") + ", monospace";
+    g.fillText(r.acc.slice(0, 15), x0 + colW / 2, h - m.b + 8);
+    const pen = mean(r.b64) / mean(r.b65) - 1;
+    g.fillStyle = UP; g.font = "500 11px " + css("--mono") + ", monospace";
+    g.fillText("+" + (100 * pen).toFixed(1) + "%", x0 + colW / 2, h - m.b + 24);
+  });
+
+  g.fillStyle = INK; g.textAlign = "left"; g.textBaseline = "top";
+  g.font = "12px " + css("--body") + ", sans-serif";
+  g.fillText("Tesla T4 · 4 cuentas × 3 repeticiones intercaladas · "
+             + "brecha global " + (100 * (lo64 / hi65 - 1)).toFixed(1) + "%",
+             m.l + 6, m.t + 4);
+  g.font = "11px " + css("--mono") + ", monospace";
+  g.fillStyle = UP; g.fillText("● B=64, ancho 4", m.l + 6, m.t + 24);
+  g.fillStyle = ACC; g.fillText("● B=65, ancho 1", m.l + 130, m.t + 24);
+}
+seg("segPair", d => { pairMode = d.p; drawPair(); });
+
 /* ------------------------------------------------------------------ startup */
-function redrawAll(){ drawCurve(); drawWindow(); syncGeometry(); }
-syncGeometry(); drawCurve(); drawWindow(); syncCalc(); syncV2(); syncPlan();
+function redrawAll(){ drawCurve(); drawWindow(); syncGeometry(); drawPair(); }
+syncGeometry(); drawCurve(); drawWindow(); syncCalc(); syncV2();
+syncPlan(); drawPair();
 let rt;
 window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(redrawAll, 120); });
 if (window.matchMedia){
