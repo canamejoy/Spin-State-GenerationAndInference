@@ -52,6 +52,11 @@ image = (
         "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/theta4.json",
         "/root/theta4.json",
     )
+    # The same file Kaggle runs, so Modal and Kaggle execute identical code.
+    .add_local_file(
+        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/pair_test.py",
+        "/root/pair_test.py",
+    )
 )
 
 # The XLA-confound probe needs a kernel that XLA never touches, so this image
@@ -3025,6 +3030,59 @@ def xla_confound(batches: str = "48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63
         xla_probe_h100.remote(bl, tag + "_layout", rd, layers)
     if part in ("both", "raw"):
         raw_cuda_h100.remote(bl, sweeps, repeats, tag + "_raw", rd, layers)
+
+
+def _pair(batches, repeats, tag, Rd, L, n_temps, n_therm, n_meas, seed, label):
+    import sys
+    sys.path.insert(0, "/root")
+    import pair_test
+    print(f"gpu={device_identity()}", flush=True)
+    res = pair_test.run_pair(batches=batches, repeats=repeats, Rd=Rd, L=L,
+                             n_temps=n_temps, n_therm=n_therm, n_meas=n_meas,
+                             seed=seed, out=f"/out/{tag}.json", label=label)
+    res["gpu_identity"] = device_identity()
+    with open(f"/out/{tag}.json", "w") as f:
+        import json
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", **_BS)
+def pair_h100(b, r, tag, Rd, L, nt, th, me, seed, label):
+    return _pair(b, r, tag, Rd, L, nt, th, me, seed, label)
+
+
+@app.function(gpu="T4", image=image, memory=32768, timeout=6 * 3600,
+              volumes={"/out": vol})
+def pair_t4(b, r, tag, Rd, L, nt, th, me, seed, label):
+    return _pair(b, r, tag, Rd, L, nt, th, me, seed, label)
+
+
+@app.local_entrypoint()
+def pair(batches: str = "64,65", repeats: int = 3, runs: int = 3,
+         rd: float = 18.30, layers: int = 5, n_temps: int = 40,
+         n_therm: int = 1000, n_meas: int = 500, device: str = "h100",
+         tag: str = "pair64v65"):
+    """B=64 against B=65, interleaved, `runs` independent containers.
+
+    Each container is a fresh GPU, so agreement across runs rules out one
+    unlucky device as well as one unlucky ordering.
+    """
+    bl = [int(x) for x in batches.split(",") if x]
+    fn = {"h100": pair_h100, "t4": pair_t4}[device.lower()]
+    handles = [
+        fn.spawn(bl, repeats, f"{tag}_{device.lower()}_run{i + 1}", rd, layers,
+                 n_temps, n_therm, n_meas, 11 + 100 * i,
+                 f"run {i + 1} of {runs}")
+        for i in range(int(runs))
+    ]
+    for i, h in enumerate(handles):
+        try:
+            h.get()
+            print(f"run {i + 1} done", flush=True)
+        except Exception as e:
+            print(f"run {i + 1} failed: {type(e).__name__}: {e}", flush=True)
 
 
 @app.local_entrypoint()
