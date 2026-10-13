@@ -248,7 +248,8 @@ decorativa: es la variable que resultó controlar el efecto.</div>
   <li><a href="#grados">13 · Los cinco grados de libertad</a></li>
   <li class="sub"><a href="#planner">El planificador</a></li>
   <li><a href="#abierto">14 · Lo que sigue sin explicación</a></li>
-  <li><a href="#metodo">15 · Cómo se midió</a></li>
+  <li><a href="#especs">15 · Las especificaciones, y a dónde apuntan</a></li>
+  <li><a href="#metodo">16 · Cómo se midió</a></li>
 </ul>
 
 <hr>
@@ -1507,19 +1508,153 @@ descubiertos acá— pero su efecto se mide, no se interpola.</div>
 <ul>
   <li><b>Por qué no pasa nada con huellas de ~2 MB.</b> El brazo A del
   experimento 4 da null en todos los <code>v₂</code>, y a 5 MB separa limpio en
-  todos los casos. <b>Mi explicación favorita murió midiéndola:</b> pensé que era
-  el working set cayendo dentro de la L2, pero XLA asigna 0.676 MB por réplica
-  (7.8× el arreglo de espines), así que en <code>B</code> = 60 el brazo A son
-  16.4 MB y el B son 40.6 MB — <b>los dos caben</b> en los 50 MB de la H100, y
-  solo el B paga. Peor: el microbenchmark de arriba toca 15.7 MB, comparable al
-  brazo A, y el castigo aparece igual.</li>
+  todos los casos. Lo descarté usando la cifra de 50 MB de L2 y
+  <a href="#especs">resultó que esa cifra estaba mal</a>: la L2 de la H100 son
+  <b>dos particiones de 25 MB</b>, y contra 25 la explicación vuelve a encajar.
+  Ahora hay una predicción con número y está sin medir.</li>
   <li><b>Por qué 512 gana y 768 pierde.</b> Los dos están en ancho 4, y el
   dentado ancho sobrevive dentro de la clase de ancho 4 en los dos dispositivos:
   <code>B</code> = 60 contra 64 difieren +27.5 % en la T4 y −4.7 % en la H100,
   siendo los dos ancho 4. La curva ancha no tiene mecanismo.</li>
 </ul>
 
-<h2 id="metodo">15 · Cómo se midió</h2>
+<h2 id="especs">15 · Las especificaciones, y a dónde apuntan</h2>
+<p>Con la regla cerrada y dos preguntas abiertas, el paso siguiente fue buscar
+las especificaciones reales del hardware y del compilador y probar lo que se
+pudiera <b>sin gastar GPU</b>: todo lo de esta sección es aritmética contra datos
+que ya teníamos.</p>
+
+<h3>Una cifra mía estaba mal, y cambia una conclusión</h3>
+<p>Había descartado que el umbral de huella fuera la caché L2, razonando contra
+<b>50 MB</b>. La L2 de la H100 <b>no es un bloque de 50 MB</b>: son
+<b>dos particiones independientes de 25 MB</b>, cada una sirviendo a cuatro GPC.
+Cualquier hilo alcanza los 50 MB completos, pero no a la misma velocidad — la
+partición <b>lejana cuesta casi el doble de latencia</b>, que chipsandcheese
+describe como «tanta latencia como la VRAM de una RX 6900 XT». En ancho de banda:
+<b class="n">&gt;5.5 TB/s</b> en la cercana contra <b class="n">3.8 TB/s</b>
+atravesando toda la L2 — una <em>regresión</em> frente a los 4.5 TB/s de la
+A100.</p>
+
+<p>Contra 25 MB, y usando la asignación que <b>XLA mismo reporta</b>
+(0.676 MB por réplica, del probe 3a), los dos brazos del experimento 4 caen a
+lados opuestos:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>brazo</th><th>sitios</th><th>working set a <code>B</code> = 60</th>
+    <th>vs 25 MB</th><th>medido</th></tr></thead>
+  <tbody>
+    <tr><td>A</td><td class="n">2 125</td><td class="n">16.4 MB</td>
+        <td class="win">cabe</td><td class="win">null en todo v₂</td></tr>
+    <tr><td>B</td><td class="n">5 245</td><td class="n">40.6 MB</td>
+        <td class="bad">excede</td><td class="bad">+15.2 %, separa limpio</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note"><strong>Predicción falsable, con número.</strong> Barriendo
+<code>n_active</code> a <code>v₂</code> fijo y con todo lo demás quieto, el
+castigo debería <b>encenderse cerca de <code>n_active</code> = 3233 sitios</b> a
+<code>B</code> = 60, que es donde el working set cruza los 25 MB. No en 2125, y
+no mucho más arriba de 3233. Unas pocas redes entre 2500 y 4500 sitios lo
+zanjan, y el factor ~2× de la partición lejana es la magnitud correcta para
+producir un 15 % promedio cuando una fracción del tráfico cruza. <b>Está sin
+medir.</b></div>
+
+<h3>Lo que XLA dice de sí mismo</h3>
+<p>Su documentación nombra la condición de vectorización, textual:
+<em>«if they are produced by <code>xla_gpu.apply_indexing</code> that accesses
+the elements <b>contiguously</b> w.r.t. to the <code>%vector_index</code> and the
+access is <b>aligned</b>, then <code>tensor.extract</code> is converted to
+<code>vector.transfer_read</code>»</em>. Eso es <b>exactamente el esquema
+bloqueado</b> que medimos en +14.9 %, y «aligned» es la condición de
+<code>v₂</code>. Cómo elige el ancho <b>no está documentado</b>.</p>
+
+<p>Y hay una tensión interesante: XLA <b>sí tiene</b> un análisis de coalescencia
+(<code>coalescing_analysis.cc</code>), que su propia documentación llama
+«necessarily imperfect and incomplete», con un modelo de costo que incluye un
+<b>factor de desperdicio por coalescencia</b>. O sea que el compilador conoce el
+problema y su vectorizador elige igual el layout que lo produce. Verificar si uno
+consulta al otro no cuesta nada, y si no lo hacen, es un issue reportable con
+reproducción ya hecha.</p>
+
+<h3>Dos hipótesis más, muertas por aritmética</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>hipótesis</th><th>cómo se probó</th><th>resultado</th></tr></thead>
+  <tbody>
+    <tr><td><b>Cuantización de olas.</b> Si la grilla no es múltiplo de
+            multiprocesadores × bloques por SM, la última ola corre medio
+            vacía</td>
+        <td>eficiencia de ola para los 19 lotes, con 1, 2, 4, 8 y 16 bloques por
+            SM sobre 132 SMs</td>
+        <td class="win">eficiencias 0.675–0.999, casi todas &gt;0.9, r máximo
+            <b>+0.65</b></td></tr>
+    <tr><td><b>Conflictos de offset entre búferes.</b> Los búferes que se tocan a
+            la vez están a <code>B × 91 260</code> bytes</td>
+        <td>siete periodos candidatos: línea de 128 B, interleave de 256 B,
+            80×256, 160×256, stride de conjunto, páginas de 4 KB y 2 MB</td>
+        <td class="win">todas con <b>|r| ≤ 0.21</b></td></tr>
+  </tbody>
+</table></div>
+
+<p>Las dos mueren con el mismo contraejemplo: <b><code>B</code> = 512 y
+<code>B</code> = 768</b> son indistinguibles en eficiencia de ola (0.982 contra
+0.997) y comparten <b>residuo cero</b> módulo 256 y módulo 128 — porque
+<code>91 260 = 2² × 22 815</code> con 22 815 impar, así que todo lote divisible
+por 64 cae en múltiplo de 256. Y uno es el mejor de los diecinueve y el otro de
+los peores.</p>
+
+<h3>El costo del host existe, pero no es el dentado</h3>
+<p>Ajustando <code>µs(B) = a/B + b</code> —donde el término <code>a/B</code> es
+cualquier costo <em>por barrido</em> en vez de por réplica-barrido, o sea el
+lanzamiento desde la CPU y la contabilidad del bucle— sale
+<b class="n">a = 10.9 µs</b> por barrido y <b class="n">b = 2.549 µs</b>, con
+<b class="n">R² = 0.364</b>.</p>
+
+<p>Es real: son el <b class="n">29 %</b> del costo en <code>B</code> = 10 y solo
+el <b class="n">0.4 %</b> en <code>B</code> = 1024, lo cual explica la subida
+pronunciada en lotes chicos. Pero es <b>plano en <code>B</code></b>, así que no
+puede producir un dentado — y el residuo tras el ajuste sigue yendo de
+<b class="n">−21.7 %</b> en <code>B</code> = 512 a <b class="n">+23.2 %</b> en
+<code>B</code> = 768.</p>
+
+<h3>Y a dónde apunta el dentado ancho</h3>
+<p>Muerta toda la aritmética de direcciones, lo único que <b>demostradamente</b>
+cambia con <code>B</code> y no es aritmética es <b>el programa que emite
+XLA</b>:</p>
+
+<ul>
+  <li>Fusiones: <b class="n">71 a 78</b> en una ventana de catorce lotes.</li>
+  <li>Kernels: <b class="n">43/45/43/40</b> en H100 y
+  <b class="n">37/41/43/37</b> en T4.</li>
+  <li>El <em>conjunto</em> de fusiones cambia, no solo su tamaño.</li>
+  <li><b>La señal más fuerte:</b> <code>loop_reduce_fusion_1</code> en la T4 va
+  <b class="n">87 → 1724 → 892 → 98</b> bloques en <code>B</code> = 57/58/60/64.
+  Un salto <b>no monótono de 20×</b> que no sigue ninguna regla de ancho — la
+  firma de una elección del emisor dirigida por la forma, y el de reducción es un
+  emisor aparte con su propio <em>tiling</em>.</li>
+  <li>Los <code>input_concatenate_fusion_*</code> (10 247 a 11 115 bloques)
+  escalan suave y <b>nunca bajan</b>: un piso de costo a ancho 1 que explica por
+  qué el castigo medido es ~12-15 % y no mayor.</li>
+</ul>
+
+<div class="note warn"><strong>El experimento que lo cerraría.</strong> Correr el
+volcado de geometría sobre los diecinueve lotes de la curva ancha, solo
+compilación, y correlacionar la geometría de los kernels de reducción contra el
+residuo de arriba. Si los lotes rápidos (512, 150, 75, 32) tienen programas
+estructuralmente más baratos que los lentos (768, 100, 400, 256), el dentado
+ancho es <b>otro artefacto de decisión del compilador</b> — el mismo patrón que
+resultó ser el castigo de los múltiplos de cuatro. Cuesta centavos y está sin
+hacer.</div>
+
+<p style="color:var(--muted);font-size:.9rem">Fuentes: whitepaper de
+arquitectura H100 de NVIDIA; chipsandcheese, «Nvidia's H100: Funny L2, and Tons
+of Bandwidth»; <code>openxla.org/xla/emitters</code>; la discusión 10065 de
+openxla/xla sobre modelos de costo; los foros de NVIDIA sobre granularidad de
+L1/L2; y Mosaic (arXiv 1804.11265) para páginas de 2 MB y alcance de TLB. El
+detalle completo, con la aritmética de cada prueba, está en
+<code>docs/planning/hardware_compiler_leads.md</code>.</p>
+
+<h2 id="metodo">16 · Cómo se midió</h2>
 
 <h3>Protocolo</h3>
 <ul>
@@ -1566,6 +1701,10 @@ módulo.</p>
         <td><code>results/curves/geometry_rule_on_a_t4.json</code></td></tr>
     <tr><td>El tope de ancho en sm_75 (§11)</td>
         <td><code>results/curves/width_cap_is_xla_not_hopper.json</code></td></tr>
+    <tr><td>64 contra 65, cuatro T4 (§10)</td>
+        <td><code>results/curves/pair_64_vs_65.json</code></td></tr>
+    <tr><td>Especificaciones y pistas (§15)</td>
+        <td><code>docs/planning/hardware_compiler_leads.md</code></td></tr>
   </tbody>
 </table></div>
 
