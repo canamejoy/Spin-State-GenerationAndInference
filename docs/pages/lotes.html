@@ -161,8 +161,9 @@ y la regla que sí quedó demostrada.</p>
   <p style="color:var(--muted);font-size:.93rem"><b>Cuidado con una confusión
   fácil:</b> lo que dispara el castigo es que <b><code>B</code></b> sea múltiplo
   de cuatro. Que <b><code>L</code></b> lo sea hace lo contrario — vuelve la red
-  <em>indiferente</em> al lote, pero <a href="#solucion">pagando el costo alto
-  en todas las celdas</a>. No son la misma variable y no hacen lo mismo.</p>
+  <em>indiferente</em> al lote, pero <a href="#solucion">pagando el costo alto en
+  todas las celdas</a>, lo cual resulta un mal canje. No son la misma variable y
+  no hacen lo mismo.</p>
 </div>
 
 <h2 id="palabras">Dos palabras, antes de empezar</h2>
@@ -1388,18 +1389,59 @@ vecino, o sea <b>previsibilidad</b>. Si tu intuición era que múltiplo de cuatr
 debería ser lo <em>malo</em>, tenías razón — lo es, cuando se trata de
 <code>B</code>.</div>
 
-<h3>La recomendación, en orden</h3>
+<h3>La recomendación</h3>
 <div class="answer">
-  <p><b>1 · Si podés elegir <code>B</code>:</b> usá un número <b>impar</b> de
-  capas y mantené <code>v₂(B) + v₂(L) &lt; 2</code>. Con <code>L</code> impar eso
-  es simplemente <b>evitar los múltiplos de cuatro</b>. Ahí están las celdas más
-  baratas de todas.</p>
-  <p><b>2 · Si <code>B</code> no está en tus manos</b> —te lo fija el total de
-  réplicas, o el reparto entre GPUs— entonces sí elegí <b><code>L</code>
-  divisible por cuatro</b>, y preferentemente en una GPU de alto ancho de banda,
-  donde la prima es chica. Cambiás un costo alto pero <em>parejo</em> por el
-  riesgo de caer en una celda cara sin darte cuenta.</p>
+  <p><b>Elegí las capas por física, y después elegí <code>B</code> evitando los
+  múltiplos de cuatro.</b> Con <code>L</code> impar eso es exactamente mantener
+  <code>v₂(B) + v₂(L) &lt; 2</code>, y ahí están las celdas más baratas.</p>
 </div>
+
+<p>Una versión anterior de esta página ofrecía una segunda opción: «si
+<code>B</code> no está en tus manos, elegí <code>L</code> divisible por cuatro».
+<b>La cuenta la refuta</b>, y vale hacerla porque es contraintuitiva. Tres de
+cada cuatro enteros <em>no</em> son múltiplos de cuatro, así que aunque
+<code>B</code> caiga <b>al azar</b>, con <code>L</code> impar se cae en una celda
+barata el 75 % de las veces:</p>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th><code>L</code> impar<br>mejor caso</th>
+    <th><code>L</code> impar<br><b>esperado con <code>B</code> al azar</b></th>
+    <th><code>L</code> divisible por 4<br>todas las celdas</th>
+    <th>gana</th></tr></thead>
+  <tbody>
+    <tr><td>H100</td><td class="n">2.426</td><td class="n"><b>2.513</b></td>
+        <td class="n">2.563</td><td class="win"><code>L</code> impar, +1.9 %</td></tr>
+    <tr><td>T4</td><td class="n">15.572</td><td class="n"><b>16.950</b></td>
+        <td class="n">20.352</td><td class="win"><code>L</code> impar, +16.7 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Y lo único que compra <code>L</code> divisible por cuatro es acotar el
+<b>peor</b> caso — que en la T4 ni siquiera logra:</p>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>peor celda con <code>L</code> impar</th>
+    <th><code>L</code> divisible por 4</th><th></th></tr></thead>
+  <tbody>
+    <tr><td>H100</td><td class="n">2.772</td><td class="n">2.563</td>
+        <td class="n">mejora −7.5 %</td></tr>
+    <tr><td><b>T4</b></td><td class="n">20.023</td><td class="n">20.352</td>
+        <td class="bad"><b>es peor, +1.6 %</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>En la T4, <code>L</code> divisible por cuatro está
+estrictamente dominado:</strong> peor en el mejor caso, peor en el esperado y
+peor incluso en el peor caso. No hay escenario donde convenga. En la H100 es un
+canje estrecho — entregás 1.9 % en valor esperado para recortar 7.5 % del peor
+caso.</div>
+
+<div class="note"><strong>Entonces para qué sirve.</strong> Para una sola cosa:
+<b>varianza cero</b>. Ningún lote es peor que ningún otro, así que no hace falta
+medir la curva ni cuidar qué <code>B</code> te toca. Eso vale si el <em>peor
+caso acotado</em> es en sí mismo el requisito —un servicio con presupuesto de
+latencia, un planificador que no controlás— y no si lo que importa es el costo
+promedio. <b>Para generar un dataset, <code>L</code> impar es mejor.</b></div>
 
 <p>Las dos opciones, con la tabla de <code>v₂(B) + v₂(L)</code> explícita:</p>
 
@@ -1449,9 +1491,10 @@ te saca un problema de encima, no los dos.</div>
         <td class="n">513, 1025, 65, 150</td></tr>
     <tr><td><code>L</code> ≡ 2 (mod 4) (2, 6, 10…)</td><td><b>todo lote par</b></td>
         <td class="n">513, 1025, 65, 57</td></tr>
-    <tr class="best"><td><code>L</code> divisible por 4 (4, 8, 12, 16…)</td>
+    <tr><td><code>L</code> divisible por 4 (4, 8, 12, 16…)</td>
         <td>nada, por este motivo</td>
-        <td class="n">cualquiera — pero la curva ancha sigue</td></tr>
+        <td class="n">cualquiera — pero <a href="#solucion">pagando el costo
+            alto en todas</a></td></tr>
   </tbody>
 </table></div>
 
