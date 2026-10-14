@@ -1589,6 +1589,73 @@ te saca un problema de encima, no los dos.</div>
   </tbody>
 </table></div>
 
+<h3>El hueco: cuando la física fija <code>L</code> divisible por cuatro</h3>
+<p>La recomendación de arriba supone que podés elegir <code>B</code> para
+mantener la suma baja. Pero si la física te fija <b><code>L</code> = 4 u
+<code>L</code> = 8</b>, entonces <code>v₂(L) ≥ 2</code> <em>por sí solo</em>, y
+<code>v₂(B) + v₂(L) ≥ 2</code> para <b>todo</b> <code>B</code>. Ahí
+<b>la regla no ofrece salida</b> y elegir el lote no compra nada.</p>
+
+<p>Intentamos cerrarlo con preprocesamiento, y la idea es exacta: una capa cuya
+máscara de disco es toda falsa <b>nace en cero y nunca cambia</b> —
+<code>init_spins</code> multiplica por la máscara y <code>substep</code> jamás
+acepta fuera de ella— y una capa de ceros encima de la última física
+<b>no contribuye</b> a su suma de vecinos, que es precisamente la frontera libre
+que la red sin relleno ya tiene. Así que <code>L</code> capas físicas en un
+arreglo de <code>L + 1</code> es <b>la misma física con el conteo de capas
+impar</b>, y <code>B</code> recupera el control del ancho.</p>
+
+<p><b>La física aguanta:</b> la energía coincide a 1.18 × 10⁻⁷ con
+<code>L</code> = 4 y <b>exactamente</b> con <code>L</code> = 8, verificado antes
+de cronometrar nada.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>red</th><th>sitios</th><th><code>B</code></th>
+    <th>ancho nat. → rell.</th><th>nativa</th><th>rellena</th><th></th></tr></thead>
+  <tbody>
+    <tr><td rowspan="3">Rd 18.3<br>L = 4</td><td rowspan="3" class="n">4 196</td>
+        <td class="n">63</td><td class="n">4 → <b>1</b></td>
+        <td class="n">1.908</td><td class="n">2.214</td><td class="bad">−13.8 %</td></tr>
+    <tr><td class="n">64</td><td class="n">4 → 4</td><td class="n">1.835</td>
+        <td class="n">2.529</td><td class="bad">−27.4 %</td></tr>
+    <tr><td class="n">65</td><td class="n">4 → <b>1</b></td><td class="n">1.912</td>
+        <td class="n">2.430</td><td class="bad">−21.3 %</td></tr>
+    <tr><td rowspan="3">Rd 13.0<br>L = 8</td><td rowspan="3" class="n">4 232</td>
+        <td class="n">63</td><td class="n">4 → <b>1</b></td><td class="n">2.322</td>
+        <td class="n">3.036</td><td class="bad">−23.5 %</td></tr>
+    <tr><td class="n">64</td><td class="n">4 → 4</td><td class="n">2.110</td>
+        <td class="n">2.905</td><td class="bad">−27.4 %</td></tr>
+    <tr><td class="n">65</td><td class="n">4 → <b>1</b></td><td class="n">2.297</td>
+        <td class="n">2.562</td><td class="bad">−10.3 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Seis de seis celdas pierden</strong>, media
+−20.6 %. Y restringiendo a las cuatro donde el relleno <em>sí</em> cambia el
+ancho de 4 a 1 —su mejor caso— la media sigue en <b class="n">−17.2 %</b>. La
+aritmética dice por qué: una capa extra cuesta <code>1/L</code>, o sea 25 % en
+<code>L</code> = 4 y 12.5 % en <code>L</code> = 8, <b>contra un castigo del
+ancho de 14.3 %</b> en una H100. Mismo orden de magnitud, sin margen — y el
+dentado de ±20 % se come lo que quede.</div>
+
+<div class="note warn"><strong>Dos errores de diseño nuestros, para que se
+pueda rehacer mejor.</strong> La red de <code>L</code> = 8 tiene 4232 sitios, y
+eso cae <em>entre</em> los 2125 donde el castigo del ancho
+<a href="#h4">no existe</a> y los 5245 donde sí, así que el ahorro que el truco
+iba a comprar puede ser menor que el 14.3 % contra el que lo costeamos. Y la
+H100 tiene <a href="#h3">el castigo más chico de los cinco dispositivos</a>: es
+el peor lugar para probar un truco que cambia tráfico por ancho. En una T4, con
+28.6 %, el margen sería el doble.</div>
+
+<div class="answer">
+  <p><b>Entonces, con <code>L</code> divisible por cuatro no hay arreglo
+  gratis.</b> Lo que queda es medir la curva de esa geometría y elegir el mejor
+  <code>B</code> — y conviene dimensionar el premio: el castigo del
+  <em>ancho</em> es 14–29 %, no el 80 % del par 64/65, que apila el ancho y el
+  dentado. Cualquier truco de este tipo tiene ese 14–29 % como techo, contra un
+  costo del mismo orden.</p>
+</div>
+
 <h3>Lo que esta regla NO reemplaza</h3>
 <p>Hay que ser preciso con el alcance, porque es fácil pasarse. La regla explica
 <b>el salto entre lotes vecinos</b> y la inmunidad por geometría. No explica la
@@ -1939,6 +2006,10 @@ módulo.</p>
         <td><code>results/curves/trio_63_64_65.json</code></td></tr>
     <tr><td>Especificaciones y pistas (§15)</td>
         <td><code>docs/planning/hardware_compiler_leads.md</code></td></tr>
+    <tr><td>La capa ficticia, refutada (§12)</td>
+        <td><code>results/curves/dummy_layer_refuted.json</code></td></tr>
+    <tr><td>Los rolls no se pueden rellenar (§14)</td>
+        <td><code>results/curves/rolls_cannot_be_padded_away.json</code></td></tr>
   </tbody>
 </table></div>
 
