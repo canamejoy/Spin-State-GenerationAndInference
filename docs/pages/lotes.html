@@ -290,9 +290,10 @@ decorativa: es la variable que resultó controlar el efecto.</div>
   <li><a href="#solucion">12 · La solución</a></li>
   <li><a href="#grados">13 · Los cinco grados de libertad</a></li>
   <li class="sub"><a href="#planner">El planificador</a></li>
-  <li><a href="#abierto">14 · Lo que sigue sin explicación</a></li>
-  <li><a href="#especs">15 · Las especificaciones, y a dónde apuntan</a></li>
-  <li><a href="#metodo">16 · Cómo se midió</a></li>
+  <li><a href="#techo">14 · El techo real: 1.8× sobre la mesa</a></li>
+  <li><a href="#abierto">15 · Lo que sigue sin explicación</a></li>
+  <li><a href="#especs">16 · Las especificaciones, y a dónde apuntan</a></li>
+  <li><a href="#metodo">17 · Cómo se midió</a></li>
 </ul>
 
 <hr>
@@ -1801,7 +1802,62 @@ exactamente el error que ese experimento refutó. La geometría es un grado de
 libertad <em>real</em> —está en la tabla de arriba y es el más importante de los
 descubiertos acá— pero su efecto se mide, no se interpola.</div>
 
-<h2 id="abierto">14 · Lo que sigue sin explicación</h2>
+<h2 id="techo">14 · El techo real: XLA deja 1.8× sobre la mesa</h2>
+<p>Hasta acá el relato fue defensivo: identificar un castigo y esquivarlo. Pero
+hay un número del <a href="#causa">experimento 5</a> que cambia el encuadre, y
+conviene mirarlo de frente.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>qué es</th><th>configuración</th><th>µs por pasada</th></tr></thead>
+  <tbody>
+    <tr><td>lo que XLA elige en <code>B</code> múltiplo de 4</td>
+        <td>ancho 4, <b>bloqueado</b></td><td class="bad n">9.67</td></tr>
+    <tr><td>lo que XLA elige en el resto</td>
+        <td>ancho 1</td><td class="n">8.41</td></tr>
+    <tr class="best"><td><b>lo mejor disponible</b></td>
+        <td>ancho 4, <b>escalonado</b></td><td class="win n">4.60</td></tr>
+  </tbody>
+</table></div>
+
+<p>El escalonado de ancho 4 es <b class="n">1.83×</b> más rápido que el ancho 1
+y <b class="n">2.10×</b> más rápido que lo que XLA elige en sus celdas malas.</p>
+
+<div class="answer">
+  <p><b>El premio no es esquivar un castigo del 14–29 %. Es capturar un ~1.8×
+  que XLA deja sin reclamar en <em>todos</em> los lotes</b>, incluidos los
+  buenos.</p>
+</div>
+
+<p>Y la documentación de XLA dice por qué lo deja: su vectorizador dispara
+cuando el acceso es <em>«contiguously w.r.t. the <code>%vector_index</code>»</em>
+— el layout bloqueado — y su modelo de costo de coalescencia, que conoce
+exactamente este desperdicio, <b>no participa de esa decisión</b>.</p>
+
+<h3>Y por qué ningún remodelado puede arreglar la mitad del ancho</h3>
+<p style="text-align:center;font-size:1.02rem"><code>v₂(elementos) = v₂(B) +
+v₂(L) + v₂(N²·3)</code>, &nbsp;y <code>v₂(N²·3) = 0</code> porque <code>N</code>
+es impar</p>
+
+<p>Todo relleno <b>multiplica</b> el conteo de elementos, así que solo puede
+<b>sumar</b> a <code>v₂</code>, nunca restar. <b>No existe remodelado que baje
+<code>v₂(elementos)</code> por debajo de <code>v₂(L)</code></b> conservando los
+sitios físicos como sub-bloque. Eso es aritmética, no un límite empírico, y
+cierra de golpe toda la familia de ideas: rellenar <code>N</code>, rellenar el
+eje de componentes, partir el lote, plegar ejes. La única excepción es la
+<a href="#solucion">capa ficticia</a>, que se midió y pierde.</p>
+
+<div class="note"><strong>Entonces, dentro de XLA y con <code>L</code> divisible
+por cuatro, no hay arreglo.</strong> Eso está cerrado. Lo que queda es
+<b>sacarle la decisión al compilador</b>, y la única forma de hacerlo sin
+reescribir la simulación en CUDA es <b>Pallas</b>, el lenguaje de kernels de
+JAX: el tiling y el indexado pasan a ser nuestros mientras el resto del programa
+sigue igual. Es la única opción <em>independiente de <code>L</code></em> —
+elegimos el ancho, así que <code>v₂(L)</code> deja de importar— y la única que
+puede tomar el layout escalonado. El plan por fases, con su compuerta de
+viabilidad de un día y su lista de riesgos, está en
+<code>docs/planning/standardisation_strategy.md</code>.</div>
+
+<h2 id="abierto">15 · Lo que sigue sin explicación</h2>
 <p>Tres cosas, y las tres están observadas pero no entendidas:</p>
 
 <ul>
@@ -1817,7 +1873,7 @@ descubiertos acá— pero su efecto se mide, no se interpola.</div>
   siendo los dos ancho 4. La curva ancha no tiene mecanismo.</li>
 </ul>
 
-<h2 id="especs">15 · Las especificaciones, y a dónde apuntan</h2>
+<h2 id="especs">16 · Las especificaciones, y a dónde apuntan</h2>
 <p>Con la regla cerrada y dos preguntas abiertas, el paso siguiente fue buscar
 las especificaciones reales del hardware y del compilador y probar lo que se
 pudiera <b>sin gastar GPU</b>: todo lo de esta sección es aritmética contra datos
@@ -1953,7 +2009,7 @@ L1/L2; y Mosaic (arXiv 1804.11265) para páginas de 2 MB y alcance de TLB. El
 detalle completo, con la aritmética de cada prueba, está en
 <code>docs/planning/hardware_compiler_leads.md</code>.</p>
 
-<h2 id="metodo">16 · Cómo se midió</h2>
+<h2 id="metodo">17 · Cómo se midió</h2>
 
 <h3>Protocolo</h3>
 <ul>
@@ -2008,8 +2064,10 @@ módulo.</p>
         <td><code>docs/planning/hardware_compiler_leads.md</code></td></tr>
     <tr><td>La capa ficticia, refutada (§12)</td>
         <td><code>results/curves/dummy_layer_refuted.json</code></td></tr>
-    <tr><td>Los rolls no se pueden rellenar (§14)</td>
+    <tr><td>Los rolls no se pueden rellenar (§15)</td>
         <td><code>results/curves/rolls_cannot_be_padded_away.json</code></td></tr>
+    <tr><td>La estrategia por fases (§14)</td>
+        <td><code>docs/planning/standardisation_strategy.md</code></td></tr>
   </tbody>
 </table></div>
 
