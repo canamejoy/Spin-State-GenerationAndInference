@@ -140,3 +140,150 @@ def run_pair(batches=(64, 65), repeats=3, Rd=18.30, L=5, n_temps=40,
             json.dump(res, f, indent=1)
         print(f"\nwrote {out}", flush=True)
     return res
+
+def padded_geometry(Rd, L_phys):
+    """`L_phys` physical layers held in an `L_phys + 1` array, top one masked.
+
+    The point is to make the layer count ODD so that `v2(L) = 0` and the batch
+    size regains control of the vector width. It is exact, not an approximation:
+    a layer whose disk mask is all False starts at zero (`init_spins` multiplies
+    by `disco`), never changes (`substep` sets the trial equal to the current
+    spin outside the mask and never accepts there), and contributes nothing to
+    the neighbour sum of the layer below -- which is precisely the free boundary
+    the unpadded lattice already has.
+
+    The surface mask has to be recomputed rather than inherited, or the top
+    physical layer would be treated as interior.
+    """
+    import numpy as np
+    import sim_core as S
+
+    g = S.build_geometry(Rd=float(Rd), L=int(L_phys) + 1)
+    g["disco"] = np.array(g["disco"])
+    g["disco"][-1] = False
+    g["even"] = np.array(g["even"]) & g["disco"]
+    g["odd"] = np.array(g["odd"]) & g["disco"]
+    N, L = int(g["N"]), int(g["L"])
+    surf = np.zeros_like(g["disco"], dtype=bool)
+    nb = ((0, 0, 1), (0, 0, -1), (0, 1, 0), (0, -1, 0), (1, 0, 0), (-1, 0, 0))
+    for z in range(L):
+        for y in range(N):
+            for x in range(N):
+                if not g["disco"][z, y, x]:
+                    continue
+                n = 0
+                for dz, dy, dx in nb:
+                    nz, ny, nx = z + dz, (y + dy) % N, (x + dx) % N
+                    if 0 <= nz < L and g["disco"][nz, ny, nx]:
+                        n += 1
+                if n < 6:
+                    surf[z, y, x] = True
+    g["surface"] = surf
+    g["n_active"] = int(g["disco"].sum())
+    return g
+
+
+def run_dummy(L_phys=8, Rd=13.00, batches=(63, 64, 65), repeats=3,
+              n_temps=20, n_therm=500, n_meas=250, seed=11, out=None):
+    """Native `L_phys` against the same physics in an `L_phys + 1` array.
+
+    Reports cost per replica-sweep for both, so the extra layer's `1/L` traffic
+    is charged honestly against whatever the narrower vector width saves.
+    """
+    import json
+    import numpy as np
+    import jax
+    import jax.numpy as jnp
+    import sim_core as S
+
+    def v2(n):
+        k = 0
+        while n % 2 == 0:
+            n //= 2
+            k += 1
+        return k
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    sweeps = int(n_temps) * (int(n_therm) + int(n_meas))
+    theta = dict(Jex=1.0, Kan1=0.0012, Kan2=0.0, KanS=0.0012,
+                 Hex=0.0, KDM=0.0, g=float(np.deg2rad(90.0)))
+
+    gn = S.build_geometry(Rd=float(Rd), L=int(L_phys))
+    gp = padded_geometry(Rd, L_phys)
+    en, ep = S.build_engine(gn), S.build_engine(gp)
+    N = int(gn["N"])
+    dev = jax.devices()[0]
+    print(f"device: {dev.device_kind}", flush=True)
+    print(f"native  L={gn['L']} v2(L)={v2(int(gn['L']))} "
+          f"sites={int(np.asarray(gn['disco']).sum())}", flush=True)
+    print(f"padded  L={gp['L']} v2(L)={v2(int(gp['L']))} "
+          f"sites={gp['n_active']}  (top layer masked)", flush=True)
+    assert gp["n_active"] == int(np.asarray(gn["disco"]).sum())
+
+    def cols(B, g):
+        c = {k: jnp.asarray(np.full((B, 1, 1, 1), v, dtype=np.float32))
+             for k, v in theta.items()}
+        k1 = jnp.where(jnp.asarray(g["surface"])[None], c["KanS"], c["Kan1"])
+        return c, k1
+
+    # equivalence on a shared configuration, before timing
+    cfg = np.asarray(S.init_spins(jax.random.PRNGKey(5), gn, 3))
+    pad = np.zeros((3, gp["L"], N, N, 3), dtype=np.float32)
+    pad[:, :int(L_phys)] = cfg
+    cn, k1n = cols(3, gn)
+    cp, k1p = cols(3, gp)
+    En = float(jnp.sum(en["energy"](jnp.asarray(cfg), cn, k1n)))
+    Ep = float(jnp.sum(ep["energy"](jnp.asarray(pad), cp, k1p)))
+    rel = abs(Ep - En) / max(abs(En), 1e-30)
+    print(f"energy  native {En:.6f}  padded {Ep:.6f}  rel err {rel:.2e}"
+          f"{'  EQUIVALENT' if rel < 1e-6 else '  MISMATCH'}", flush=True)
+    if rel >= 1e-6:
+        raise AssertionError("the padded lattice is not the same physics")
+
+    import time
+    rows = []
+    for B in batches:
+        row = dict(B=int(B),
+                   v2_native=v2(B) + v2(int(gn["L"])),
+                   v2_padded=v2(B) + v2(int(gp["L"])))
+        row["width_native"] = min(4, 2 ** row["v2_native"])
+        row["width_padded"] = min(4, 2 ** row["v2_padded"])
+        for lbl, g, e in (("native", gn, en), ("padded", gp, ep)):
+            c, k1 = cols(B, g)
+            args = (S.init_spins(jax.random.PRNGKey(seed), g, B),
+                    jax.random.PRNGKey(seed + 1), c)
+            fn = jax.jit(lambda sp, kk, pp, _e=e: _e["anneal"](
+                sp, kk, betas, pp, int(n_therm), int(n_meas))
+            ).lower(*args).compile()
+            jax.block_until_ready(fn(*args))
+            ts = []
+            for _ in range(int(repeats)):
+                t0 = time.perf_counter()
+                jax.block_until_ready(fn(*args))
+                ts.append(time.perf_counter() - t0)
+            row[lbl] = float(np.mean(ts) * 1e6 / (sweeps * B))
+            row[lbl + "_wall_s"] = float(np.mean(ts))
+        row["gain"] = row["native"] / row["padded"] - 1
+        rows.append(row)
+        print(f"  B={B:4d}  native w{row['width_native']} {row['native']:7.3f}"
+              f"   padded w{row['width_padded']} {row['padded']:7.3f} us"
+              f"   -> padded {row['gain']:+.1%}", flush=True)
+
+    g = [r["gain"] for r in rows]
+    print(f"\nmean {float(np.mean(g)):+.1%}  "
+          f"(min {min(g):+.1%}, max {max(g):+.1%})", flush=True)
+    print("The padded array carries one extra layer, 1/L more traffic. It only "
+          "pays when that is smaller than what the narrower width saves, and "
+          "only when B is not a multiple of four -- otherwise both sides are "
+          "width 4 and the extra layer is pure loss.", flush=True)
+    res = dict(rows=rows, L_phys=int(L_phys), L_array=int(gp["L"]),
+               Rd=float(Rd), N=N, n_active=gp["n_active"],
+               energy_rel_err=rel, sweeps_per_cell=sweeps,
+               repeats=int(repeats), device=dev.device_kind,
+               jax_version=jax.__version__)
+    if out:
+        with open(out, "w") as f:
+            json.dump(res, f, indent=1)
+        print(f"wrote {out}", flush=True)
+    return res

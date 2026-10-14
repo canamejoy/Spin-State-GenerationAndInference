@@ -3065,6 +3065,162 @@ def pair_t4(b, r, tag, Rd, L, nt, th, me, seed, label):
 
 
 # --------------------------------------------------------------------------
+# Experiment 9: a dummy layer makes the width OUR choice, for any geometry.
+#
+# The rule leaves a hole. When the physics fixes `L` divisible by four,
+# `v2(L) >= 2` on its own, so `v2(B) + v2(L) >= 2` for EVERY `B` and no batch
+# escapes the 4-wide path. Choosing `B` buys nothing there.
+#
+# The way out is preprocessing, and it is exact rather than a trick. A layer
+# whose disk mask is all False stays zero forever: `init_spins` multiplies by
+# `disco`, `substep` sets the trial equal to the current spin outside the mask
+# and never accepts there. A zeroed layer above the top physical layer
+# contributes nothing to its neighbour sum, which is precisely the free
+# boundary the unpadded lattice already has. So simulating `L` physical layers
+# as an `L + 1` array with the top one masked off is the SAME physics, and it
+# makes the layer count odd:
+#
+#       L = 8  physical  ->  array of 9  ->  v2(L) = 0  ->  width 1 at odd B
+#
+# The cost is one extra layer of traffic, 1/L, against a width penalty measured
+# at 14.3% on an H100 and 28.6% on a T4. So it loses at L = 4 (+25%) and wins
+# from L = 8 (+12.5%) upward. This measures both halves: that the observables
+# agree exactly, and what the trade really costs.
+def _dummy_layer(pairs, batches, repeats, tag, n_temps, n_therm, n_meas):
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    sweeps = int(n_temps) * (int(n_therm) + int(n_meas))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    print(f"gpu={device_identity()}", flush=True)
+
+    def padded_geo(Rd, Lphys):
+        """`Lphys + 1` layers with the top one masked out of the disk."""
+        g = S.build_geometry(Rd=float(Rd), L=int(Lphys) + 1)
+        g["disco"] = np.array(g["disco"]); g["disco"][-1] = False
+        g["even"] = np.array(g["even"]) & g["disco"]
+        g["odd"] = np.array(g["odd"]) & g["disco"]
+        # Surface = fewer than six in-disk neighbours, recomputed so the top
+        # physical layer is correctly surface again.
+        N, L = int(g["N"]), int(g["L"])
+        surf = np.zeros_like(g["disco"], dtype=bool)
+        for z in range(L):
+            for y in range(N):
+                for x in range(N):
+                    if not g["disco"][z, y, x]:
+                        continue
+                    n = 0
+                    for dz, dy, dx in ((0,0,1),(0,0,-1),(0,1,0),(0,-1,0),(1,0,0),(-1,0,0)):
+                        nz, ny, nx = z+dz, (y+dy) % N, (x+dx) % N
+                        if 0 <= nz < L and g["disco"][nz, ny, nx]:
+                            n += 1
+                    if n < 6:
+                        surf[z, y, x] = True
+        g["surface"] = surf
+        g["n_active"] = int(g["disco"].sum())
+        return g
+
+    out = []
+    for Rd, Lphys in pairs:
+        gn = S.build_geometry(Rd=float(Rd), L=int(Lphys))
+        gp = padded_geo(Rd, Lphys)
+        en, ep = S.build_engine(gn), S.build_engine(gp)
+        Nn = int(gn["N"])
+        print(f"\n--- Rd={Rd}  L fisica={Lphys} ---", flush=True)
+        print(f"  nativa: L={gn['L']} sitios={int(np.asarray(gn['disco']).sum())}"
+              f"  v2(L)={bin(int(gn['L']))[::-1].index('1')}", flush=True)
+        print(f"  rellena: L={gp['L']} sitios={gp['n_active']}"
+              f"  (la capa de arriba esta enmascarada)", flush=True)
+        assert gp["n_active"] == int(np.asarray(gn["disco"]).sum()), \
+            "el relleno cambio el numero de sitios activos"
+
+        # ---- equivalence: the same configuration, both representations ----
+        cfg = np.asarray(S.init_spins(jax.random.PRNGKey(5), gn, 3))
+        pad = np.zeros((3, gp["L"], Nn, Nn, 3), dtype=np.float32)
+        pad[:, :int(Lphys)] = cfg
+        cols = PA.pack([theta], 3)
+        k1n = jnp.where(jnp.asarray(gn["surface"])[None], cols["KanS"], cols["Kan1"])
+        k1p = jnp.where(jnp.asarray(gp["surface"])[None], cols["KanS"], cols["Kan1"])
+        En = float(jnp.sum(en["energy"](jnp.asarray(cfg), cols, k1n)))
+        Ep = float(jnp.sum(ep["energy"](jnp.asarray(pad), cols, k1p)))
+        Mn = np.asarray(en["magnetization"](jnp.asarray(cfg)))
+        Mp = np.asarray(ep["magnetization"](jnp.asarray(pad)))
+        dE = abs(Ep - En) / max(abs(En), 1e-30)
+        dM = float(np.max(np.abs(Mp - Mn)))
+        print(f"  energia  nativa {En:.6f}  rellena {Ep:.6f}  "
+              f"error relativo {dE:.2e}", flush=True)
+        print(f"  magnetizacion: max |diferencia| {dM:.2e}", flush=True)
+        ok = dE < 1e-6 and dM < 1e-6
+        print(f"  -> {'EQUIVALENTES' if ok else 'NO EQUIVALENTES'}", flush=True)
+
+        # ---- timing, per PHYSICAL site so the 1/L overhead shows -----------
+        nsites = gp["n_active"]
+        cells = []
+        for B in batches:
+            row = dict(B=int(B))
+            for lbl, g, e in (("nativa", gn, en), ("rellena", gp, ep)):
+                c = PA.pack([theta], B)
+                k1 = jnp.where(jnp.asarray(g["surface"])[None], c["KanS"], c["Kan1"])
+                args = (S.init_spins(jax.random.PRNGKey(11), g, B),
+                        jax.random.PRNGKey(12), c)
+                fn = jax.jit(lambda sp, kk, pp, _e=e: _e["anneal"](
+                    sp, kk, betas, pp, int(n_therm), int(n_meas))
+                ).lower(*args).compile()
+                jax.block_until_ready(fn(*args))
+                ts = []
+                for _ in range(repeats):
+                    t0 = time.perf_counter()
+                    jax.block_until_ready(fn(*args))
+                    ts.append(time.perf_counter() - t0)
+                row[lbl] = float(np.mean(ts) * 1e6 / (sweeps * B))
+            row["gain"] = row["nativa"] / row["rellena"] - 1
+            cells.append(row)
+            print(f"  B={B:4d}  nativa {row['nativa']:7.3f}  "
+                  f"rellena {row['rellena']:7.3f} us/replica-barrido  -> "
+                  f"rellena {row['gain']:+.1%}", flush=True)
+        out.append(dict(Rd=float(Rd), L_phys=int(Lphys), L_array=int(gp["L"]),
+                        n_active=nsites, energy_rel_err=dE, mag_max_err=dM,
+                        equivalent=bool(ok), cells=cells))
+
+    print("\n=== relleno con capa ficticia ===", flush=True)
+    print(f"{'Rd':>7} {'L fis':>6} {'L arr':>6} {'equiv':>7} "
+          f"{'ganancia media':>15}", flush=True)
+    for o in out:
+        g = [c["gain"] for c in o["cells"]]
+        print(f"{o['Rd']:7.2f} {o['L_phys']:6d} {o['L_array']:6d} "
+              f"{'si' if o['equivalent'] else 'NO':>7} "
+              f"{np.mean(g):+14.1%}", flush=True)
+    res = dict(rows=out, batches=list(map(int, batches)), repeats=repeats,
+               sweeps_per_cell=sweeps, device=device_identity())
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+DUMMY_PAIRS = [(18.30, 4), (13.00, 8)]   # L|4 both: the hole in the rule
+
+
+@app.function(gpu="H100", **_BS)
+def dummy_layer_h100(pr, b, r, tag, nt, th, me):
+    return _dummy_layer(pr, b, r, tag, nt, th, me)
+
+
+@app.local_entrypoint()
+def dummy_layer(batches: str = "63,64,65", repeats: int = 3, n_temps: int = 20,
+                n_therm: int = 500, n_meas: int = 250, tag: str = "exp9_dummy"):
+    """Experiment 9: does a masked dummy layer buy back the width choice?"""
+    dummy_layer_h100.remote(DUMMY_PAIRS,
+                            [int(x) for x in batches.split(",") if x],
+                            repeats, tag, n_temps, n_therm, n_meas)
+
+
+# --------------------------------------------------------------------------
 # Experiment 8: the rolls are 2x the traffic of the computation. Can they go?
 #
 # The per-kernel profile says `input_concatenate_fusion` is 10.6% to 22.1% of
