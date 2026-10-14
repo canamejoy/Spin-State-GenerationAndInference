@@ -63,6 +63,24 @@ image = (
 # adds CuPy and compiles the stencil with nvrtc instead. It branches off `_base`
 # rather than `image` because the local files have to go on last, and it needs
 # only `sim_core` for the geometry.
+# Pallas on GPU lowers through mosaic_gpu, whose registration module imports
+# absl -- absent from the slim image, which is why `pallas_call` reported the
+# gpu platform unsupported even though the kernels themselves ran. Measured:
+# with absl-py installed and the registration imported, a trivial kernel
+# returns exact results.
+pallas_image = (
+    _base
+    .pip_install("absl-py")
+    .add_local_file(
+        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/sim_core.py",
+        "/root/sim_core.py",
+    )
+    .add_local_file(
+        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/theta4.json",
+        "/root/theta4.json",
+    )
+)
+
 cuda_image = (
     _base
     .pip_install("cupy-cuda12x")
@@ -3062,6 +3080,307 @@ def pair_h100(b, r, tag, Rd, L, nt, th, me, seed, label):
               volumes={"/out": vol})
 def pair_t4(b, r, tag, Rd, L, nt, th, me, seed, label):
     return _pair(b, r, tag, Rd, L, nt, th, me, seed, label)
+
+
+# --------------------------------------------------------------------------
+# Phase 0 of the Pallas plan: can a kernel we write beat the JAX path?
+#
+# The gate. Everything in `docs/planning/standardisation_strategy.md` rests on
+# Pallas being able to express this stencil WITHOUT the six materialised copies
+# that `jnp.roll` forces, and on the result being faster. That is cheap to find
+# out, so it is found out first.
+#
+# The design, and why it should win:
+#
+#   grid is (B, L) -- one program per (replica, layer) plane.
+#   Each program loads the (N, N, 3) plane for its layer plus the planes above
+#   and below, via three BlockSpecs over the SAME array with shifted index
+#   maps. That is the standard halo trick for an axis that does not wrap.
+#   x and y DO wrap, and the whole plane is resident, so the four in-plane
+#   neighbours are rolls of a block already in SRAM -- no HBM traffic at all,
+#   which is exactly what the JAX path pays for six times over.
+#
+# The maths is the same relaxation step as `_STENCIL`, so the two sides compute
+# the identical function and the comparison is only about how it is executed.
+# The disk mask is left out of BOTH sides: it would change the arithmetic
+# equally and the spike is about the memory pattern.
+def _pallas_spike(batches, repeats, tag, Rd, L):
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"jax {jax.__version__}", flush=True)
+    try:
+        # The registration has to be imported by hand: it is what installs the
+        # gpu lowering rule, and nothing else pulls it in.
+        import jax._src.pallas.mosaic_gpu.pallas_call_registration  # noqa: F401
+        from jax.experimental import pallas as pl
+    except Exception as e:
+        print(f"PALLAS UNAVAILABLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N, Lz = int(geo["N"]), int(geo["L"])
+    print(f"Rd={Rd} L={Lz} N={N}  plane {N*N*3*4:,} B  "
+          f"replica {Lz*N*N*3*4:,} B", flush=True)
+
+    # ---- the reference, in plain JAX: six rolls, as sim_core does ---------
+    def jax_step(sp):
+        xp = jnp.roll(sp, -1, 3); xm = jnp.roll(sp, 1, 3)
+        yp = jnp.roll(sp, -1, 2); ym = jnp.roll(sp, 1, 2)
+        zp = jnp.roll(sp, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp, 1, 1).at[:, 0].set(0.0)
+        e = sp + 0.1 * (xp + xm + yp + ym + zp + zm)
+        return e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    # ---- the same function as a Pallas kernel -----------------------------
+    def kernel(c_ref, below_ref, above_ref, o_ref):
+        z = pl.program_id(1)
+        c = c_ref[0, 0]                       # (N, N, 3), resident in SRAM
+        lo = below_ref[0, 0]
+        hi = above_ref[0, 0]
+        # z does not wrap: the planes outside the stack contribute nothing.
+        lo = jnp.where(z == 0, 0.0, lo)
+        hi = jnp.where(z == Lz - 1, 0.0, hi)
+        # x and y DO wrap, and the plane is already here, so these are rolls
+        # of an SRAM block rather than six arrays fetched from HBM.
+        sv = (jnp.roll(c, -1, 1) + jnp.roll(c, 1, 1)
+              + jnp.roll(c, -1, 0) + jnp.roll(c, 1, 0) + hi + lo)
+        e = c + 0.1 * sv
+        o_ref[0, 0] = e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    def pallas_step(sp):
+        B = sp.shape[0]
+        blk = (1, 1, N, N, 3)
+        return pl.pallas_call(
+            kernel,
+            grid=(B, Lz),
+            in_specs=[
+                pl.BlockSpec(blk, lambda b, z: (b, z, 0, 0, 0)),
+                pl.BlockSpec(blk, lambda b, z: (b, jnp.maximum(z - 1, 0), 0, 0, 0)),
+                pl.BlockSpec(blk, lambda b, z: (b, jnp.minimum(z + 1, Lz - 1), 0, 0, 0)),
+            ],
+            out_specs=pl.BlockSpec(blk, lambda b, z: (b, z, 0, 0, 0)),
+            out_shape=jax.ShapeDtypeStruct(sp.shape, sp.dtype),
+        )(sp, sp, sp)
+
+    # ---- equivalence, before timing --------------------------------------
+    sp = S.init_spins(jax.random.PRNGKey(5), geo, 3)
+    try:
+        a = jax.jit(jax_step)(sp)
+        b = jax.jit(pallas_step)(sp)
+    except Exception as e:
+        print(f"PALLAS COMPILE/RUN FAILED: {type(e).__name__}: {e}", flush=True)
+        return dict(available=True, ran=False,
+                    error=f"{type(e).__name__}: {e}")
+    err = float(jnp.max(jnp.abs(a - b)))
+    rel = err / float(jnp.max(jnp.abs(a)))
+    print(f"\nequivalencia: max |jax - pallas| = {err:.3e}  "
+          f"(relativo {rel:.3e}){'  OK' if rel < 1e-5 else '  MISMATCH'}",
+          flush=True)
+    if rel >= 1e-5:
+        print("  -> no son la misma funcion; el tiempo no significa nada",
+              flush=True)
+        return dict(available=True, ran=True, equivalent=False,
+                    max_err=err, rel_err=rel)
+
+    # ---- timing ----------------------------------------------------------
+    def v2(n):
+        k = 0
+        while n % 2 == 0:
+            n //= 2
+            k += 1
+        return k
+
+    rows = []
+    for B in batches:
+        sp = S.init_spins(jax.random.PRNGKey(11), geo, B)
+        cell = {}
+        for lbl, f in (("jax", jax_step), ("pallas", pallas_step)):
+            fn = jax.jit(f).lower(sp).compile()
+            jax.block_until_ready(fn(sp))
+            ts = []
+            for _ in range(repeats):
+                t0 = time.perf_counter()
+                jax.block_until_ready(fn(sp))
+                ts.append(time.perf_counter() - t0)
+            cell[lbl] = float(np.mean(ts))
+        gain = cell["jax"] / cell["pallas"] - 1
+        w = min(4, 2 ** (v2(B) + v2(Lz)))
+        rows.append(dict(B=int(B), width_xla=w, jax_s=cell["jax"],
+                         pallas_s=cell["pallas"], pallas_gain=gain))
+        print(f"  B={B:4d} (XLA ancho {w})  jax {cell['jax']*1e3:8.3f} ms   "
+              f"pallas {cell['pallas']*1e3:8.3f} ms   -> pallas "
+              f"{gain:+.1%}", flush=True)
+
+    g = [r["pallas_gain"] for r in rows]
+    print(f"\n=== Fase 0: compuerta de viabilidad ===", flush=True)
+    print(f"  ganancia de pallas: media {np.mean(g):+.1%}  "
+          f"(min {min(g):+.1%}, max {max(g):+.1%})", flush=True)
+    sd = float(np.std([r["pallas_s"] for r in rows]) /
+               np.mean([r["pallas_s"] for r in rows]))
+    print(f"  dispersion de pallas entre lotes: {sd:.1%}  "
+          f"(jax: {float(np.std([r['jax_s'] for r in rows]) / np.mean([r['jax_s'] for r in rows])):.1%})",
+          flush=True)
+    print(f"  VEREDICTO: {'PASA, seguir a Fase 1' if np.mean(g) > 0.05 else 'NO PASA, parar aqui'}",
+          flush=True)
+    res = dict(available=True, ran=True, equivalent=True, max_err=err,
+               rel_err=rel, rows=rows, mean_gain=float(np.mean(g)),
+               pallas_spread=sd, Rd=float(Rd), L=Lz, N=N, repeats=repeats,
+               device=device_identity(), jax_version=jax.__version__)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", **_BS)
+def pallas_probe():
+    """Why did pallas_call refuse to lower, and what would fix it?
+
+    The error names jaxlib, but the kernels themselves run fine on this image,
+    so the GPU build is there. On GPU, Pallas lowers through Triton, and that
+    path registers itself when its backend module imports -- which needs the
+    `triton` package. This reports what is actually present before anything is
+    installed on a guess.
+    """
+    import importlib, subprocess, sys
+    import jax
+    out = {"jax": jax.__version__}
+    try:
+        import jaxlib
+        out["jaxlib"] = jaxlib.__version__
+    except Exception as e:
+        out["jaxlib"] = f"{type(e).__name__}"
+    out["devices"] = [str(d) for d in jax.devices()]
+    for mod in ("triton", "jax_triton",
+                "jax.experimental.pallas",
+                "jax.experimental.pallas.triton",
+                "jax.experimental.pallas.mosaic_gpu",
+                "jax._src.pallas.triton.lowering",
+                "jax._src.pallas.mosaic_gpu.lowering"):
+        try:
+            m = importlib.import_module(mod)
+            out[mod] = getattr(m, "__version__", "present")
+        except Exception as e:
+            out[mod] = f"MISSING: {type(e).__name__}: {str(e)[:90]}"
+    for k, v in out.items():
+        print(f"  {k:46s} {v}", flush=True)
+
+    print("\ninstalling triton and retrying the lowering:", flush=True)
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "triton"],
+                       capture_output=True, text=True)
+    print(f"  pip exit {r.returncode}  {r.stderr.strip()[:200]}", flush=True)
+    code = (
+        "import jax, jax.numpy as jnp\n"
+        "from jax.experimental import pallas as pl\n"
+        "def k(x_ref, o_ref): o_ref[...] = x_ref[...] * 2.0\n"
+        "f = pl.pallas_call(k, out_shape=jax.ShapeDtypeStruct((256,), 'float32'))\n"
+        "x = jnp.arange(256, dtype='float32')\n"
+        "y = f(x)\n"
+        "print('PALLAS OK, max err', float(jnp.max(jnp.abs(y - 2*x))))\n")
+    r2 = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                        text=True, timeout=600)
+    print(f"  retry exit {r2.returncode}", flush=True)
+    print("  stdout:", r2.stdout.strip()[:300], flush=True)
+    if r2.returncode:
+        print("  stderr:", r2.stderr.strip()[-700:], flush=True)
+    out["triton_install_exit"] = r.returncode
+    out["retry_exit"] = r2.returncode
+    out["retry_stdout"] = r2.stdout.strip()[:300]
+    out["retry_stderr"] = r2.stderr.strip()[-700:] if r2.returncode else ""
+    return out
+
+
+@app.function(gpu="H100", **_BS)
+def pallas_probe2():
+    """Two specific hypotheses for why the gpu lowering is not registered.
+
+    `jax.experimental.pallas.triton` imports and `jax._src.pallas.triton
+    .lowering` imports, yet `pallas_call` still says the gpu platform is
+    unsupported. In JAX the rule is installed by a separate *registration*
+    module, which is imported conditionally -- so (1) importing it by hand may
+    be all that is missing. And `absl` is absent from this image, which is what
+    blocks `mosaic_gpu`, the other and newer GPU backend -- so (2) installing
+    absl-py may unlock that path instead.
+    """
+    import subprocess, sys, importlib
+    results = {}
+
+    def attempt(label, pre_imports, extra_pip=()):
+        if extra_pip:
+            r = subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                                *extra_pip], capture_output=True, text=True)
+            print(f"  pip {' '.join(extra_pip)}: exit {r.returncode}", flush=True)
+        code = ("import jax, jax.numpy as jnp\n"
+                + "".join(f"import {m}\n" for m in pre_imports)
+                + "from jax.experimental import pallas as pl\n"
+                "def k(x_ref, o_ref): o_ref[...] = x_ref[...] * 2.0\n"
+                "f = pl.pallas_call(k, out_shape=jax.ShapeDtypeStruct((256,),'float32'))\n"
+                "x = jnp.arange(256, dtype='float32')\n"
+                "print('OK err', float(jnp.max(jnp.abs(f(x) - 2*x))))\n")
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                           text=True, timeout=600)
+        ok = r.returncode == 0
+        print(f"  [{label}] {'OK -> ' + r.stdout.strip() if ok else 'FAIL'}",
+              flush=True)
+        if not ok:
+            tail = [l for l in r.stderr.strip().splitlines()
+                    if "Error" in l or "error" in l][-2:]
+            for l in tail:
+                print(f"      {l[:160]}", flush=True)
+        results[label] = dict(ok=ok, stdout=r.stdout.strip()[:200],
+                              stderr="" if ok else r.stderr.strip()[-400:])
+        return ok
+
+    print("hipotesis 1: importar el modulo de registro a mano", flush=True)
+    if attempt("triton_registration",
+               ["jax._src.pallas.triton.pallas_call_registration"]):
+        return results
+    print("\nhipotesis 2: absl-py desbloquea mosaic_gpu", flush=True)
+    if attempt("mosaic_after_absl",
+               ["jax._src.pallas.mosaic_gpu.pallas_call_registration"],
+               extra_pip=("absl-py",)):
+        return results
+    print("\nhipotesis 2b: solo absl, sin importar registro a mano", flush=True)
+    attempt("absl_plain", [])
+    print("\nque trae el wheel de jaxlib:", flush=True)
+    for mod in ("jaxlib.triton", "jaxlib.mosaic", "jax_triton"):
+        try:
+            importlib.import_module(mod)
+            print(f"  {mod:22s} present", flush=True)
+        except Exception as e:
+            print(f"  {mod:22s} MISSING ({type(e).__name__})", flush=True)
+    return results
+
+
+@app.local_entrypoint()
+def pallas_diag2():
+    """Test the two specific causes, cheapest first."""
+    pallas_probe2.remote()
+
+
+@app.local_entrypoint()
+def pallas_diag():
+    """What is missing for Pallas on GPU in this image?"""
+    pallas_probe.remote()
+
+
+@app.function(gpu="H100", image=pallas_image, memory=65536, timeout=3600,
+              volumes={"/out": vol})
+def pallas_spike_h100(b, r, tag, Rd, L):
+    return _pallas_spike(b, r, tag, Rd, L)
+
+
+@app.local_entrypoint()
+def pallas_spike(batches: str = "63,64,65", repeats: int = 5,
+                 rd: float = 18.30, layers: int = 5,
+                 tag: str = "phase0_pallas"):
+    """Phase 0: does a Pallas stencil beat the roll-based JAX one?"""
+    pallas_spike_h100.remote([int(x) for x in batches.split(",") if x],
+                             repeats, tag, rd, layers)
 
 
 # --------------------------------------------------------------------------
