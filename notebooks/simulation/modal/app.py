@@ -3083,6 +3083,205 @@ def pair_t4(b, r, tag, Rd, L, nt, th, me, seed, label):
 
 
 # --------------------------------------------------------------------------
+# Bayesian search for the best replicas-per-GPU, one GPU model, one geometry.
+#
+# Scope fixed by the tutor: H100 only, Rd = 18.30, L = 5. Candidates are
+# MULTIPLES OF FIVE so the total always divides cleanly if the run is later
+# spread over several GPUs. Note that B = 512, the minimum of the old 19-point
+# grid, is NOT a multiple of five -- its neighbours 510 and 515 are, and both
+# avoid the expensive vector width.
+#
+# Why a surrogate at all, and why this one. Plain Bayesian optimisation assumes
+# the objective is smooth, and we have MEASURED that this one is not: adjacent
+# batches differ by 27-35%. A Gaussian process fitted directly would read that
+# sawtooth as noise and chase its mean. So the surrogate is given the structure
+# we already understand, and only has to learn what is left:
+#
+#   mean model   us(B) = a/B + b + c*[width 4] + d*[width 2]
+#
+# The a/B term is the per-sweep cost paid once however many replicas share it,
+# measured at 10.9 us-replica. The width terms are the compiler's vectorisation
+# decision, which is known in advance from v2(B) + v2(L) and costs about 14% at
+# width 4. A Gaussian process then models the residual -- the sawtooth -- in
+# log2(B), and expected improvement picks the next batch to try.
+#
+# The objective reported is SECONDS PER REPLICA for a full production run
+# (200 temperatures x 20,000 sweeps), because microseconds per replica-sweep is
+# divided by both the replica count and the sweep count and reads as if nothing
+# takes any time.
+PROD_SWEEPS = 200 * 20000
+
+
+def _bayes_batch(lo, hi, step, n_init, n_iter, repeats, n_temps, n_therm,
+                 n_meas, tag, Rd, L, seed):
+    import sys, json, time, math
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    def v2(n):
+        k = 0
+        while n % 2 == 0:
+            n //= 2
+            k += 1
+        return k
+    width = lambda B: min(4, 2 ** (v2(B) + v2(int(L))))
+
+    cands = [b for b in range(lo, hi + 1) if b % step == 0]
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    sweeps = int(n_temps) * (int(n_therm) + int(n_meas))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={geo['N']} sitios={int(np.asarray(geo['disco']).sum())}",
+          flush=True)
+    print(f"{len(cands)} candidatos multiplos de {step} entre {lo} y {hi}  "
+          f"({sweeps:,} barridos por evaluacion, {repeats} repeticiones)",
+          flush=True)
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, int(n_therm), int(n_meas))
+
+    seen = {}
+
+    def evaluate(B):
+        """Seconds per replica for a full production run."""
+        if B in seen:
+            return seen[B]
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11), geo, B),
+                jax.random.PRNGKey(12), cols)
+        fn = jax.jit(body).lower(*args).compile()      # compile is not timed
+        ts = []
+        for _ in range(repeats):
+            t0 = time.perf_counter()
+            jax.block_until_ready(fn(*args))
+            ts.append(time.perf_counter() - t0)
+        us = float(np.mean(ts) * 1e6 / (sweeps * B))
+        sec = us * PROD_SWEEPS / 1e6
+        seen[B] = sec
+        print(f"    B={B:5d} ancho {width(B)}  {sec:7.3f} s por replica   "
+              f"(celda {np.mean(ts):6.2f} s)", flush=True)
+        return sec
+
+    # ---- the structural mean model, fitted to whatever is observed --------
+    def fit_mean(Bs, ys):
+        X = np.column_stack([1.0 / np.array(Bs, float),
+                             np.ones(len(Bs)),
+                             [1.0 if width(b) == 4 else 0.0 for b in Bs],
+                             [1.0 if width(b) == 2 else 0.0 for b in Bs]])
+        coef, *_ = np.linalg.lstsq(X, np.array(ys, float), rcond=None)
+        return coef
+
+    def mean_at(coef, Bs):
+        X = np.column_stack([1.0 / np.array(Bs, float),
+                             np.ones(len(Bs)),
+                             [1.0 if width(b) == 4 else 0.0 for b in Bs],
+                             [1.0 if width(b) == 2 else 0.0 for b in Bs]])
+        return X @ coef
+
+    def gp_posterior(Xtr, ytr, Xte, ell, sig, noise):
+        k = lambda A, Bm: sig ** 2 * np.exp(
+            -0.5 * ((A[:, None] - Bm[None, :]) / ell) ** 2)
+        K = k(Xtr, Xtr) + noise ** 2 * np.eye(len(Xtr))
+        Ks, Kss = k(Xtr, Xte), sig ** 2
+        Li = np.linalg.inv(np.linalg.cholesky(K))
+        Ki = Li.T @ Li
+        mu = Ks.T @ (Ki @ ytr)
+        var = np.maximum(Kss - np.sum((Ks.T @ Ki) * Ks.T, 1), 1e-12)
+        return mu, np.sqrt(var)
+
+    # ---- initial design: spread over the range, log spaced ---------------
+    targets = np.exp(np.linspace(math.log(lo), math.log(hi), int(n_init)))
+    init = sorted({min(cands, key=lambda c: abs(c - t)) for t in targets})
+    print(f"\n  diseno inicial ({len(init)} puntos):", flush=True)
+    Bs, ys = [], []
+    for B in init:
+        ys.append(evaluate(B)); Bs.append(B)
+
+    # ---- expected improvement over the remaining candidates --------------
+    print(f"\n  busqueda bayesiana ({n_iter} iteraciones):", flush=True)
+    from math import erf, sqrt as _sqrt
+    Phi = lambda z: 0.5 * (1.0 + erf(z / _sqrt(2.0)))
+    phi = lambda z: math.exp(-0.5 * z * z) / _sqrt(2 * math.pi)
+    for it in range(int(n_iter)):
+        coef = fit_mean(Bs, ys)
+        res = np.array(ys) - mean_at(coef, Bs)
+        xtr = np.log2(np.array(Bs, float))
+        left = [c for c in cands if c not in seen]
+        if not left:
+            break
+        xte = np.log2(np.array(left, float))
+        ell = max(0.35, (xtr.max() - xtr.min()) / 6.0)
+        sig = max(float(np.std(res)), 1e-6)
+        mu_r, sd_r = gp_posterior(xtr, res, xte, ell, sig,
+                                  noise=max(0.35 * sig, 1e-6))
+        mu = mean_at(coef, left) + mu_r
+        best = min(ys)
+        ei = []
+        for m, sdv in zip(mu, sd_r):
+            if sdv <= 1e-12:
+                ei.append(0.0); continue
+            z = (best - m) / sdv
+            ei.append((best - m) * Phi(z) + sdv * phi(z))
+        B = left[int(np.argmax(ei))]
+        print(f"  [{it+1:2d}/{n_iter}] EI elige B={B}  "
+              f"(prediccion {mu[int(np.argmax(ei))]:.3f} s, "
+              f"incertidumbre {sd_r[int(np.argmax(ei))]:.3f})", flush=True)
+        ys.append(evaluate(B)); Bs.append(B)
+
+    order = np.argsort(ys)
+    print(f"\n=== mejores lotes encontrados ===", flush=True)
+    print(f"  {'B':>6} {'ancho':>6} {'s/replica':>11} {'vs el mejor':>12}", flush=True)
+    for i in order[:12]:
+        print(f"  {Bs[i]:6d} {width(Bs[i]):6d} {ys[i]:11.3f} "
+              f"{ys[i]/min(ys):11.3f}x", flush=True)
+    coef = fit_mean(Bs, ys)
+    print(f"\n  modelo estructural ajustado:", flush=True)
+    print(f"    termino por barrido  a/B  con a = {coef[0]:.2f} s-replica",
+          flush=True)
+    print(f"    piso                 b    = {coef[1]:.3f} s", flush=True)
+    print(f"    recargo ancho 4           = {coef[2]:+.3f} s "
+          f"({100*coef[2]/coef[1]:+.1f}% del piso)", flush=True)
+    print(f"    recargo ancho 2           = {coef[3]:+.3f} s "
+          f"({100*coef[3]/coef[1]:+.1f}% del piso)", flush=True)
+
+    res = dict(rows=[dict(B=int(b), width=width(b), sec_per_replica=float(y))
+                     for b, y in zip(Bs, ys)],
+               best_B=int(Bs[int(order[0])]), best_sec=float(min(ys)),
+               mean_model=dict(a_per_sweep=float(coef[0]), floor=float(coef[1]),
+                               width4=float(coef[2]), width2=float(coef[3])),
+               candidates=len(cands), step=int(step), lo=int(lo), hi=int(hi),
+               n_init=int(n_init), n_iter=int(n_iter), repeats=int(repeats),
+               sweeps_per_eval=sweeps, prod_sweeps=PROD_SWEEPS,
+               Rd=float(Rd), L=int(L), N=int(geo["N"]),
+               device=device_identity())
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", **_BS)
+def bayes_batch_h100(lo, hi, st, ni, nit, r, nt, th, me, tag, Rd, L, sd):
+    return _bayes_batch(lo, hi, st, ni, nit, r, nt, th, me, tag, Rd, L, sd)
+
+
+@app.local_entrypoint()
+def bayes_batch(lo: int = 10, hi: int = 1020, step: int = 5,
+                n_init: int = 8, n_iter: int = 26, repeats: int = 2,
+                n_temps: int = 40, n_therm: int = 1000, n_meas: int = 500,
+                tag: str = "bayes_b", rd: float = 18.30, layers: int = 5,
+                seed: int = 11):
+    """Bayesian search for the best replicas per GPU. H100, one geometry."""
+    bayes_batch_h100.remote(lo, hi, step, n_init, n_iter, repeats, n_temps,
+                            n_therm, n_meas, tag, rd, layers, seed)
+
+
+# --------------------------------------------------------------------------
 # Phase 0 of the Pallas plan: can a kernel we write beat the JAX path?
 #
 # The gate. Everything in `docs/planning/standardisation_strategy.md` rests on
