@@ -3265,6 +3265,103 @@ def _bayes_batch(lo, hi, step, n_init, n_iter, repeats, n_temps, n_therm,
     return res
 
 
+# A survey to go with the search, because they answer different questions.
+#
+# Bayesian optimisation spends its budget where the optimum is, which is what it
+# is for -- and it showed exactly that here, picking 275 and 265 right after 270.
+# That produces a tight cluster and an otherwise empty axis. Filling the curve
+# is a SURVEY goal, not an optimisation one, so it gets its own run: points
+# spread evenly in log2(B) over the multiples of five, which is what a reader
+# needs to see the shape and what the sawtooth costs between neighbours.
+#
+# Evaluations here are cheap (35-70 s in the useful range), so a survey is
+# affordable; the two runs together give both the shape and the minimum.
+def _survey_batch(points, repeats, n_temps, n_therm, n_meas, tag, Rd, L,
+                  lo, hi, step):
+    import sys, json, time, math
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    def v2(n):
+        k = 0
+        while n % 2 == 0:
+            n //= 2
+            k += 1
+        return k
+    width = lambda B: min(4, 2 ** (v2(B) + v2(int(L))))
+
+    cands = [b for b in range(lo, hi + 1) if b % step == 0]
+    targets = np.exp(np.linspace(math.log(lo), math.log(hi), int(points)))
+    grid = sorted({min(cands, key=lambda c: abs(c - t)) for t in targets})
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    sweeps = int(n_temps) * (int(n_therm) + int(n_meas))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"barrido de {len(grid)} puntos, espaciados en log2(B): {grid}",
+          flush=True)
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, int(n_therm), int(n_meas))
+
+    rows = []
+    for B in grid:
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11), geo, B),
+                jax.random.PRNGKey(12), cols)
+        fn = jax.jit(body).lower(*args).compile()
+        ts = []
+        for _ in range(repeats):
+            t0 = time.perf_counter()
+            jax.block_until_ready(fn(*args))
+            ts.append(time.perf_counter() - t0)
+        us = float(np.mean(ts) * 1e6 / (sweeps * B))
+        sec = us * PROD_SWEEPS / 1e6
+        rows.append(dict(B=int(B), width=width(B), sec_per_replica=sec,
+                         us_per_replica_sweep=us,
+                         sd_s=float(np.std(ts))))
+        print(f"  B={B:5d} ancho {width(B)}  {sec:7.3f} s por replica",
+              flush=True)
+
+    best = min(rows, key=lambda r: r["sec_per_replica"])
+    print(f"\n=== barrido ===", flush=True)
+    print(f"  mejor: B={best['B']} con {best['sec_per_replica']:.3f} s", flush=True)
+    for w in (1, 2, 4):
+        g = [r["sec_per_replica"] for r in rows if r["width"] == w]
+        if g:
+            print(f"  ancho {w}: {len(g):2d} puntos, media {np.mean(g):6.3f} s, "
+                  f"mejor {min(g):6.3f} s", flush=True)
+    res = dict(rows=rows, best_B=best["B"], best_sec=best["sec_per_replica"],
+               points=int(points), lo=int(lo), hi=int(hi), step=int(step),
+               repeats=int(repeats), sweeps_per_eval=sweeps,
+               prod_sweeps=PROD_SWEEPS, Rd=float(Rd), L=int(L),
+               device=device_identity())
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", **_BS)
+def survey_batch_h100(pts, r, nt, th, me, tag, Rd, L, lo, hi, st):
+    return _survey_batch(pts, r, nt, th, me, tag, Rd, L, lo, hi, st)
+
+
+@app.local_entrypoint()
+def survey_batch(points: int = 26, repeats: int = 2, n_temps: int = 40,
+                 n_therm: int = 1000, n_meas: int = 500,
+                 tag: str = "survey_b", rd: float = 18.30, layers: int = 5,
+                 lo: int = 10, hi: int = 1020, step: int = 5):
+    """Even coverage of the axis, to go with the Bayesian search."""
+    survey_batch_h100.remote(points, repeats, n_temps, n_therm, n_meas, tag,
+                             rd, layers, lo, hi, step)
+
+
 @app.function(gpu="H100", **_BS)
 def bayes_batch_h100(lo, hi, st, ni, nit, r, nt, th, me, tag, Rd, L, sd):
     return _bayes_batch(lo, hi, st, ni, nit, r, nt, th, me, tag, Rd, L, sd)
