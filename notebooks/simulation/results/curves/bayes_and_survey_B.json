@@ -43,6 +43,12 @@
    "source": "barrido"
   },
   {
+   "B": 50,
+   "width": 2,
+   "sec_per_replica": 9.788,
+   "source": "barrido"
+  },
+  {
    "B": 55,
    "width": 1,
    "sec_per_replica": 9.162,
@@ -64,6 +70,12 @@
    "B": 90,
    "width": 2,
    "sec_per_replica": 9.218,
+   "source": "barrido"
+  },
+  {
+   "B": 100,
+   "width": 4,
+   "sec_per_replica": 12.825,
    "source": "barrido"
   },
   {
@@ -301,7 +313,7 @@
    "source": "busqueda"
   }
  ],
- "n_distinct": 50,
+ "n_distinct": 52,
  "best_B": 850,
  "best_sec": 7.332,
  "best_source": "barrido",
@@ -312,5 +324,11 @@
  "L": 5,
  "sweeps_per_eval": 60000,
  "prod_sweeps": 4000000,
- "unit": "seconds per replica for a full production run, EXTRAPOLATED from 60,000-sweep cells"
+ "unit": "seconds per replica for a full production run, EXTRAPOLATED from 60,000-sweep cells",
+ "cross_check_B100": {
+  "measured": 12.825,
+  "old_curve": 12.77,
+  "agreement_pct": 0.4,
+  "note": "independent run weeks earlier, same lattice"
+ }
 }

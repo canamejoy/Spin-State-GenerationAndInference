@@ -79,6 +79,45 @@ geometría, para decidir cuántas réplicas conviene poner en cada dispositivo.<
 </div>
 
 <h2>La curva</h2>
+
+<div class="key">
+  <p><b>Los parámetros de producción, que es lo que mide cada punto.</b></p>
+</div>
+
+<div class="tw"><table>
+  <thead><tr><th>parámetro</th><th>valor</th><th>de dónde sale</th></tr></thead>
+  <tbody>
+    <tr><td>Temperaturas del descenso</td><td class="n">200</td>
+        <td>convención del proyecto</td></tr>
+    <tr><td>Barridos por temperatura</td><td class="n">20 000</td>
+        <td>convención del proyecto</td></tr>
+    <tr class="best"><td><b>Barridos totales por réplica</b></td>
+        <td class="n"><b>4 000 000</b></td><td>200 × 20 000</td></tr>
+    <tr><td>Radio del disco · <code>Rd</code></td><td class="n">18.30</td>
+        <td>geometría fija</td></tr>
+    <tr><td>Capas · <code>L</code></td><td class="n">5</td><td>geometría fija</td></tr>
+    <tr><td>Rejilla · <code>N</code></td><td class="n">39 × 39</td>
+        <td><code>2·(⌊Rd⌋+1)+1</code></td></tr>
+    <tr><td>Sitios activos</td><td class="n">5 245</td>
+        <td>los que caen dentro del disco</td></tr>
+    <tr><td>GPU</td><td class="n">H100 80GB HBM3</td><td>un solo modelo</td></tr>
+  </tbody>
+</table></div>
+
+<p>Así que <b>cada punto de la curva es lo que una réplica consume para
+completar las 200 temperaturas × 20 000 barridos</b>. El reloj de una tanda
+entera es ese número <b>multiplicado por <code>B</code></b>: con
+<code>B</code> = 850 son 7.33 × 850 = <b class="n">1.73 h</b> para las 850
+réplicas, y con <code>B</code> = 50 son 9.79 × 50 = <b class="n">8.2 min</b>
+para 50.</p>
+
+<div class="note"><strong>Por eso se divide por réplica y no se mira el reloj
+pelado.</strong> Un lote chico siempre tarda menos en total, porque hace menos
+trabajo — pero cada réplica le sale más cara. Dividir por el número de réplicas
+es lo que vuelve comparables lotes de distinto tamaño, y lo que deja ver que
+<code>B</code> = 50 cuesta un 33 % más por réplica que <code>B</code> = 850
+aunque su tanda termine antes.</div>
+
 <div class="chartbox">
   <div class="ctl" style="margin-bottom:12px"><span>Colorear por</span>
     <div class="seg" id="segW" role="group" aria-label="Coloreado">
@@ -98,9 +137,21 @@ geometría, para decidir cuántas réplicas conviene poner en cada dispositivo.<
     <p><b>7.33 s</b> por réplica. Segundo: <code>B</code> = 705 con 7.72 s.</p></div>
   <div class="card"><h3>Peor lote</h3><span class="big up">B = 10</span>
     <p><b>15.22 s</b> por réplica — <b>2.08×</b> el mejor, mismo trabajo.</p></div>
-  <div class="card"><h3>Convención actual</h3><span class="big">B = 50</span>
-    <p>entre B=45 (9.13 s) y B=55 (9.16 s): <b>25 % por encima</b> del mejor.</p></div>
+  <div class="card"><h3>Convención actual</h3><span class="big up">B = 50</span>
+    <p><b>9.79 s</b> medidos: <b>33 % por encima</b> del mejor.</p></div>
 </div>
+
+<div class="note warn"><strong>Dos puntos que se midieron aparte, y uno
+corrige una afirmación nuestra.</strong> <code>B</code> = 50 y
+<code>B</code> = 100 son las convenciones heredadas, así que se midieron
+explícitamente. <code>B</code> = 50 da <b class="n">9.79 s</b> — pero antes
+figuraba como «~9.15 s» en esta página, interpolado entre
+<code>B</code> = 45 (9.13) y <code>B</code> = 55 (9.16). <b>La interpolación
+falló por 7 %</b>: <code>B</code> = 50 es peor que sus dos vecinos, que es
+exactamente el dentado haciendo lo suyo en un punto que importa. Es otra razón
+para no interpolar esta curva nunca. Y <code>B</code> = 100 da
+<b class="n">12.83 s</b> contra <b class="n">12.77 s</b> de una medición
+independiente de hace semanas: coinciden al <b class="n">0.4 %</b>.</div>
 
 <h2>Los dos efectos que forman la curva</h2>
 <div class="two">
@@ -218,6 +269,8 @@ medidos, no de ese ajuste.</div>
   cualquier lote en [385, 465] cuesta entre 9 % y 13 % más.</p>
   <p><b>Evitar los múltiplos de cuatro</b>, que es donde el compilador vectoriza
   por 4: cuestan entre 29 % y 44 % más que sus vecinos inmediatos.</p>
+  <p><b>La convención de 50 réplicas por GPU cuesta 33 % más por réplica</b>
+  que <code>B</code> = 850, medido y no interpolado.</p>
   <p style="color:var(--muted);font-size:.93rem">Y agrupar siempre por réplicas,
   no por experimentos: es la diferencia entre escalar 3.86× y 1.11× al pasar de
   una GPU a cuatro.</p>
@@ -243,10 +296,12 @@ const PTS = [
   {B:30, w:2, s:10.103, src:"sv"},
   {B:35, w:1, s:10.451, src:"bo"},
   {B:45, w:1, s:9.130, src:"sv"},
+  {B:50, w:2, s:9.788, src:"sv"},
   {B:55, w:1, s:9.162, src:"sv"},
   {B:65, w:1, s:9.757, src:"sv"},
   {B:75, w:1, s:9.163, src:"bo"},
   {B:90, w:2, s:9.218, src:"sv"},
+  {B:100, w:4, s:12.825, src:"sv"},
   {B:110, w:2, s:8.806, src:"sv"},
   {B:125, w:1, s:8.953, src:"bo"},
   {B:135, w:1, s:8.665, src:"sv"},
