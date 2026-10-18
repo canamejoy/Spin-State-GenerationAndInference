@@ -1,6 +1,6 @@
 # Interactive pages
 
-Five self-contained pages built from the measurements in `docs/10`–`docs/12`.
+Six self-contained pages built from the measurements in `docs/10`–`docs/12`.
 Open the `.html` files directly in a browser; everything they need is here.
 
 | page | what it answers |
@@ -9,6 +9,7 @@ Open the `.html` files directly in a browser; everything they need is here.
 | `cronograma.html` | 100 replicas x 15k sweeps against 50 x 20k: cost, accuracy, and the autocorrelation time that decides between them. |
 | `resumen.html` | **Start here.** The batch-size result synthesised for a reader who wants the conclusion: what we found, the T4 64-vs-65 reproducibility test in total seconds, what the width effect and the sawtooth each are worth, and the scope of what is verified. Reports wall-clock seconds throughout, not the normalised metric. |
 | `replicas.html` | How many replicas belong on each GPU, for the fixed setup the tutor asked for: H100, Rd 18.30, five layers. Fifty batch sizes measured, reported as seconds per replica for a full production run. Also carries why grouping by experiments does not parallelise (1.11x against 3.86x) and why the launch count does not matter (2.7%). |
+| `operaciones.html` | Step-by-step of one Monte Carlo sweep: every operation the GPU runs, with its launch geometry, instruction mix and measured time, comparing B=135 (width 1) against B=140 (width 4) five replicas apart. Shows that 91% of the excess falls in the two operations the compiler vectorises. |
 | `lotes.html` | The whole GPU-parallelisation investigation as one narrative: the optimal-batch hypothesis, every mechanism that turned out to be false (hardware, cache, bandwidth, buffer alignment, the RNG, the host transfer, the replica stride), and the rule that held — `v2(B) + v2(L) >= 2`. Six interactive widgets: a `v2` explainer, a geometry explorer, the 19-point curve, the dense per-device windows, a vector-width calculator, and a planner over the five degrees of freedom that refuses to cost a lattice whose curve has not been measured. States what is verified on five GPUs and what is verified only on an H100. |
 
 `cronograma.html` reads `sched.json` and the `sz/` images with relative paths,

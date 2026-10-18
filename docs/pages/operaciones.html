@@ -1,0 +1,304 @@
+<title>Paso a paso de un barrido</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{--bg:#f7f5f2;--surface:#fffefc;--ink:#1c1a17;--muted:#6b645b;--rule:#e2ddd5;
+ --up:#c0392b;--dn:#2471a3;--accent:#1a7a6a;--warn:#b8651b;
+ --display:"Spectral",Georgia,serif;--body:"IBM Plex Sans",system-ui,sans-serif;
+ --mono:"IBM Plex Mono",ui-monospace,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+ --bg:#16161a;--surface:#1f1f24;--ink:#eceae6;--muted:#9d968c;--rule:#34343c;
+ --up:#e8604f;--dn:#4a9fe0;--accent:#39b8a2;--warn:#dc9346;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16161a;--surface:#1f1f24;--ink:#eceae6;--muted:#9d968c;
+ --rule:#34343c;--up:#e8604f;--dn:#4a9fe0;--accent:#39b8a2;--warn:#dc9346;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;
+ line-height:1.6;margin:0}
+.wrap{max-width:1000px;margin:0 auto;padding-inline:20px;padding-block:44px 64px}
+h1{font-family:var(--display);font-size:clamp(1.9rem,5vw,2.7rem);line-height:1.1;
+ margin:0 0 .35em;text-wrap:balance;font-weight:600}
+h2{font-family:var(--display);font-size:clamp(1.25rem,3vw,1.55rem);margin:2em 0 .5em;
+ font-weight:600;text-wrap:balance}
+p{margin:0 0 .9em;max-width:70ch}
+.lede{font-size:1.08rem;color:var(--muted);max-width:64ch}
+.eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;
+ text-transform:uppercase;color:var(--accent);margin:0 0 .6em}
+code,.n{font-family:var(--mono);font-variant-numeric:tabular-nums}.n{font-weight:500}
+hr{border:0;border-top:1px solid var(--rule);margin:2.2rem 0}
+.key{background:var(--surface);border:1px solid var(--rule);border-left:3px solid var(--accent);
+ border-radius:10px;padding:16px 18px;margin:1.3em 0}
+.key p{margin:0;max-width:66ch}.key p+p{margin-top:.6em}
+.note{border-left:3px solid var(--rule);padding:.1rem 0 .1rem 1rem;margin:1.2em 0;
+ color:var(--muted);max-width:66ch;font-size:.94rem}
+.note strong{color:var(--ink)}.note.warn{border-left-color:var(--warn)}
+table{border-collapse:collapse;width:100%;font-size:.88rem;margin:.8em 0}
+th,td{text-align:right;padding:6px 9px;border-bottom:1px solid var(--rule)}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;
+ color:var(--muted);font-weight:500}
+.tw{overflow-x:auto}td.bad{color:var(--up);font-weight:600}
+td.good{color:var(--accent);font-weight:600}.best td{color:var(--accent);font-weight:600}
+
+/* el diagrama */
+.flow{margin:1.5em 0}
+.step{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+ margin-bottom:10px;overflow:hidden}
+.step.hot{border-left:4px solid var(--up)}
+.step.cold{border-left:4px solid var(--accent)}
+.step>header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;
+ padding:11px 15px;border-bottom:1px solid var(--rule);background:var(--bg)}
+.step>header b{font-size:1rem}
+.stepno{font-family:var(--mono);font-size:.72rem;color:var(--muted);
+ border:1px solid var(--rule);border-radius:20px;padding:2px 9px;flex:0 0 auto}
+.tag{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;
+ padding:2px 8px;border-radius:20px;border:1px solid currentColor;margin-left:auto;flex:0 0 auto}
+.tag.hot{color:var(--up)}.tag.cold{color:var(--accent)}
+.body{padding:13px 15px}
+.body p{font-size:.93rem;margin:0 0 .6em}
+.what{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px;
+ margin:.7em 0 0}
+.what div{min-width:0;font-size:.86rem}
+.what span{display:block;font-family:var(--mono);font-size:.63rem;letter-spacing:.07em;
+ text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);
+ margin-top:12px;border-top:1px solid var(--rule)}
+.cmp>div{background:var(--surface);padding:10px 14px;min-width:0}
+.cmp .hd{font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;
+ text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.cmp b{font-family:var(--mono);font-size:1.18rem;font-weight:500;display:block}
+.cmp .sub{font-size:.8rem;color:var(--muted);margin-top:3px}
+.delta{font-family:var(--mono);font-size:.82rem;font-weight:500}
+.delta.up{color:var(--up)}.delta.flat{color:var(--accent)}
+.arrow{text-align:center;color:var(--rule);font-size:1.1rem;line-height:1;margin:-4px 0 6px}
+</style>
+
+<div class="wrap">
+<p class="eyebrow">H100 · Rd 18.30 · 5 capas · trazado por kernel</p>
+<h1>Paso a paso de un barrido</h1>
+<p class="lede">Cada operación que la GPU ejecuta para avanzar un barrido de
+Monte Carlo, con su geometría de lanzamiento y su tiempo medido — comparando un
+lote impar contra uno múltiplo de cuatro para ver dónde recae la tardanza.</p>
+
+<div class="key">
+  <p><b>Los dos lotes.</b> <code>B</code> = 135 (impar, el compilador no
+  vectoriza) contra <code>B</code> = 140 (múltiplo de cuatro, vectoriza por 4).
+  Están a <b>cinco réplicas de distancia</b>, así que nada más cambia, y difieren
+  <b class="n">+48 %</b> en tiempo total de GPU.</p>
+  <p style="color:var(--muted);font-size:.93rem">Los tiempos de cada caja son
+  <b>microsegundos por réplica y por barrido</b> — el total trazado dividido
+  entre los 3600 barridos y entre las réplicas, que es lo único comparable entre
+  lotes de distinto tamaño.</p>
+</div>
+
+<h2>Dónde recae la diferencia</h2>
+<div class="tw"><table>
+  <thead><tr><th>operación</th><th>B=135 · ancho 1</th><th>B=140 · ancho 4</th>
+    <th>cambio</th><th>del exceso total</th></tr></thead>
+  <tbody>
+    <tr class="best"><td><b>Energía por sitio</b></td><td class="n">0.495 µs</td>
+        <td class="bad">1.080 µs</td><td class="bad">+118 %</td><td class="bad"><b>61 %</b></td></tr>
+    <tr><td>Aceptación de Metropolis</td><td class="n">0.376</td>
+        <td class="bad">0.662</td><td class="bad">+76 %</td><td class="bad">30 %</td></tr>
+    <tr><td>Fusiones intermedias</td><td class="n">0.349</td><td class="n">0.444</td>
+        <td class="n">+27 %</td><td class="n">10 %</td></tr>
+    <tr><td><b>Los seis vecinos</b></td><td class="n">0.568</td><td class="n">0.569</td>
+        <td class="good">+0 %</td><td class="good">0 %</td></tr>
+    <tr><td>Observables</td><td class="n">0.237</td><td class="n">0.234</td>
+        <td class="good">−1 %</td><td class="good">0 %</td></tr>
+    <tr><td>Resto · 30 kernels chicos</td><td class="n">0.210</td>
+        <td class="n">0.208</td><td class="good">−1 %</td><td class="good">0 %</td></tr>
+    <tr><td><b>total trazado · 44 kernels</b></td><td class="n"><b>2.235</b></td>
+        <td class="n"><b>3.197</b></td><td class="bad"><b>+43 %</b></td><td></td></tr>
+  </tbody>
+</table></div>
+
+<p><b>El 91 % del exceso cae en dos operaciones</b> — la energía por sitio y la
+aceptación— y son exactamente las dos que el compilador vectoriza. Las otras tres
+filas no se mueven. <b>Los seis vecinos son la caja más cara con lote impar</b>
+(0.568 de 2.235, un 25 %) y aun así <b>no aportan nada al exceso</b>: cambian
+0 %.</p>
+
+<div class="note"><strong>Cómo leer la tabla.</strong> Las cinco cajas del
+diagrama cubren el <b class="n">91 %</b> del tiempo total y, lo que importa, el
+<b class="n">100 % del exceso</b>: la suma de sus cambios es +0.964 µs contra un
+cambio total de +0.962 µs. Los 30 kernels restantes son chicos y planos, por eso
+van en una sola fila. Y el <b class="n">+43 %</b> del total por réplica no es el
+<b class="n">+48 %</b> de tiempo bruto de GPU que mide el trazado: la diferencia
+son las cinco réplicas de más que B=140 reparte el costo entre
+(1.483 ÷ 1.037 = 1.430).</div>
+
+<h2>El diagrama</h2>
+<div class="flow">
+
+  <div class="step cold">
+    <header><span class="stepno">1</span><b>Los seis vecinos</b>
+      <span class="tag cold">no se vectoriza</span></header>
+    <div class="body">
+      <p>Cada sitio necesita sus seis vecinos (±x, ±y, ±z). El código los pide
+      con seis <code>jnp.roll</code>, y XLA baja cada uno a un
+      <b>concatenate</b>: no es una vista, <b>materializa una copia completa</b>
+      del arreglo de espines.</p>
+      <div class="what">
+        <div><span>Qué hace CUDA</span>6 kernels separados
+          <code>input_concatenate_fusion_9…14</code>, cada uno copia
+          <code>(B, 5, 39, 39, 3)</code> desplazado un sitio</div>
+        <div><span>Dónde arranca</span>el host lanza los 6 al principio de cada
+          medio paso, antes de cualquier cálculo</div>
+        <div><span>Hilos</span>un hilo por elemento del arreglo:
+          <b class="n">23 446</b> bloques × 128 = <b class="n">3.0 M</b> hilos
+          (B=135)</div>
+        <div><span>Por qué no cambia</span>un concatenate no depende del ancho
+          de vector: siempre un elemento por hilo, en los dos lotes</div>
+      </div>
+    </div>
+    <div class="cmp">
+      <div><div class="hd">B = 135 · ancho 1</div><b>0.568 µs</b>
+        <div class="sub">grid 23 446 × 128 · 2–4 cargas escalares por kernel</div></div>
+      <div><div class="hd">B = 140 · ancho 4</div><b>0.569 µs</b>
+        <div class="sub">grid 24 315 × 128 · <span class="delta flat">+0 %</span></div></div>
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <div class="step hot">
+    <header><span class="stepno">2</span><b>Energía por sitio</b>
+      <span class="tag hot">aquí recae el 61 %</span></header>
+    <div class="body">
+      <p>Con los vecinos ya en memoria, se calcula el cambio de energía de
+      proponer un giro: suma de intercambio, anisotropía uniaxial y cúbica,
+      superficie, DMI y Zeeman. Un número por sitio.</p>
+      <div class="what">
+        <div><span>Qué hace CUDA</span><code>loop_and_fusion_2</code> y
+          <code>loop_and_fusion_3</code>, sobre la forma <em>por sitio</em>
+          <code>(B, 5, 39, 39)</code> — sin el eje de las 3 componentes</div>
+        <div><span>Dónde arranca</span>después de los seis concatenates, dentro
+          del mismo medio paso</div>
+        <div><span>Hilos · B=135</span><b class="n">8 021</b> bloques × 128 =
+          <b class="n">1.03 M</b> hilos, <b>uno por sitio</b></div>
+        <div><span>Hilos · B=140</span><b class="n">2 080</b> bloques × 128 =
+          <b class="n">266 K</b> hilos — <b>4× menos</b>, cada uno hace 4 sitios</div>
+      </div>
+      <p style="margin-top:.6em"><b>Y acá está el costo.</b> Las cargas
+      escalares por kernel pasan de <b class="n">95</b> a <b class="n">326</b>:
+      el cuerpo está desenrollado 4 veces y <b>XLA no emite una carga vectorial
+      de 128 bits</b> (medimos <code>ld.global.v4</code> = 0). Son cuatro cargas
+      escalares separadas, cada una con paso de 16 bytes a lo ancho del warp, así
+      que el warp pide <b>512 bytes para entregar 128 útiles</b>.</p>
+    </div>
+    <div class="cmp">
+      <div><div class="hd">B = 135 · ancho 1</div><b>0.495 µs</b>
+        <div class="sub">1.03 M hilos · 95 cargas escalares</div></div>
+      <div><div class="hd">B = 140 · ancho 4</div><b class="n" style="color:var(--up)">1.080 µs</b>
+        <div class="sub">266 K hilos · 326 cargas ·
+          <span class="delta up">+118 %</span></div></div>
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <div class="step">
+    <header><span class="stepno">3</span><b>Fusiones intermedias</b>
+      <span class="tag">cambian de identidad</span></header>
+    <div class="body">
+      <p>Dos fusiones grandes sin nombre descriptivo, que llevan el espín de
+      prueba y los términos auxiliares. <b>No son las mismas en los dos
+      lotes:</b> en B=135 son <code>fusion_1486</code> y
+      <code>fusion_1484</code>; en B=140 desaparecen y aparecen
+      <code>fusion_1405</code> y <code>fusion_1396</code>.</p>
+      <div class="what">
+        <div><span>Qué hace CUDA</span>dos kernels por barrido, bloque de 128</div>
+        <div><span>Lo que esto prueba</span>XLA no re-tilea el mismo programa:
+          <b>emite un programa distinto</b> según el tamaño del lote</div>
+      </div>
+    </div>
+    <div class="cmp">
+      <div><div class="hd">B = 135 · ancho 1</div><b>0.349 µs</b>
+        <div class="sub">grid 2 125 × 128 · fusion_1486 + 1484</div></div>
+      <div><div class="hd">B = 140 · ancho 4</div><b>0.444 µs</b>
+        <div class="sub">grid 2 625 × 128 · fusion_1405 + 1396 ·
+          <span class="delta up">+27 %</span></div></div>
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <div class="step hot">
+    <header><span class="stepno">4</span><b>Aceptación de Metropolis</b>
+      <span class="tag hot">aquí recae el 30 %</span></header>
+    <div class="body">
+      <p>Se compara un número aleatorio contra <code>exp(−ΔE·β)</code> y se
+      elige: o el espín de prueba, o el que había. Es un
+      <code>where</code> sobre todo el arreglo.</p>
+      <div class="what">
+        <div><span>Qué hace CUDA</span><code>loop_maximum_negate_fusion_1</code>
+          (el máximo y la exponencial) y <code>loop_select_fusion_1</code>
+          (la selección), sobre la forma completa <code>(B, 5, 39, 39, 3)</code></div>
+        <div><span>Dónde arranca</span>al final del medio paso; su salida es el
+          estado de entrada del medio paso siguiente</div>
+        <div><span>Hilos · B=135</span><b class="n">24 063</b> × 128 =
+          <b class="n">3.1 M</b> hilos, uno por elemento</div>
+        <div><span>Hilos · B=140</span><b class="n">6 239</b> × 128 =
+          <b class="n">799 K</b> hilos — <b>4× menos</b></div>
+      </div>
+    </div>
+    <div class="cmp">
+      <div><div class="hd">B = 135 · ancho 1</div><b>0.376 µs</b>
+        <div class="sub">3.1 M hilos · 13 cargas escalares</div></div>
+      <div><div class="hd">B = 140 · ancho 4</div><b class="n" style="color:var(--up)">0.662 µs</b>
+        <div class="sub">799 K hilos · 34 cargas ·
+          <span class="delta up">+76 %</span></div></div>
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <div class="step cold">
+    <header><span class="stepno">5</span><b>Observables</b>
+      <span class="tag cold">solo en barridos de medición</span></header>
+    <div class="body">
+      <p>Energía, magnetización y carga topológica. <b>No corren en cada
+      barrido:</b> se lanzan <b class="n">1 208</b> veces contra las
+      <b class="n">3 600</b> de las cajas anteriores — una por barrido de
+      medición, no de termalización.</p>
+      <div class="what">
+        <div><span>Qué hace CUDA</span><code>loop_reduce_fusion_1</code> y
+          <code>input_reduce_fusion</code>: reducciones con
+          <em>warp shuffles</em> y memoria compartida</div>
+        <div><span>Bloque distinto</span><b class="n">480</b> hilos por bloque,
+          no 128 — el emisor de reducciones elige su propia geometría</div>
+      </div>
+    </div>
+    <div class="cmp">
+      <div><div class="hd">B = 135 · ancho 1</div><b>0.237 µs</b>
+        <div class="sub">grid 206 × 128 y 135 × 480</div></div>
+      <div><div class="hd">B = 140 · ancho 4</div><b>0.234 µs</b>
+        <div class="sub">grid 214 × 128 y 140 × 480 ·
+          <span class="delta flat">−1 %</span></div></div>
+    </div>
+  </div>
+</div>
+
+<h2>Lo que el diagrama deja ver</h2>
+<div class="key">
+  <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las
+  cajas 2 y 4, que son precisamente las dos que el compilador vectoriza por 4.
+  Las cajas 1 y 5 no se mueven, y la caja 1 es la más cara del lote impar.</p>
+  <p><b>Menos hilos y más lento.</b> En la caja 2, el lote múltiplo de cuatro
+  usa <b>4× menos hilos</b> (266 K contra 1.03 M) y tarda <b>2.2× más</b>. Cada
+  hilo hace cuatro veces el trabajo y lo hace mal, porque las cuatro cargas son
+  escalares y pisan cuatro transacciones de memoria distintas.</p>
+</div>
+
+<div class="note warn"><strong>Lo que no pudimos medir.</strong> Nsight Compute
+(<code>ncu</code>) no está disponible en los contenedores de Modal, así que la
+tasa de aciertos de L2 y las transacciones por sector <b>no están leídas de los
+contadores de hardware</b>: se infieren del reloj y del conteo de instrucciones
+en el PTX. La predicción que quedaría por verificar con contadores es concreta —
+los lotes múltiplos de cuatro deberían mostrar ~4× las transacciones de sector
+por byte útil en la caja 2.</div>
+
+<hr>
+<p style="color:var(--muted);font-size:.87rem">Trazado con
+<code>jax.profiler.trace</code> sobre una ejecución completa tras calentamiento,
+8 temperaturas × 450 barridos = 3600 barridos, con la geometría de lanzamiento
+tomada del <code>thunk_sequence.txt</code> del módulo compilado y el conteo de
+instrucciones del PTX emitido. 44 kernels en B=135 y 43 en B=140; el diagrama
+agrupa los que comparten función. Datos en
+<code>notebooks/simulation/results/curves/opstep_135_140.json</code>.</p>
+</div>

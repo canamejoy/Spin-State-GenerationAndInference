@@ -1,0 +1,101 @@
+{
+ "question": "Where does the extra time actually go when a batch is a multiple of four? Per-operation GPU timing for B=135 (width 1) against B=140 (width 4), five replicas apart so nothing else differs.",
+ "method": "jax.profiler.trace over a full execution after a warm-up call, joined by kernel name with the launch geometry from the module's own thunk_sequence.txt and the instruction counts from the emitted PTX. 8 temperatures x 450 sweeps = 3600 sweeps.",
+ "device": "NVIDIA H100 80GB HBM3",
+ "Rd": 18.3,
+ "L": 5,
+ "N": 39,
+ "totals": {
+  "135": {
+   "gpu_us": 1086074,
+   "n_kernels": 44,
+   "us_per_replica_sweep": 2.2347
+  },
+  "140": {
+   "gpu_us": 1611073,
+   "n_kernels": 43,
+   "us_per_replica_sweep": 3.1966
+  }
+ },
+ "change_total_gpu_pct": 48.3,
+ "change_per_replica_sweep_pct": 43.0,
+ "note_on_the_two_numbers": "48.3% is raw GPU time; 43.0% is per replica-sweep. The difference is the five extra replicas B=140 spreads the cost over: 1.483 / 1.037 = 1.430.",
+ "boxes": [
+  {
+   "name": "Los seis vecinos",
+   "kernels": "input_concatenate_fusion_9..14",
+   "what": "the six jnp.roll calls, each materialising a full shifted copy",
+   "us_135": 0.5679,
+   "us_140": 0.5691,
+   "change_pct": 0.2,
+   "share_of_excess_pct": 0,
+   "grid_135": 23446,
+   "grid_140": 24315,
+   "block": 128,
+   "why_flat": "a concatenate does not depend on the vector width"
+  },
+  {
+   "name": "Energia por sitio",
+   "kernels": "loop_and_fusion_2, loop_and_fusion_3",
+   "what": "exchange, anisotropy, DMI and Zeeman -> one dE per site",
+   "us_135": 0.4953,
+   "us_140": 1.08,
+   "change_pct": 118,
+   "share_of_excess_pct": 61,
+   "grid_135": 8021,
+   "grid_140": 2080,
+   "block": 128,
+   "threads_135": 1026688,
+   "threads_140": 266240,
+   "scalar_loads_135": 95,
+   "scalar_loads_140": 326,
+   "why": "4x fewer threads each doing 4 sites, with FOUR SCALAR loads rather than one 128-bit vector load (ld.global.v4 measured as 0), so a warp requests 512 bytes to deliver 128 useful ones"
+  },
+  {
+   "name": "Fusiones intermedias",
+   "kernels": "fusion_1486+1484 / fusion_1405+1396",
+   "what": "trial spin and auxiliary terms",
+   "us_135": 0.3488,
+   "us_140": 0.4444,
+   "change_pct": 27,
+   "share_of_excess_pct": 10,
+   "note": "DIFFERENT kernels in the two batches, which is evidence XLA emits a different program rather than re-tiling the same one"
+  },
+  {
+   "name": "Aceptacion de Metropolis",
+   "kernels": "loop_maximum_negate_fusion_1, loop_select_fusion_1",
+   "what": "r < exp(-dE*beta), then where(acc, trial, spins)",
+   "us_135": 0.3764,
+   "us_140": 0.662,
+   "change_pct": 76,
+   "share_of_excess_pct": 30,
+   "grid_135": 24063,
+   "grid_140": 6239,
+   "block": 128,
+   "threads_135": 3080064,
+   "threads_140": 798592
+  },
+  {
+   "name": "Observables",
+   "kernels": "loop_reduce_fusion_1, input_reduce_fusion*",
+   "what": "energy, magnetisation, topological charge",
+   "us_135": 0.2369,
+   "us_140": 0.2336,
+   "change_pct": -1.4,
+   "share_of_excess_pct": 0,
+   "calls": 1208,
+   "block": 480,
+   "note": "launched 1208 times against 3600 -- measurement sweeps only, and the reduction emitter picks its own 480-thread block"
+  },
+  {
+   "name": "Resto",
+   "kernels": "30 kernels chicos",
+   "us_135": 0.2097,
+   "us_140": 0.2078,
+   "change_pct": -0.9,
+   "share_of_excess_pct": 0
+  }
+ ],
+ "finding": "The excess is concentrated, not spread: 91% falls in the two boxes the compiler vectorises, and the other three do not move. The six rolls are the single most expensive box at width 1 (25% of the total) and contribute 0% of the excess. In the energy box the multiple-of-four batch uses 4x FEWER threads and takes 2.2x longer.",
+ "not_measured": "Nsight Compute is not available in Modal containers, so L2 hit rate and sector transactions are inferred from wall clock and PTX instruction counts, not read from hardware counters. The prediction left to verify: multiples of four should show ~4x the sector transactions per useful byte in the energy box."
+}
