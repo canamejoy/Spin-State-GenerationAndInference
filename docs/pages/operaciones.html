@@ -37,6 +37,7 @@ th{font-family:var(--mono);font-size:.66rem;letter-spacing:.07em;text-transform:
  color:var(--muted);font-weight:500}
 .tw{overflow-x:auto}td.bad{color:var(--up);font-weight:600}
 td.good{color:var(--accent);font-weight:600}.best td{color:var(--accent);font-weight:600}
+td.dead{color:var(--muted);font-style:italic}
 
 /* el diagrama */
 .flow{margin:1.5em 0}
@@ -75,8 +76,9 @@ td.good{color:var(--accent);font-weight:600}.best td{color:var(--accent);font-we
 <p class="eyebrow">H100 · Rd 18.30 · 5 capas · trazado por kernel</p>
 <h1>Paso a paso de un barrido</h1>
 <p class="lede">Cada operación que la GPU ejecuta para avanzar un barrido de
-Monte Carlo, con su geometría de lanzamiento y su tiempo medido — comparando un
-lote impar contra uno múltiplo de cuatro para ver dónde recae la tardanza.</p>
+Monte Carlo, con su geometría de lanzamiento y su tiempo medido. Dos pares: uno
+que contrasta el <b>ancho de vector</b> y otro que contrasta el <b>dentado</b>,
+este último medido al cronograma completo de producción.</p>
 
 <div class="key">
   <p><b>Los dos lotes.</b> <code>B</code> = 135 (impar, el compilador no
@@ -273,6 +275,98 @@ son las cinco réplicas de más que B=140 reparte el costo entre
     </div>
   </div>
 </div>
+
+<h2>Segundo par: el dentado, a producción real</h2>
+<p>El par de arriba contrasta <b>el ancho</b>. Este contrasta <b>el dentado</b>:
+<code>B</code> = 65 y <code>B</code> = 75 son <b>los dos ancho 1</b>, así que
+el compilador los trata igual y lo que los separa es la parte que no
+entendemos. Y por primera vez se midieron al cronograma <b>completo de
+producción</b>: 200 temperaturas × 20 000 barridos, 4 000 000 de barridos,
+reloj de pared real.</p>
+
+<div class="tw"><table>
+  <thead><tr><th><code>B</code></th><th>ancho</th><th>extrapolado<br>desde 60 000</th>
+    <th>REAL<br>4 000 000</th><th>error de la extrapolación</th></tr></thead>
+  <tbody>
+    <tr><td class="n">65</td><td class="n">1</td><td class="n">9.757 s</td>
+        <td class="n"><b>9.532 s</b></td><td class="bad">+2.4 %</td></tr>
+    <tr><td class="n">75</td><td class="n">1</td><td class="n">9.230 s</td>
+        <td class="n"><b>9.471 s</b></td><td class="bad">−2.5 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>La brecha entre los dos casi desaparece a producción.</b></p>
+  <p style="font-family:var(--mono);font-size:.95rem">
+  celdas cortas &nbsp;&nbsp;9.757 contra 9.230 &nbsp;→&nbsp; <b>+5.7 %</b><br>
+  producción &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;9.532 contra 9.471 &nbsp;→&nbsp;
+  <b>+0.6 %</b></p>
+  <p>Se encogió <b class="n">9×</b>. Los dos errores de extrapolación apuntan en
+  <b>direcciones opuestas</b> y juntos explican casi toda la diferencia que
+  veíamos.</p>
+</div>
+
+<div class="note warn"><strong>Esto corrige dos cosas que afirmamos.</strong>
+Primero, yo había predicho que las celdas cortas <b>sobre-reportan</b> siempre,
+entre +2.6 % y +12.9 %. Acerté la magnitud (~2.5 %) y <b>erré el signo</b>: no
+es un sesgo sistemático hacia arriba, es <b>ruido de ±2.5 % en los dos
+sentidos</b>. Segundo, y más importante: <b>el 5.7 % que separaba a estos dos
+lotes era artefacto de medición</b>, no una propiedad de la curva. A producción
+son indistinguibles.</div>
+
+<div class="note"><strong>Hasta dónde llega esa corrección, y hasta dónde
+no.</strong> Un ruido de ±2.5 % en cada punto puede fabricar brechas aparentes
+de hasta ~5 %, y la de este par (5.7 %) cae justo ahí. Pero <b>no explica las
+grandes</b>: el 18.5 % entre <code>B</code> = 63 y 65 en la T4, o el 20 % de
+dispersión entre los 19 lotes de ancho 1 en [325, 525], están muy por encima.
+Esas siguen en pie. Y <b>no toca el efecto del ancho en absoluto</b>, que va de
++29 % a +118 % — entre diez y cuarenta veces el ruido, confirmado además en CUDA
+puro y al nivel de instrucción.</div>
+
+<div class="note bad"><strong>Y una advertencia sobre el 0.6 %.</strong> Cada
+corrida de producción se hizo <b>una sola vez</b> — 10 y 12 minutos cada una, sin
+repeticiones. Así que lo correcto es decir que a producción los dos lotes son
+<b>indistinguibles dentro de la resolución de una corrida única</b>, no que
+<code>B</code> = 75 sea 0.6 % mejor.</div>
+
+<h3>Y el programa sí es distinto, pero cuesta lo mismo</h3>
+<p>El desglose por kernel muestra algo que parecía prometedor y terminó
+cerrando una puerta: XLA emite <b>conjuntos de kernels completamente
+distintos</b> para los dos lotes, aunque ambos sean ancho 1.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>kernel</th><th>B=65</th><th>B=75</th></tr></thead>
+  <tbody>
+    <tr><td><code>fusion_1458</code></td><td class="n">0.360</td>
+        <td class="dead">no existe</td></tr>
+    <tr><td><code>loop_log_plus_one_maximum_fusion_1</code></td><td class="n">0.287</td>
+        <td class="dead">no existe</td></tr>
+    <tr><td><code>fusion_1459</code></td><td class="n">0.143</td>
+        <td class="dead">no existe</td></tr>
+    <tr><td><code>loop_maximum_negate_fusion_1</code></td><td class="dead">no existe</td>
+        <td class="n">0.281</td></tr>
+    <tr><td><code>fusion_1377</code></td><td class="dead">no existe</td>
+        <td class="n">0.262</td></tr>
+    <tr><td><code>fusion_1375</code></td><td class="dead">no existe</td>
+        <td class="n">0.136</td></tr>
+    <tr class="best"><td><b>suma de los exclusivos</b></td><td class="n"><b>0.790</b></td>
+        <td class="n"><b>0.678</b></td></tr>
+  </tbody>
+</table></div>
+
+<p>Tres kernels de un lote no existen en el otro y viceversa, y aun así
+<b>las sumas casi empatan</b> (0.790 contra 0.678 µs). Los kernels comunes se
+mueven ±13 a 31 % y se cancelan entre sí. <b>Así que el programa distinto no
+produce una diferencia de costo persistente</b> — lo cual descarta la hipótesis
+que teníamos viva: que el dentado viniera de que XLA eligiera programas mejores
+y peores según la forma. Elige programas distintos, y cuestan lo mismo.</p>
+
+<div class="note warn"><strong>Una limitación del método, inevitable.</strong>
+El desglose por operación <b>no se puede medir a producción</b>: un trazado
+sobre 4 000 000 de barridos registraría del orden de 56 millones de lanzamientos
+de kernel y el perfilador no lo sostiene. Así que cada lote se midió dos veces —
+el reloj real a producción, y el desglose en un cronograma corto. Las dos tablas
+de esta sección vienen de fuentes distintas y está bien que se sepa.</div>
 
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">

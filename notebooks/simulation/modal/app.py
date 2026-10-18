@@ -2987,6 +2987,205 @@ def _launch_dims(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     return res
 
 
+def _prodstep(batches, tag, Rd, L, trace_temps, trace_sweeps):
+    """Production-parameter timing plus the per-operation breakdown.
+
+    Two measurements per batch, because one run cannot give both.
+
+      1. The REAL thing: 200 temperatures x 20,000 sweeps, wall clock only.
+         This is the number the extrapolation has been predicting, and it is
+         the first time any point is measured at the production schedule.
+      2. The breakdown: the same kernels traced at a short schedule. A trace
+         over four million sweeps would record on the order of 56 million
+         kernel launches, which is not something the profiler can hold, so the
+         operation-by-operation picture necessarily comes from a short run.
+
+    The pair B=65 and B=75 are BOTH vector width 1, so this does not test the
+    width decision at all -- it tests the SAWTOOTH, the part with no mechanism.
+    If the 5.4% gap between them concentrates in particular kernels the way the
+    width penalty did, that is the first real lead on it; if it is spread evenly
+    across every operation, that rules out a single-kernel explanation.
+    """
+    import os, sys, io as _io, json, glob, re, gzip, collections, time
+    os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "")
+                               + " --xla_dump_to=/tmp/dump").strip()
+    os.makedirs("/tmp/dump", exist_ok=True)
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    def v2(n):
+        k = 0
+        while n % 2 == 0:
+            n //= 2
+            k += 1
+        return k
+    width = lambda B: min(4, 2 ** (v2(B) + v2(int(L))))
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    N = int(geo["N"])
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    kB = 0.086173404
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} sitios={int(np.asarray(geo['disco']).sum())}",
+          flush=True)
+    for B in batches:
+        print(f"  B={B}: v2(elementos)={v2(B)+v2(int(L))} -> ancho {width(B)}",
+              flush=True)
+
+    THUNK = re.compile(r"\]\s+([A-Za-z_][\w$]*) grid: \[(\d+), 1, 1\]"
+                       r" threads: \[(\d+), 1, 1\]")
+    PROD_T, PROD_TH, PROD_ME = 200, 15000, 5000      # 200 x 20,000 = 4,000,000
+    out = {}
+
+    for B in batches:
+        rec = dict(B=int(B), width=width(B))
+
+        # ---- 1. the real production run, wall clock only ------------------
+        betas_p = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, PROD_T)))
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11), geo, B),
+                jax.random.PRNGKey(12), cols)
+
+        def prod_body(sp, kk, p):
+            return eng["anneal"](sp, kk, betas_p, p, PROD_TH, PROD_ME)
+
+        t_c = time.perf_counter()
+        fnp = jax.jit(prod_body).lower(*args).compile()
+        comp = time.perf_counter() - t_c
+        print(f"\n--- B={B} ancho {width(B)} ---  compilado en {comp:.1f} s",
+              flush=True)
+        print(f"  corriendo 200 x 20 000 = 4 000 000 barridos...", flush=True)
+        t0 = time.perf_counter()
+        jax.block_until_ready(fnp(*args))
+        wall = time.perf_counter() - t0
+        sweeps_p = PROD_T * (PROD_TH + PROD_ME)
+        rec["prod"] = dict(
+            wall_s=wall, sweeps=sweeps_p, compile_s=comp,
+            sec_per_replica=wall / B,
+            us_per_replica_sweep=wall * 1e6 / (sweeps_p * B))
+        print(f"  RELOJ REAL: {wall:,.1f} s = {wall/60:.1f} min "
+              f"-> {wall/B:.3f} s por replica", flush=True)
+
+        # ---- 2. the breakdown, from a short traced run --------------------
+        for f in glob.glob("/tmp/dump/*"):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        betas_s = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(trace_temps))))
+        th = int(trace_sweeps * 2 // 3)
+        me = int(trace_sweeps) - th
+
+        def short_body(sp, kk, p):
+            return eng["anneal"](sp, kk, betas_s, p, th, me)
+
+        fns = jax.jit(short_body).lower(*args).compile()
+        jax.block_until_ready(fns(*args))
+        files = sorted(glob.glob("/tmp/dump/*"))
+        pre = os.path.basename(max(files, key=os.path.getsize)).split(".jit_")[0]
+        mine = [f for f in files if os.path.basename(f).startswith(pre)]
+        geom = {}
+        for f in mine:
+            if "thunk_sequence" in f:
+                t = _io.open(f, encoding="utf-8", errors="replace").read()
+                for nm, g, tt in THUNK.findall(t):
+                    geom[nm] = (int(g), int(tt))
+        pdir = f"/tmp/prof_{B}"
+        with jax.profiler.trace(pdir):
+            jax.block_until_ready(fns(*args))
+        ev = collections.defaultdict(lambda: [0.0, 0])
+        for g in glob.glob(f"{pdir}/**/*.trace.json.gz", recursive=True):
+            with gzip.open(g, "rt") as fh:
+                try:
+                    tr = json.load(fh)
+                except Exception:
+                    continue
+            pids = {e["pid"] for e in tr.get("traceEvents", [])
+                    if e.get("ph") == "M" and e.get("name") == "process_name"
+                    and "GPU" in str(e.get("args", {}).get("name", ""))}
+            for e in tr.get("traceEvents", []):
+                if e.get("ph") == "X" and e.get("pid") in pids and "dur" in e:
+                    ev[e["name"]][0] += e["dur"]
+                    ev[e["name"]][1] += 1
+        tot = sum(v[0] for v in ev.values())
+        rows = []
+        for k, (us, n) in sorted(ev.items(), key=lambda kv: -kv[1][0]):
+            g, tt = geom.get(k, (None, None))
+            rows.append(dict(kernel=k, us_total=us, calls=n, grid=g, block=tt,
+                             us_per_sweep_replica=us / max(n, 1) / B,
+                             pct=100 * us / max(tot, 1)))
+        rec["trace"] = dict(gpu_us_total=tot, n_kernels=len(ev), rows=rows,
+                            temps=int(trace_temps), sweeps=int(trace_sweeps))
+        print(f"  trazado: {tot:,.0f} us en {len(ev)} kernels", flush=True)
+        for r in rows[:10]:
+            print(f"    {r['kernel'][:36]:<36} {r['us_total']:9,.0f} "
+                  f"{r['pct']:5.1f}% grid {(r['grid'] or 0):7,d}", flush=True)
+        out[B] = rec
+
+    # ---- what the extrapolation got wrong -------------------------------
+    print(f"\n=== extrapolacion contra medicion real ===", flush=True)
+    print(f"  {'B':>5} {'ancho':>6} {'extrapolado':>12} {'REAL':>10} "
+          f"{'sesgo':>8}", flush=True)
+    PREV = {65: 9.757, 75: 9.230, 135: 8.665, 140: 12.606, 850: 7.332}
+    for B in batches:
+        real = out[B]["prod"]["sec_per_replica"]
+        ex = PREV.get(B)
+        if ex:
+            print(f"  {B:5d} {out[B]['width']:6d} {ex:12.3f} {real:10.3f} "
+                  f"{100*(ex/real-1):+7.1f}%", flush=True)
+        else:
+            print(f"  {B:5d} {out[B]['width']:6d} {'-':>12} {real:10.3f}",
+                  flush=True)
+
+    if len(batches) == 2:
+        a, b = batches
+        ra, rb = out[a]["prod"]["sec_per_replica"], out[b]["prod"]["sec_per_replica"]
+        print(f"\n  B={a} contra B={b} a produccion: {ra:.3f} vs {rb:.3f} s "
+              f"-> {100*(rb/ra-1):+.1f}%", flush=True)
+        ka = {r["kernel"]: r for r in out[a]["trace"]["rows"]}
+        kb = {r["kernel"]: r for r in out[b]["trace"]["rows"]}
+        print(f"\n=== donde difieren, por kernel (us por barrido-replica) ===",
+              flush=True)
+        print(f"  {'kernel':<36} {f'B={a}':>10} {f'B={b}':>10} {'cambio':>9}",
+              flush=True)
+        keys = sorted(set(ka) | set(kb),
+                      key=lambda k: -abs(kb.get(k, {}).get("us_per_sweep_replica", 0)
+                                         - ka.get(k, {}).get("us_per_sweep_replica", 0)))
+        for k in keys[:14]:
+            ua = ka.get(k, {}).get("us_per_sweep_replica", 0.0)
+            ub = kb.get(k, {}).get("us_per_sweep_replica", 0.0)
+            if max(ua, ub) < 0.01:
+                continue
+            ch = f"{100*(ub/ua-1):+8.1f}%" if ua > 0 else "    nuevo"
+            print(f"  {k[:36]:<36} {ua:10.4f} {ub:10.4f} {ch}", flush=True)
+
+    res = dict(by_batch={str(k): v for k, v in out.items()},
+               Rd=float(Rd), L=int(L), N=N, device=device_identity(),
+               prod_schedule=dict(temps=PROD_T, therm=PROD_TH, meas=PROD_ME,
+                                  sweeps=PROD_T * (PROD_TH + PROD_ME)))
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="H100", **_BS)
+def prodstep_h100(b, tag, Rd, L, tt, ts):
+    return _prodstep(b, tag, Rd, L, tt, ts)
+
+
+@app.local_entrypoint()
+def prodstep(batches: str = "65,75", rd: float = 18.30, layers: int = 5,
+             trace_temps: int = 8, trace_sweeps: int = 450,
+             tag: str = "prodstep_65_75"):
+    """Real production timing plus the operation breakdown, for one pair."""
+    prodstep_h100.remote([int(x) for x in batches.split(",") if x], tag,
+                         rd, layers, trace_temps, trace_sweeps)
+
+
 def _opstep(batches, tag, Rd, L, n_temps, n_therm, n_meas, try_ncu):
     """Operation-by-operation timing for two batch sizes, plus launch geometry.
 
