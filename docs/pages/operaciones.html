@@ -677,6 +677,234 @@ composición de operaciones, no una etiqueta que XLA emita. Y los totales difier
 ~1 % del seguimiento anterior (8 931.5 contra 9 027.7 µs/réplica en B=65): una
 sola corrida cada uno.</div>
 
+<h2>Quién emite esa fusión: es Triton</h2>
+
+<p>El <code>backend_config</code> del HLO lo dice sin ambigüedad. El kernel que
+carga el 68 % de la brecha no lo emite XLA: <b>lo emite Triton</b>.</p>
+
+<pre style="overflow-x:auto;font-size:.82rem;line-height:1.5"><code>"fusion_backend_config": {
+  "kind": "__triton",
+  "block_level_fusion_config": {
+    "num_warps": "4",
+    "output_tiles": [{"sizes": ["4","1","8","16","3"]}],
+    "num_ctas": 1, "num_stages": 1, "is_tma_allowed": false
+  }
+}</code></pre>
+
+<p>Dos cosas se caen de ahí. <code>num_warps: 4</code> <b>son los 128 hilos</b>
+que veíamos en todas las cajas. Y <code>output_tiles</code> da la rejilla
+exacta:</p>
+
+<div class="key"><p style="font-family:var(--mono)">
+rejilla = Π<sub>dim</sub> ⌈ dimensión / tile ⌉</p>
+<p>Con salida <code>f32[B,5,39,39,3]</code> y tile <code>[4,1,8,16,3]</code> en
+B=65: <code>⌈65/4⌉·⌈5/1⌉·⌈39/8⌉·⌈39/16⌉·⌈3/3⌉ = 17·5·5·3·1 = <b>1275</b></code>
+— la rejilla medida. <b>Acierta en 8 de 8 casos</b> sobre cuatro lotes.</p></div>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>kernel</th><th>tile de Triton</th>
+    <th>rejilla predicha</th><th>medida</th><th>relleno</th></tr></thead>
+  <tbody>
+    <tr><td class="n">65</td><td><code>fusion_1458</code> (pesado)</td>
+        <td><code>[4,1,8,16,3]</code></td><td class="n">1 275</td>
+        <td class="best">1 275</td><td class="n">4.62 %</td></tr>
+    <tr><td class="n">65</td><td><code>fusion_1459</code></td>
+        <td><code>[8,1,8,8,3]</code></td><td class="n">1 125</td>
+        <td class="best">1 125</td><td class="n">10.77 %</td></tr>
+    <tr><td class="n">75</td><td><code>fusion_1377</code> (pesado)</td>
+        <td><code>[4,1,8,16,3]</code></td><td class="n">1 425</td>
+        <td class="best">1 425</td><td class="n">1.33 %</td></tr>
+    <tr><td class="n">75</td><td><code>fusion_1375</code></td>
+        <td><code>[16,1,4,8,3]</code></td><td class="n">1 250</td>
+        <td class="best">1 250</td><td class="n">6.67 %</td></tr>
+    <tr><td class="n">135</td><td><code>fusion_1486</code> y <code>1484</code></td>
+        <td><code>[8,1,8,8,3]</code></td><td class="n">2 125</td>
+        <td class="best">2 125</td><td class="n">0.74 %</td></tr>
+    <tr><td class="n">140</td><td><code>fusion_1405</code></td>
+        <td><code>[4,1,8,16,3]</code></td><td class="n">2 625</td>
+        <td class="best">2 625</td><td class="n">0.00 %</td></tr>
+    <tr><td class="n">140</td><td><code>fusion_1396</code></td>
+        <td><code>[16,1,8,8,3]</code></td><td class="n">1 125</td>
+        <td class="best">1 125</td><td class="n">2.86 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Y esto refuta una regla que yo mismo propuse hace
+un rato.</strong> Planteé que el ancho castiga <code>B</code> divisible entre 4
+mientras el relleno del tile castiga <code>B</code> <b>no</b> divisible entre 4,
+dando un ranking limpio por <code>B mod 4</code>. <b>Es falso</b>, y la medición
+lo mata: <b>el tile a lo largo de B no es siempre 4</b> — es 4 y 8 en B=65, 4 y
+16 en B=75, 8 y 8 en B=135, 4 y 16 en B=140. Por eso B=140, que es múltiplo de
+4, <b>aún desperdicia 2.86 %</b> en uno de sus kernels. La mitad del ancho sigue
+intacta; retiro solo la mitad del tile.</div>
+
+<div class="key"><p><b>Lo que la reemplaza es mejor, y explica por qué
+interpolar nunca funcionó.</b> La causa próxima del dentado es que
+<b>Triton re-teja el kernel para cada tamaño de lote</b>, con su propio modelo
+de costo, y la elección se mueve de forma no monótona. Un dentado que nace de
+una decisión del compilador por forma <b>no es predecible analíticamente</b> — y
+eso es exactamente por qué la curva f(B) es irregular, por qué interpolar B=50
+falló por 7 %, y por qué el barrido tuvo que medirla punto por punto.</p></div>
+
+<h2>Tabla general: cada proceso, y dónde cae cada castigo</h2>
+<p>Dos ejes medidos por separado, los dos a 3600 barridos, en µs por
+réplica-barrido. <b>Ancho</b>: B=135 (ancho 1) contra B=140 (ancho 4), total
++43 %. <b>Dentado</b>: B=65 contra B=75, <b>los dos ancho 1</b>, total −5.2 %.</p>
+
+<div class="tw"><table style="font-size:.86rem">
+  <thead><tr><th>proceso</th><th>tipo</th>
+    <th colspan="2" style="text-align:center">ANCHO (135→140)</th>
+    <th colspan="2" style="text-align:center">DENTADO (65→75)</th></tr>
+  <tr><th></th><th></th><th>cambio</th><th>% del exceso</th>
+    <th>cambio</th><th>% de la brecha</th></tr></thead>
+  <tbody>
+    <tr><td><b>Seis desplazamientos de vecinos</b><br>
+        <span style="font-size:.9em;color:var(--muted)">6 × (2 slice + 1 concatenate)</span></td>
+        <td class="n">kInput</td>
+        <td class="best">+0.2 %</td><td class="n">0 %</td>
+        <td class="n">−0.9 %</td><td class="n">5.3 %</td></tr>
+    <tr><td><b>Mega-fusión</b>: Threefry + energía por sitio + exponencial<br>
+        <span style="font-size:.9em;color:var(--muted)">280 operaciones en un kernel</span></td>
+        <td class="n">kLoop</td>
+        <td class="bad"><b>+118 %</b></td><td class="bad"><b>61 %</b></td>
+        <td class="n">+6.0 %</td><td class="n">−19.6 %</td></tr>
+    <tr><td><b>Espín de prueba y renormalización</b> (el <code>_where</code>)<br>
+        <span style="font-size:.9em;color:var(--muted)">70 operaciones, raíz select</span></td>
+        <td class="bad">kCustom<br>Triton</td>
+        <td class="n">+27 %</td><td class="n">10 %</td>
+        <td class="bad"><b>−20.3 %</b></td><td class="bad"><b>79.3 %</b></td></tr>
+    <tr><td><b>Umbral de aceptación</b> y selección final<br>
+        <span style="font-size:.9em;color:var(--muted)">r &lt; exp(−ΔE·β), luego el where</span></td>
+        <td class="n">kLoop</td>
+        <td class="bad"><b>+76 %</b></td><td class="bad"><b>30 %</b></td>
+        <td class="n">−1.5 %</td><td class="n">3.2 %</td></tr>
+    <tr><td><b>Observables</b> (energía, magnetización, carga topológica)</td>
+        <td class="n">kLoop +<br>kInput</td>
+        <td class="best">−1.4 %</td><td class="n">0 %</td>
+        <td class="n">−12.4 %</td><td class="n">12.4 %</td></tr>
+    <tr><td><b>Resto</b> (≈30 kernels chicos, slices, escalares, copias)</td>
+        <td class="n">varios</td>
+        <td class="best">−0.9 %</td><td class="n">0 %</td>
+        <td class="n">−6.8 %</td><td class="n">18.0 %</td></tr>
+    <tr><td><b>TOTAL</b></td><td class="n">—</td>
+        <td class="bad"><b>+43 %</b></td><td class="n">100 %</td>
+        <td class="n"><b>−5.2 %</b></td><td class="n">100 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>Los dos castigos viven en tipos de fusión distintos, y casi no se
+  solapan.</b></p>
+  <p><b>El ancho</b> se concentra en las <code>kLoop</code>: 61 % + 30 % =
+  <b>91 % de su exceso</b> está en los dos grupos que XLA emite «un elemento de
+  la raíz a la vez» y por tanto vectoriza. Los rolls y las reducciones son
+  <b>inmunes</b> (±1 %).</p>
+  <p><b>El dentado</b> se concentra en la fusión de <b>Triton</b>: el
+  <b>79.3 %</b> de su brecha. Y ahí la decisión de ancho de XLA no aplica,
+  porque Triton trae sus propios tiles explícitos.</p>
+</div>
+
+<div class="note warn"><strong>Lo que el tile explica y lo que no.</strong>
+Explica <b>la rejilla, exacto, 8 de 8</b>. Explica casi todo el cambio del
+kernel liviano (predicho −4.1 puntos, medido −4.5 %). Pero <b>no explica el
+pesado</b>: conserva el <b>mismo</b> tile en B=65 y B=75, sus bloques por
+réplica solo suben 3.1 % (19.615 → 19.000) y su tiempo cae 26.8 %. Queda un
+residuo de ~23 % sin explicar. Y en el par de ancho va al revés: los bloques por
+réplica del grupo Triton <b>bajan</b> 14.9 % mientras su costo <b>sube</b> 27 %.
+<b>El número de bloques no predice el costo</b>; el tile actúa sobre la
+eficiencia.</div>
+
+<h2>Estrategia: qué atacar, con qué palanca y con qué evidencia</h2>
+
+<h3>Eje 1 — el ancho. Resuelto, con palanca determinista.</h3>
+<div class="tw"><table>
+  <thead><tr><th>paso</th><th>qué hacer</th><th>evidencia</th><th>estado</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1.1</td>
+        <td>Elegir <code>B</code> y <code>L</code> con
+        <code>v₂(B) + v₂(L) &lt; 2</code></td>
+        <td>89/89 rejillas exactas, 5 dispositivos</td>
+        <td class="best">listo, gratis</td></tr>
+    <tr><td class="n">1.2</td>
+        <td>No buscar un flag: no existe</td>
+        <td>79 flags en este build, ninguno toca la vectorización</td>
+        <td class="best">cerrado</td></tr>
+    <tr><td class="n">1.3</td>
+        <td>Si <code>L</code> es múltiplo de 4, la regla <b>no tiene escape</b>
+        vía <code>B</code></td>
+        <td>capa ficticia enmascarada: física exacta pero −20.6 % de media,
+        perdió 6/6 celdas</td>
+        <td class="bad">refutado</td></tr>
+    <tr class="best"><td class="n">1.4</td>
+        <td><b>Ruta nueva</b>: escribir ese kernel en Pallas con tile fijo, que
+        evita el emisor de bucle de XLA</td>
+        <td>ver abajo — el bloqueo de Pallas está resuelto</td>
+        <td class="n">viable, sin probar</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Eje 2 — el dentado. Mecanismo localizado, palanca identificada.</h3>
+<div class="tw"><table>
+  <thead><tr><th>paso</th><th>qué hacer</th><th>evidencia</th><th>estado</th></tr></thead>
+  <tbody>
+    <tr><td class="n">2.1</td>
+        <td>Aceptar que <b>no se puede interpolar</b> la curva f(B)</td>
+        <td>Triton re-teja por forma, no monótono; interpolar B=50 falló 7 %</td>
+        <td class="best">establecido</td></tr>
+    <tr><td class="n">2.2</td>
+        <td>Medir, no predecir: barrido por punto para cada geometría</td>
+        <td>el barrido ganó a la búsqueda bayesiana</td>
+        <td class="best">ya es nuestra práctica</td></tr>
+    <tr class="best"><td class="n">2.3</td>
+        <td><b>Fijar el tile</b> escribiendo el kernel nosotros: si el tile no
+        cambia con <code>B</code>, el dentado de ese kernel desaparece</td>
+        <td>la rejilla es función exacta del tile (8/8)</td>
+        <td class="n">viable, sin probar</td></tr>
+    <tr><td class="n">2.4</td>
+        <td>Antes de optimizar, confirmar a producción</td>
+        <td>el 5.2 % de este par es 0.6 % a 4 000 000 de barridos</td>
+        <td class="bad">el premio puede ser pequeño</td></tr>
+  </tbody>
+</table></div>
+
+<h3>El desbloqueo de Pallas, que es lo que une los dos ejes</h3>
+<p>La ruta Pallas estaba muerta: <code>mosaic_gpu</code> exige que el bloque
+tenga <b>un número de bytes divisible entre 128</b> y nuestro intento usó la
+losa completa de <code>39·39·3</code>, <b>18 252 B = 142.59 × 128</b> → ilegal.
+Pero ahora <b>conocemos los tiles que Triton usa de verdad</b>, y todos son
+legales:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>tile</th><th>elementos</th><th>bytes</th><th>÷ 128</th><th></th></tr></thead>
+  <tbody>
+    <tr><td><code>[4,1,8,16,3]</code></td><td class="n">1 536</td>
+        <td class="n">6 144</td><td class="n">48.0</td><td class="best">legal</td></tr>
+    <tr><td><code>[8,1,8,8,3]</code></td><td class="n">1 536</td>
+        <td class="n">6 144</td><td class="n">48.0</td><td class="best">legal</td></tr>
+    <tr><td><code>[16,1,4,8,3]</code></td><td class="n">1 536</td>
+        <td class="n">6 144</td><td class="n">48.0</td><td class="best">legal</td></tr>
+    <tr><td><code>[16,1,8,8,3]</code></td><td class="n">3 072</td>
+        <td class="n">12 288</td><td class="n">96.0</td><td class="best">legal</td></tr>
+    <tr><td>nuestro intento fallido</td><td class="dead">—</td>
+        <td class="n">18 252</td><td class="bad">142.59</td><td class="bad">ilegal</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Copiar la forma de tile de Triton vuelve legal la ruta
+Pallas.</b> Y un kernel propio con tile fijo ataca <b>los dos ejes a la vez</b>:
+no pasa por la decisión de ancho de XLA (eje 1) y no se re-teja con
+<code>B</code> (eje 2). Es la única palanca que toca los dos, y la evidencia
+para intentarla la acabamos de obtener.</p></div>
+
+<div class="note warn"><strong>Orden honesto de prioridades.</strong> Antes de
+nada, hay que recordar que <b>el 31.5 % del tiempo son los rolls</b> y son
+<b>inmunes a los dos efectos</b>. Son el mayor costo absoluto del programa y no
+tienen nada que ver con la estandarización. Si el objetivo fuera
+<b>ir más rápido</b>, el blanco son los rolls, no el ancho ni el dentado (ojo:
+<code>roll_free</code> ya probó pad+slice y salió 7 % más lento). Si el objetivo
+es <b>que el tiempo sea predecible</b>, entonces sí, el orden es 1.1 (gratis,
+hoy) y luego 2.3/1.4 (un kernel propio).</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las

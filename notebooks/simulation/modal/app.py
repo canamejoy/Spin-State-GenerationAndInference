@@ -3589,6 +3589,156 @@ def fusion_doc(batches: str = "65,75", rd: float = 18.30, layers: int = 5,
                            rd, layers, n_temps, n_therm, n_meas)
 
 
+_KC_WORKER = r'''
+import os, sys, glob, json, re, time
+B, Rd, L, nt, th, me, dump = (int(sys.argv[1]), float(sys.argv[2]), int(sys.argv[3]),
+                              int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6]),
+                              sys.argv[7])
+os.makedirs(dump, exist_ok=True)
+sys.path.insert(0, "/root")
+import numpy as np, jax, jax.numpy as jnp
+import sim_core as S, parallel_axes as PA
+kB = 0.086173404
+betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, nt)))
+theta = PA.load_thetas("/root/theta4.json")[0]
+geo = S.build_geometry(Rd=Rd, L=L); eng = S.build_engine(geo)
+cols = PA.pack([theta], B)
+args = (S.init_spins(jax.random.PRNGKey(11), geo, B), jax.random.PRNGKey(12), cols)
+def body(sp, kk, p):
+    return eng["anneal"](sp, kk, betas, p, th, me)
+t0 = time.perf_counter()
+fn = jax.jit(body).lower(*args).compile()
+jax.block_until_ready(fn(*args))
+t_compile = time.perf_counter() - t0
+ts = []
+for _ in range(3):
+    t = time.perf_counter(); jax.block_until_ready(fn(*args)); ts.append(time.perf_counter() - t)
+files = sorted(glob.glob(f"{dump}/*"))
+res = dict(B=B, wall_best=min(ts), wall_all=ts, compile_s=t_compile,
+           kinds={}, kcustom=[], kernels=[], error=None)
+if files:
+    pre = os.path.basename(max(files, key=os.path.getsize)).split(".jit_")[0]
+    mine = [f for f in files if os.path.basename(f).startswith(pre)]
+    THUNK = re.compile(r"\]\s+([A-Za-z_][\w$]*) grid: \[(\d+), 1, 1\] threads: \[(\d+), 1, 1\]")
+    for f in mine:
+        if "thunk_sequence" in f:
+            t = open(f, encoding="utf-8", errors="replace").read()
+            res["kernels"] = [dict(kernel=n, grid=int(g), block=int(b))
+                              for n, g, b in THUNK.findall(t)]
+    hl = [f for f in mine if "after_optimizations.txt" in f]
+    if hl:
+        txt = open(max(hl, key=os.path.getsize), encoding="utf-8", errors="replace").read()
+        FUS = re.compile(r"^\s*%?([\w.$-]+) = (\S+) fusion\(([^)]*)\),\s*kind=(k\w+)(.*)$", re.M)
+        for name, shape, ops, kind, rest in FUS.findall(txt):
+            res["kinds"][kind] = res["kinds"].get(kind, 0) + 1
+            if kind == "kCustom":
+                bc = re.search(r'backend_config=(\{.*?\})\s*(?:,\s*metadata|$)', rest)
+                res["kcustom"].append(dict(name=name, out_shape=shape, kind=kind,
+                                           backend_config=(bc.group(1) if bc else None),
+                                           tail=rest[:400]))
+print("@@JSON@@" + json.dumps(res))
+'''
+
+
+def _kcustom_probe(tag, Rd, L, n_temps, n_therm, n_meas, B):
+    """Who emits the kCustom fusion, and can a flag turn it off?
+
+    `fusion_doc` told us the kernel carrying most of the batch-to-batch gap is
+    kCustom. XLA sets that kind from a specific backend -- cuDNN, the
+    dynamic-slice rewriter, or Triton -- and the fusion's `backend_config`
+    names which. That matters for two reasons: it identifies who chooses that
+    kernel's launch grid (which is the only non-proportional one of the 43),
+    and it tells us whether a flag can route the same computation through
+    XLA's own loop emitter instead.
+
+    Each configuration runs in its own subprocess, because XLA_FLAGS is read
+    once when the backend initialises.
+    """
+    import os, sys, json, subprocess, re
+    sys.path.insert(0, "/root")
+    print(f"gpu={device_identity()}", flush=True)
+
+    # --- which flags does this build even have? -------------------------
+    env = dict(os.environ, XLA_FLAGS="--help")
+    r = subprocess.run([sys.executable, "-c", "import jax; jax.devices()"],
+                       env=env, capture_output=True, text=True, timeout=600)
+    table = (r.stdout or "") + (r.stderr or "")
+    names = sorted(set(re.findall(r"--(xla_[a-z0-9_]+)", table)))
+    want = [n for n in names
+            if any(w in n for w in ("triton", "custom_fusion", "dynamic_slice_fusion",
+                                    "cudnn", "fusion_level", "emitter"))]
+    print(f"\n  flags en este build: {len(names)}; relevantes: {len(want)}", flush=True)
+    for n in want:
+        print(f"    --{n}", flush=True)
+
+    with open("/root/_kcw.py", "w") as f:
+        f.write(_KC_WORKER)
+
+    def run(flags, label):
+        d = f"/tmp/d_{abs(hash(label)) % 10**8}"
+        e = dict(os.environ)
+        e["XLA_FLAGS"] = (f"--xla_dump_to={d} " + flags).strip()
+        p = subprocess.run([sys.executable, "/root/_kcw.py", str(B), str(Rd), str(L),
+                            str(n_temps), str(n_therm), str(n_meas), d],
+                           env=e, capture_output=True, text=True, timeout=1800)
+        out = (p.stdout or "") + (p.stderr or "")
+        m = re.search(r"@@JSON@@(\{.*\})", out)
+        if not m:
+            return dict(label=label, flags=flags, error=out[-700:])
+        j = json.loads(m.group(1)); j.update(label=label, flags=flags)
+        return j
+
+    results = [run("", "base")]
+    b = results[0]
+    print(f"\n  === base: {b['wall_best']:.3f} s  kinds={b['kinds']} ===", flush=True)
+    for kc in b.get("kcustom", []):
+        print(f"\n    kCustom {kc['name']}  salida {kc['out_shape']}", flush=True)
+        print(f"      backend_config = {kc['backend_config']}", flush=True)
+        print(f"      cola: {kc['tail'][:240]}", flush=True)
+    kmap = {k["kernel"]: k for k in b.get("kernels", [])}
+    for nm in ("fusion_1458", "fusion_1459"):
+        if nm in kmap:
+            print(f"    {nm}: grid {kmap[nm]['grid']}, block {kmap[nm]['block']}, "
+                  f"bloq/rep {kmap[nm]['grid']/B:.3f}", flush=True)
+
+    # --- try turning each candidate off ---------------------------------
+    cands = [f"--{n}=false" for n in want
+             if any(w in n for w in ("triton", "custom_fusion", "dynamic_slice_fusion"))]
+    for c in cands[:8]:
+        rr = run(c, c)
+        results.append(rr)
+        if rr.get("error"):
+            print(f"\n  {c}: FALLO -> {rr['error'][:200]}", flush=True)
+            continue
+        nk = len(rr.get("kcustom", []))
+        print(f"\n  {c}: {rr['wall_best']:.3f} s "
+              f"({100*(rr['wall_best']/b['wall_best']-1):+.1f}%)  "
+              f"kinds={rr['kinds']}  kCustom={nk}", flush=True)
+
+    res = dict(B=B, Rd=float(Rd), L=int(L), device=device_identity(),
+               n_temps=int(n_temps), n_therm=int(n_therm), n_meas=int(n_meas),
+               all_flags=names, candidate_flags=want, runs=results)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", **_COMMON)
+def kcustom_probe_h100(tag, Rd, L, nt, th, me, B):
+    return _kcustom_probe(tag, Rd, L, nt, th, me, B)
+
+
+@app.local_entrypoint()
+def kcustom_probe(rd: float = 18.30, layers: int = 5, n_temps: int = 8,
+                  n_therm: int = 300, n_meas: int = 150, b: str = "65",
+                  tag: str = "kcustom_probe"):
+    """Identify the kCustom emitter and test whether a flag disables it."""
+    for x in [int(v) for v in str(b).split(",") if v]:
+        kcustom_probe_h100.remote(f"{tag}_{x}", rd, layers, n_temps, n_therm,
+                                  n_meas, x)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 
