@@ -329,44 +329,199 @@ repeticiones. Así que lo correcto es decir que a producción los dos lotes son
 <b>indistinguibles dentro de la resolución de una corrida única</b>, no que
 <code>B</code> = 75 sea 0.6 % mejor.</div>
 
-<h3>Y el programa sí es distinto, pero cuesta lo mismo</h3>
-<p>El desglose por kernel muestra algo que parecía prometedor y terminó
-cerrando una puerta: XLA emite <b>conjuntos de kernels completamente
-distintos</b> para los dos lotes, aunque ambos sean ancho 1.</p>
+<h3>El programa NO es distinto — me equivoqué</h3>
+
+<div class="note bad"><strong>Corrección.</strong> Ayer escribí aquí que XLA
+emitía «conjuntos de kernels completamente distintos» para estos dos lotes.
+<b>Es falso.</b> Lo deduje de los nombres, y los nombres engañan. El
+seguimiento completo con volcado de PTX lo prueba: los dos lotes compilan a
+<b>los mismos 43 kernels</b>, y los tres que parecían exclusivos de cada lado
+son <b>las mismas operaciones con otro nombre autogenerado</b>.</div>
+
+<p>La prueba es la firma de instrucciones. Dos kernels con el mismo número de
+cargas escalares, cargas no-coherentes y almacenamientos, lanzados el mismo
+número de veces, son el mismo kernel:</p>
 
 <div class="tw"><table>
-  <thead><tr><th>kernel</th><th>B=65</th><th>B=75</th></tr></thead>
+  <thead><tr><th>nombre en B=65</th><th>nombre en B=75</th>
+    <th>ld esc</th><th>ld nc</th><th>st</th><th>llamadas</th><th>¿mismo?</th></tr></thead>
   <tbody>
-    <tr><td><code>fusion_1458</code></td><td class="n">0.360</td>
-        <td class="dead">no existe</td></tr>
-    <tr><td><code>loop_log_plus_one_maximum_fusion_1</code></td><td class="n">0.287</td>
-        <td class="dead">no existe</td></tr>
-    <tr><td><code>fusion_1459</code></td><td class="n">0.143</td>
-        <td class="dead">no existe</td></tr>
-    <tr><td><code>loop_maximum_negate_fusion_1</code></td><td class="dead">no existe</td>
-        <td class="n">0.281</td></tr>
-    <tr><td><code>fusion_1377</code></td><td class="dead">no existe</td>
-        <td class="n">0.262</td></tr>
-    <tr><td><code>fusion_1375</code></td><td class="dead">no existe</td>
-        <td class="n">0.136</td></tr>
-    <tr class="best"><td><b>suma de los exclusivos</b></td><td class="n"><b>0.790</b></td>
-        <td class="n"><b>0.678</b></td></tr>
+    <tr><td><code>fusion_1458</code></td><td><code>fusion_1377</code></td>
+        <td class="n">69</td><td class="n">0</td><td class="n">16</td>
+        <td class="n">3 600</td><td class="best">idéntico</td></tr>
+    <tr><td><code>loop_log_plus_one_maximum_fusion_1</code></td>
+        <td><code>loop_maximum_negate_fusion_1</code></td>
+        <td class="n">7</td><td class="n">7</td><td class="n">4</td>
+        <td class="n">3 600</td><td class="best">idéntico</td></tr>
+    <tr><td><code>fusion_1459</code></td><td><code>fusion_1375</code></td>
+        <td class="n">50 / 49</td><td class="n">0</td><td class="n">16</td>
+        <td class="n">3 600</td><td class="best">idéntico</td></tr>
   </tbody>
 </table></div>
 
-<p>Tres kernels de un lote no existen en el otro y viceversa, y aun así
-<b>las sumas casi empatan</b> (0.790 contra 0.678 µs). Los kernels comunes se
-mueven ±13 a 31 % y se cancelan entre sí. <b>Así que el programa distinto no
-produce una diferencia de costo persistente</b> — lo cual descarta la hipótesis
-que teníamos viva: que el dentado viniera de que XLA eligiera programas mejores
-y peores según la forma. Elige programas distintos, y cuestan lo mismo.</p>
+<p>XLA numera sus fusiones anónimas de forma distinta en cada compilación, y en
+el caso del medio etiquetó la fusión por una operación distinta de las que
+contiene (<code>log_plus_one+maximum</code> contra
+<code>maximum+negate</code>). <b>Cero cargas vectoriales
+(<code>ld.global.v4</code>) en los dos programas</b>, como corresponde a dos
+lotes de ancho 1.</p>
+
+<div class="note warn"><strong>Y la tabla de deltas de ayer tenía un segundo
+artefacto.</strong> Decía que <code>loop_and_fusion_3</code> subía
+<b>+55.0 %</b>. No es cierto: <code>loop_and_fusion_2</code> y
+<code>_3</code> <b>se intercambian el nombre</b> entre las dos compilaciones —
+el kernel de <code>ld esc = 51</code> se llama <code>_2</code> en B=65 y
+<code>_3</code> en B=75. Compararlos por nombre compara operaciones distintas.
+Pareados por su firma, los deltas reales por réplica son <b>+5.1 %</b>
+(ld=51) y <b>+9.1 %</b> (ld=44).</div>
+
+<div class="key"><p>La conclusión de ayer sobrevive, pero por la razón
+opuesta. Dije que la selección de programa no causa el dentado porque dos
+programas distintos empataban en costo. <b>En realidad nunca hubo dos
+programas.</b> La selección de programa queda descartada porque el programa es
+<b>idéntico</b> — no porque dos versiones distintas hayan coincidido.</p></div>
+
+<h2>Seguimiento completo: 3600 barridos, operación por operación</h2>
+<p>Mismo cronograma que el par de ancho (135 contra 140):
+<code>8 temperaturas × (300 + 150) = <b>3600 barridos</b></code>. Lo que agrega
+sobre el trazado anterior es el <b>volcado de PTX unido por kernel</b>: no solo
+cuánto tarda cada caja, sino qué instrucciones de memoria ejecuta y con cuántos
+bloques se lanza.</p>
+
+<div class="note bad"><strong>Primero, la trampa del total.</strong> El
+reloj de GPU crudo dice <code>586 800 → 638 700 µs</code>, un
+<b>+8.8 %</b> para B=75. <b>Ese número no sirve para comparar</b>: B=75 hace
+15.4 % más trabajo, porque son 75 réplicas en vez de 65. Normalizado por
+réplica se invierte el signo.</div>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>B=65</th><th>B=75</th><th>cambio</th></tr></thead>
+  <tbody>
+    <tr><td>kernels compilados</td><td class="n">43</td><td class="n">43</td>
+        <td class="n">—</td></tr>
+    <tr><td>µs de GPU, total crudo</td><td class="n">586 800</td>
+        <td class="n">638 700</td><td class="bad">+8.8 % (engaña)</td></tr>
+    <tr class="best"><td><b>µs por réplica</b></td><td class="n"><b>9 027.7</b></td>
+        <td class="n"><b>8 516.0</b></td><td class="n"><b>−5.7 %</b></td></tr>
+    <tr><td>µs por barrido-réplica</td><td class="n">2.5077</td>
+        <td class="n">2.3656</td><td class="n">−5.7 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Ese <b>−5.7 %</b> reproduce exactamente la brecha de la curva de celdas
+cortas. El trazado mide lo mismo que medía la curva, así que podemos preguntarle
+<b>dónde</b> vive.</p>
+
+<h3>Dónde vive: en un solo kernel</h3>
+<p>Pareando los 43 kernels por firma de instrucciones y normalizando por
+réplica, la brecha total es <code>−511.7 µs</code> por réplica. No está
+repartida — está <b>concentrada</b>:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>kernel (nombre en B=65)</th><th>ld esc</th>
+    <th>bloq/rép<br>B=65</th><th>bloq/rép<br>B=75</th>
+    <th>µs/rép<br>B=65</th><th>µs/rép<br>B=75</th><th>cambio</th>
+    <th>% de la brecha</th></tr></thead>
+  <tbody>
+    <tr class="best"><td><code>fusion_1458</code> → <code>fusion_1377</code></td>
+        <td class="n">69</td><td class="bad">19.62</td><td class="n">19.00</td>
+        <td class="n">1 292.6</td><td class="n">945.7</td>
+        <td class="n"><b>−26.8 %</b></td><td class="n"><b>67.8 %</b></td></tr>
+    <tr><td><code>loop_log_plus_one_maximum_fusion_1</code></td>
+        <td class="n">7</td><td class="n">178.25</td><td class="n">178.25</td>
+        <td class="n">1 025.3</td><td class="n">1 015.6</td>
+        <td class="n">−1.0 %</td><td class="n">1.9 %</td></tr>
+    <tr><td>kernel <code>ld esc = 51</code></td>
+        <td class="n">51</td><td class="n">59.42</td><td class="n">59.43</td>
+        <td class="n">803.2</td><td class="n">844.0</td>
+        <td class="bad">+5.1 %</td><td class="n">−8.0 %</td></tr>
+    <tr><td>kernel <code>ld esc = 44</code></td>
+        <td class="n">44</td><td class="n">59.42</td><td class="n">59.43</td>
+        <td class="n">628.4</td><td class="n">685.9</td>
+        <td class="bad">+9.1 %</td><td class="n">−11.2 %</td></tr>
+    <tr><td><code>fusion_1459</code> → <code>fusion_1375</code></td>
+        <td class="n">50</td><td class="n">17.31</td><td class="n">16.67</td>
+        <td class="n">526.7</td><td class="n">494.5</td>
+        <td class="n">−6.1 %</td><td class="n">6.3 %</td></tr>
+    <tr><td><code>loop_reduce_fusion_1</code></td>
+        <td class="n">78</td><td class="n">1.54</td><td class="n">1.53</td>
+        <td class="n">269.2</td><td class="n">234.3</td>
+        <td class="n">−12.9 %</td><td class="n">6.8 %</td></tr>
+    <tr><td><code>input_reduce_fusion</code></td>
+        <td class="n">204</td><td class="n">2.51</td><td class="n">2.51</td>
+        <td class="n">168.6</td><td class="n">146.5</td>
+        <td class="n">−13.1 %</td><td class="n">4.3 %</td></tr>
+    <tr><td><b>TOTAL (43 kernels)</b></td><td class="n">—</td>
+        <td class="n">—</td><td class="n">—</td>
+        <td class="n"><b>9 027.7</b></td><td class="n"><b>8 516.0</b></td>
+        <td class="n"><b>−5.7 %</b></td><td class="n"><b>100 %</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>Un kernel carga el 67.8 % de la brecha.</b></p>
+  <p><code>fusion_1458</code> (en B=65) / <code>fusion_1377</code> (en B=75) es
+  <b>el kernel más caro de los dos programas</b> — 14.3 % y 11.1 % del tiempo de
+  GPU — y el que <b>más cargas emite</b> (<code>ld esc = 69</code>). Aporta
+  <code>−346.9</code> de los <code>−511.7 µs</code> por réplica.</p>
+  <p>El resto del programa se mueve poco: el bloque pareado cambia −6.9 % y el
+  no pareado −3.5 %. <b>La brecha no está repartida, está localizada.</b></p>
+</div>
+
+<h3>La anomalía de la rejilla</h3>
+<p>Y ese mismo kernel es <b>el único de los 43 cuya rejilla no escala con el
+número de réplicas</b>. Todos los demás lanzan un número de bloques por réplica
+constante a tres cifras:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>kernel</th><th>fórmula verificada</th>
+    <th>bloq/rép B=65</th><th>bloq/rép B=75</th><th>¿proporcional?</th></tr></thead>
+  <tbody>
+    <tr><td><code>loop_log_plus_one_maximum</code></td>
+        <td><code>⌈B·L·N²·3 / 128⌉</code></td>
+        <td class="n">178.25</td><td class="n">178.25</td><td class="best">sí</td></tr>
+    <tr><td><code>loop_and_fusion_2/3</code></td>
+        <td><code>⌈B·L·N² / 128⌉</code></td>
+        <td class="n">59.42</td><td class="n">59.43</td><td class="best">sí</td></tr>
+    <tr><td><code>input_concatenate_fusion_12</code></td><td class="dead">—</td>
+        <td class="n">173.68</td><td class="n">173.68</td><td class="best">sí</td></tr>
+    <tr><td><code>input_reduce_fusion</code></td><td class="dead">—</td>
+        <td class="n">2.51</td><td class="n">2.51</td><td class="best">sí</td></tr>
+    <tr class="best"><td><code>fusion_1458</code> / <code>fusion_1377</code></td>
+        <td class="dead">ninguna que cierre</td>
+        <td class="bad">19.615</td><td class="n">19.000</td>
+        <td class="bad">NO (+3.2 %)</td></tr>
+  </tbody>
+</table></div>
+
+<p>En B=75 la rejilla es exactamente <code>19 × 75 = 1425</code> bloques. En
+B=65 son <code>1275</code>, que no es múltiplo de 65: <b>19.615 bloques por
+réplica</b>. B=65 paga un 3.2 % más de bloques por réplica en el kernel más
+caro del programa.</p>
+
+<div class="note warn"><strong>Pero eso no cierra la aritmética, y hay que
+decirlo.</strong> Un 3.2 % más de bloques <b>no puede producir un 26.8 % más de
+tiempo</b>. La asimetría de rejilla es <b>un síntoma y una pista afilada</b> — nos
+dice exactamente qué kernel mirar — <b>no el mecanismo</b>. Lo que pasa dentro de
+ese kernel sigue sin explicación, y sin contadores de hardware
+(<code>ncu</code> no existe en el contenedor) no pudimos leer su ocupación, su
+tasa de acierto en caché ni su ancho de banda efectivo.</div>
+
+<div class="note bad"><strong>Y el límite que lo encuadra todo.</strong> Este
+desglose diseca una brecha de <b>5.7 %</b> que, medida a producción,
+<b>es de 0.6 %</b>. Así que lo que localizamos con tanta precisión es
+<b>dónde vive el artefacto del cronograma corto</b> — un kernel, el más
+caro — y no una ventaja real de B=75 en producción. Es un resultado útil
+justamente por eso: si el dentado de las curvas cortas nace sobre todo en
+<code>fusion_1458</code>, ahí hay que buscar.</div>
 
 <div class="note warn"><strong>Una limitación del método, inevitable.</strong>
 El desglose por operación <b>no se puede medir a producción</b>: un trazado
 sobre 4 000 000 de barridos registraría del orden de 56 millones de lanzamientos
 de kernel y el perfilador no lo sostiene. Así que cada lote se midió dos veces —
-el reloj real a producción, y el desglose en un cronograma corto. Las dos tablas
-de esta sección vienen de fuentes distintas y está bien que se sepa.</div>
+el reloj real a producción, y el desglose en el cronograma corto de 3600
+barridos. Las dos tablas de esta sección vienen de fuentes distintas y está bien
+que se sepa.</div>
 
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
