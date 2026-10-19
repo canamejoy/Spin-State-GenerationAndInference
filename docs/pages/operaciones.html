@@ -1005,6 +1005,104 @@ viva sigue siendo un kernel propio en Pallas con tile fijo. Y el dentado queda
 intacto: el protocolo no lo toca, y los 4.6 % que separan a B=199 de B=201 son
 justamente eso.</div>
 
+<h2>51 + 49 contra 2 de 50: lo que de verdad manda</h2>
+
+<p><code>v₂(50) = 1</code>, así que un lote de 50 con <code>L=5</code> es
+<b>ancho 2</b>. Y «2 de 50» <b>es la convención de producción actual</b>: 50
+réplicas por estado. La comparación es la más limpia posible, porque las dos
+opciones son <b>dos lanzamientos y 100 réplicas</b> — el costo fijo se paga dos
+veces en ambas y <b>lo único que cambia es el ancho</b>.</p>
+
+<p>Nueve repeticiones intercaladas, dispersión 0.1 a 0.2 %:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>configuración</th><th>lanz.</th><th>repl.</th><th>ancho</th>
+    <th>s/réplica</th><th>modelo</th><th>error</th></tr></thead>
+  <tbody>
+    <tr><td>100 de una</td><td class="n">1</td><td class="n">100</td>
+        <td class="bad">4</td><td class="n">0.011608</td>
+        <td class="n">0.008035</td><td class="bad">+44.5 %</td></tr>
+    <tr class="best"><td><b>50 + 50</b> — la convención actual</td>
+        <td class="n">2</td><td class="n">100</td><td class="n">2, 2</td>
+        <td class="n"><b>0.008729</b></td><td class="n">0.008855</td>
+        <td class="n">−1.4 %</td></tr>
+    <tr class="best"><td><b>51 + 49</b> — el protocolo</td>
+        <td class="n">2</td><td class="n">100</td><td class="n">1, 1</td>
+        <td class="n"><b>0.008796</b></td><td class="n">0.008855</td>
+        <td class="n">−0.7 %</td></tr>
+    <tr><td>99 de una</td><td class="n">1</td><td class="n">99</td>
+        <td class="n">1</td><td class="n">0.008094</td>
+        <td class="n">0.008043</td><td class="n">+0.6 %</td></tr>
+    <tr><td>101 de una</td><td class="n">1</td><td class="n">101</td>
+        <td class="n">1</td><td class="n">0.007904</td>
+        <td class="n">0.008027</td><td class="n">−1.5 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Empate: +0.76 %</b>, dentro de la resolución de la propia
+medida. <b>El ancho 2 es gratis</b>, ahora confirmado con el número de
+lanzamientos fijo. <b>El protocolo no gana nada</b> sobre la convención actual a
+este tamaño.</p></div>
+
+<div class="note bad"><strong>Y mi predicción era incorrecta.</strong> Predije
+que <code>51+49</code> ganaría por 5 a 7 %, porque el barrido de 52 puntos ponía
+<code>B=50</code> en 9.788 contra 9.130 en <code>B=45</code> y 9.162 en
+<code>B=55</code> — un 7 % alto que atribuí al dentado. <b>Ese 7 % no se
+reprodujo.</b> El barrido usó celdas cortas, donde después medimos ±2.5 % de
+ruido en los dos sentidos, y era una sola corrida. La anomalía que hizo fallar
+mi interpolación de B=50 por 7 % era <b>muy probablemente ese ruido</b>, no un
+rasgo real de la curva. <b>Lección: un punto suelto de celda corta no es
+evidencia de un rasgo del dentado por debajo de ~5 %.</b></div>
+
+<div class="key"><p><b>El modelo se validó fuera de muestra.</b>
+<code>W(B) = a + b·B</code> con <code>a = 0.0820 s</code> y
+<code>b = 0.007215</code>, ajustado en la corrida <b>anterior</b>, predice las
+cuatro configuraciones de ancho 1 y 2 <b>con menos de 1.5 % de error</b>. Y de
+paso aísla el castigo del ancho 4 en un solo número: <b>+44.5 %</b>.</p></div>
+
+<h3>Lo que de verdad domina aquí: el número de lanzamientos</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>comparación</th><th>diferencia</th></tr></thead>
+  <tbody>
+    <tr class="best"><td>101 de una contra 51 + 49</td><td class="best">−10.14 %</td></tr>
+    <tr class="best"><td>101 de una contra 50 + 50</td><td class="best">−9.46 %</td></tr>
+    <tr><td>99 de una contra 51 + 49</td><td class="n">−7.99 %</td></tr>
+    <tr><td>99 de una contra 50 + 50</td><td class="n">−7.28 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Un lanzamiento extra sobre 100 réplicas cuesta <code>a/100 = 0.00082 s</code>,
+que es el <b>10.4 %</b> de lo que cuesta una réplica. Por eso <b>un solo lote
+impar de 99 o 101 le gana de 8 a 10 % a cualquiera de las dos opciones de dos
+lanzamientos</b>.</p>
+
+<h3>Y aquí está la consecuencia práctica para tus 200 réplicas</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>cómo correr 200 réplicas</th><th>lanz.</th><th>s/réplica</th></tr></thead>
+  <tbody>
+    <tr><td><b>4 lanzamientos de 50</b> (ancho 2) — si hoy lanzas por estado</td>
+        <td class="n">4</td><td class="n">0.00886</td></tr>
+    <tr class="best"><td><b>101 + 99</b> — el protocolo</td>
+        <td class="n">2</td><td class="n"><b>0.00804</b></td></tr>
+    <tr><td>200 de una (ancho 4)</td><td class="n">1</td>
+        <td class="bad">0.01045</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>El protocolo le gana a 4 × 50 por 9.3 %</b> — y
+<b>no por el ancho, sino por los lanzamientos</b>. Su valor real no es llegar a
+ancho 1: es <b>llegar a 200 réplicas en dos lanzamientos en vez de cuatro</b>,
+esquivando al mismo tiempo el lote de ancho 4. Esa es la razón correcta para
+adoptarlo, y es distinta de la que yo te había dado.</p></div>
+
+<div class="note warn"><strong>Dos límites.</strong> La fila de 200 réplicas está
+<b>modelada, no medida</b> — solo las de 100 son medición directa, aunque el
+modelo acaba de validarse con menos de 1.5 % de error. Y todo esto es el
+<b>eje del ancho</b>: el dentado sigue intacto, y <code>B=99</code> contra
+<code>B=101</code> difieren <b>2.3 %</b> siendo los dos ancho 1.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las

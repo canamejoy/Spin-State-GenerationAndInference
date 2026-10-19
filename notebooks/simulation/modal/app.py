@@ -3739,7 +3739,7 @@ def kcustom_probe(rd: float = 18.30, layers: int = 5, n_temps: int = 8,
                                   n_meas, x)
 
 
-def _split_protocol(tag, Rd, L, n_temps, n_therm, n_meas, reps):
+def _split_protocol(tag, Rd, L, n_temps, n_therm, n_meas, reps, spec=None):
     """Does splitting a multiple of four into two odd batches actually pay?
 
     The width rule says a batch with v2(B)+v2(L) >= 2 compiles to four
@@ -3781,14 +3781,25 @@ def _split_protocol(tag, Rd, L, n_temps, n_therm, n_meas, reps):
     print(f"gpu={device_identity()}", flush=True)
     print(f"Rd={Rd} L={L} N={N} barridos={sweeps}  repeticiones={reps}", flush=True)
 
-    CONFIGS = [
-        ("200 de una (ancho 4)",            [200]),
-        ("101 + 99 (el protocolo)",         [101, 99]),
-        ("201 de una (una replica MAS)",    [201]),
-        ("199 de una (una replica MENOS)",  [199]),
-        ("100 de una (ancho 4)",            [100]),
-        ("51 + 49 (el protocolo, chico)",   [51, 49]),
-    ]
+    if spec:
+        # "100|50,50|51,49" -> one config per pipe, batches comma-separated
+        CONFIGS = []
+        for part in str(spec).split("|"):
+            bs = [int(x) for x in part.split(",") if x.strip()]
+            if not bs:
+                continue
+            lab = " + ".join(str(x) for x in bs) + \
+                  f" (ancho {','.join(str(width(x)) for x in bs)})"
+            CONFIGS.append((lab, bs))
+    else:
+        CONFIGS = [
+            ("200 de una (ancho 4)",            [200]),
+            ("101 + 99 (el protocolo)",         [101, 99]),
+            ("201 de una (una replica MAS)",    [201]),
+            ("199 de una (una replica MENOS)",  [199]),
+            ("100 de una (ancho 4)",            [100]),
+            ("51 + 49 (el protocolo, chico)",   [51, 49]),
+        ]
 
     def body(sp, kk, p):
         return eng["anneal"](sp, kk, betas, p, int(n_therm), int(n_meas))
@@ -3839,15 +3850,15 @@ def _split_protocol(tag, Rd, L, n_temps, n_therm, n_meas, reps):
     print(f"\n=== reloj de pared por replica (mediana de {reps}) ===", flush=True)
     print(f"  {'configuracion':<34}{'lanz':>5}{'repl':>6}{'ancho':>8}"
           f"{'pared s':>10}{'s/replica':>11}{'disp':>7}{'compilar':>10}", flush=True)
-    base = next(r for r in rows if r["label"].startswith("200"))
+    base = max(rows, key=lambda r: r["wall_per_replica_median"])
     for r in rows:
         print(f"  {r['label']:<34}{r['n_launches']:>5}{r['n_replicas']:>6}"
               f"{str(r['widths']):>8}{r['wall_median']:>10.3f}"
               f"{r['wall_per_replica_median']:>11.5f}{r['spread_pct']:>6.1f}%"
               f"{r['compile_total']:>10.1f}", flush=True)
 
-    print(f"\n=== contra B=200 de una ({base['wall_per_replica_median']:.5f} "
-          f"s/replica) ===", flush=True)
+    print(f"\n=== contra el peor, {base['label']} "
+          f"({base['wall_per_replica_median']:.5f} s/replica) ===", flush=True)
     for r in rows:
         if r is base:
             continue
@@ -3856,18 +3867,23 @@ def _split_protocol(tag, Rd, L, n_temps, n_therm, n_meas, reps):
         print(f"  {r['label']:<34}{ch:>+8.1f}%   {verdict}", flush=True)
 
     # does the protocol beat the one-launch odd alternatives?
-    prot = next(r for r in rows if r["label"].startswith("101"))
-    for other in ("201", "199"):
-        o = next(r for r in rows if r["label"].startswith(other))
+    prot = next((r for r in rows if r["label"].startswith("101")), None)
+    for other in (("201", "199") if prot else ()):
+        o = next((r for r in rows if r["label"].startswith(other)), None)
+        if o is None:
+            continue
         ch = 100 * (prot["wall_per_replica_median"] / o["wall_per_replica_median"] - 1)
         print(f"\n  protocolo (101+99) contra {other} de una: {ch:+.1f}%  "
               f"-> {'el protocolo gana' if ch < 0 else 'un solo lote impar gana'}",
               flush=True)
 
-    sm = next(r for r in rows if r["label"].startswith("100"))
-    sp = next(r for r in rows if r["label"].startswith("51"))
-    ch = 100 * (sp["wall_per_replica_median"] / sm["wall_per_replica_median"] - 1)
-    print(f"\n  caso chico, 51+49 contra 100 de una: {ch:+.1f}%", flush=True)
+    print(f"\n=== cada par, lado a lado ===", flush=True)
+    for i, x in enumerate(rows):
+        for y in rows[i + 1:]:
+            ch = 100 * (y["wall_per_replica_median"]
+                        / x["wall_per_replica_median"] - 1)
+            print(f"  {y['label']:<28} contra {x['label']:<28}{ch:+7.2f}%",
+                  flush=True)
 
     res = dict(rows=rows, Rd=float(Rd), L=int(L), N=N, device=device_identity(),
                n_temps=int(n_temps), n_therm=int(n_therm), n_meas=int(n_meas),
@@ -3883,16 +3899,17 @@ def _split_protocol(tag, Rd, L, n_temps, n_therm, n_meas, reps):
 
 
 @app.function(gpu="H100", **_COMMON)
-def split_protocol_h100(tag, Rd, L, nt, th, me, reps):
-    return _split_protocol(tag, Rd, L, nt, th, me, reps)
+def split_protocol_h100(tag, Rd, L, nt, th, me, reps, spec=None):
+    return _split_protocol(tag, Rd, L, nt, th, me, reps, spec)
 
 
 @app.local_entrypoint()
 def split_protocol(rd: float = 18.30, layers: int = 5, n_temps: int = 8,
                    n_therm: int = 300, n_meas: int = 150, reps: int = 7,
-                   tag: str = "split_protocol"):
+                   tag: str = "split_protocol", spec: str = ""):
     """Is splitting a multiple of four into two odd batches worth it?"""
-    split_protocol_h100.remote(tag, rd, layers, n_temps, n_therm, n_meas, reps)
+    split_protocol_h100.remote(tag, rd, layers, n_temps, n_therm, n_meas, reps,
+                               spec or None)
 
 
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
