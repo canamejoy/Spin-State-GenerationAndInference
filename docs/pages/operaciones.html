@@ -523,6 +523,160 @@ el reloj real a producción, y el desglose en el cronograma corto de 3600
 barridos. Las dos tablas de esta sección vienen de fuentes distintas y está bien
 que se sepa.</div>
 
+<h2>Qué es una fusión, y qué calcula cada una</h2>
+
+<p>Hasta aquí las cajas tenían nombre de compilador (<code>fusion_1458</code>) y
+un tiempo. Faltaba lo importante: <b>qué operación es cada una</b>. Eso vive en
+el HLO, que <code>--xla_dump_to</code> <b>ya estaba escribiendo y nunca
+leímos</b> — el seguimiento anterior solo miró el <code>thunk_sequence</code> y
+el PTX.</p>
+
+<h3>Los cuatro tipos de fusión</h3>
+<p>XLA <b>no documenta oficialmente</b> su estrategia de fusión. La descripción
+autoritativa son los comentarios del enum en el código fuente
+(<code>xla/hlo/ir/hlo_instruction.h</code>, <code>enum class FusionKind</code>):</p>
+
+<div class="tw"><table>
+  <thead><tr><th>tipo</th><th>qué dice el código de XLA</th><th>en nuestro programa</th></tr></thead>
+  <tbody>
+    <tr><td><code>kLoop</code></td>
+        <td>«el nodo primario es la raíz de la computación fundida, pero, a
+        diferencia de la fusión de entrada, prescribimos una implementación
+        específica: emitimos código que <b>genera un elemento de la raíz a la
+        vez</b>»</td>
+        <td>el generador aleatorio, los <code>select</code>, las reducciones de
+        bucle</td></tr>
+    <tr><td><code>kInput</code></td>
+        <td>«el nodo primario es la raíz de la instrucción fundida» — y para
+        <code>reduce</code> «podría emitir algo más sofisticado»</td>
+        <td>los seis desplazamientos de vecinos, la reducción de observables</td></tr>
+    <tr><td><code>kOutput</code></td>
+        <td>el nodo primario <b>no</b> es la raíz; exige que un búfer de operando
+        pueda aliasear el de salida</td>
+        <td class="dead">no aparece</td></tr>
+    <tr><td><code>kCustom</code></td>
+        <td>«categoría personalizada para fusiones específicas del backend que
+        <b>no encajan en los patrones anteriores</b>»</td>
+        <td class="bad">el núcleo del Metropolis — y es el kernel del problema</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p>Ese primer renglón <b>cierra el círculo con nuestra
+regla</b>. «Un elemento de la raíz a la vez» <b>es</b> el bucle que XLA
+vectoriza: es ahí donde decide dar 1, 2 o 4 elementos por hilo. Así que la regla
+<code>v₂(B) + v₂(L) ≥ 2 ⟹ castigo</code> no actuaba sobre «el programa» en
+abstracto — <b>actúa sobre las fusiones <code>kLoop</code></b>, y está anclada
+en un tipo de fusión documentado, no en un detalle accidental.</p></div>
+
+<h2>Dónde residen los tiempos, por fin con nombres</h2>
+<p>Uniendo el HLO (tipo de fusión, operaciones que contiene, raíz, forma de
+salida) con el <code>thunk_sequence</code> (rejilla), el trazado (microsegundos)
+y el campo <code>op_name</code> del HLO — que <b>lleva la ruta del código
+JAX</b> — cada kernel se puede nombrar por lo que hace:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>qué hace</th><th>kernels</th><th>µs/réplica<br>B=65</th>
+    <th>% del total</th><th>µs/réplica<br>B=75</th><th>cambio</th></tr></thead>
+  <tbody>
+    <tr class="best"><td><b>desplazar los vecinos</b> (los seis <i>rolls</i>)</td>
+        <td class="n">6</td><td class="n">2 812.7</td><td class="n"><b>31.5 %</b></td>
+        <td class="n">2 788.0</td><td class="n">−0.9 %</td></tr>
+    <tr><td><b>aceptación Metropolis</b> + renormalizar el espín</td>
+        <td class="n">2</td><td class="n">1 814.7</td><td class="n">20.3 %</td>
+        <td class="n">1 446.6</td><td class="n"><b>−20.3 %</b></td></tr>
+    <tr><td><b>números aleatorios</b> (Threefry) + la exponencial</td>
+        <td class="n">4</td><td class="n">1 525.9</td><td class="n">17.1 %</td>
+        <td class="n">1 617.0</td><td class="bad">+6.0 %</td></tr>
+    <tr><td>resto (elementwise, <i>slices</i>, escalares)</td>
+        <td class="n">23</td><td class="n">1 226.9</td><td class="n">13.7 %</td>
+        <td class="n">1 143.3</td><td class="n">−6.8 %</td></tr>
+    <tr><td>umbral de aceptación (log/max, tensor completo) <sup>†</sup></td>
+        <td class="n">1</td><td class="n">1 024.7</td><td class="n">11.5 %</td>
+        <td class="n">1 009.6</td><td class="n">−1.5 %</td></tr>
+    <tr><td>reducciones de observables</td>
+        <td class="n">4</td><td class="n">463.1</td><td class="n">5.2 %</td>
+        <td class="n">405.5</td><td class="n">−12.4 %</td></tr>
+    <tr><td>copias de memoria</td>
+        <td class="n">3</td><td class="n">63.6</td><td class="n">0.7 %</td>
+        <td class="n">57.2</td><td class="n">−10.0 %</td></tr>
+    <tr><td><b>TOTAL</b></td><td class="n">43</td><td class="n"><b>8 931.5</b></td>
+        <td class="n">100 %</td><td class="n"><b>8 467.2</b></td>
+        <td class="n"><b>−5.2 %</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>Solo una quinta parte del tiempo es la física.</b></p>
+  <p>El <b>31.5 %</b> se va en <b>mover vecinos de sitio</b>: seis kernels
+  <code>kInput</code> cuya ruta JAX es <code>jit(_roll_static)/concatenate</code>
+  y que por dentro son <b>dos <code>slice</code> y un
+  <code>concatenate</code></b>, nada más. Otro <b>17.1 %</b> es el generador de
+  números aleatorios de JAX — <code>xor</code>×23,
+  <code>shift-right-logical</code>×22, <code>or</code>×22,
+  <code>shift-left</code>×20, la firma inconfundible de <b>Threefry</b>, con la
+  <code>exponential</code> de Metropolis fundida dentro. El Monte Carlo en sí
+  —el <code>_where</code> que acepta o rechaza, más la renormalización del espín
+  nuevo— es el <b>20.3 %</b>.</p>
+</div>
+
+<h3>El kernel del problema es <code>kCustom</code>, y eso explica su rejilla</h3>
+<p>El kernel que cargaba el <b>67.8 %</b> de la brecha tiene ruta JAX
+<code>jit(_where)/select_n</code>, raíz <code>select</code>, y contiene
+<b>70 operaciones</b>:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>operación</th><th>B=65</th><th>B=75</th><th>qué es</th></tr></thead>
+  <tbody>
+    <tr><td><code>broadcast</code></td><td class="n">27</td><td class="n">27</td>
+        <td>repartir parámetros por sitio</td></tr>
+    <tr><td><code>select</code></td><td class="n">13</td><td class="n">13</td>
+        <td>el accept/reject y las máscaras</td></tr>
+    <tr><td><code>multiply</code></td><td class="n">12</td><td class="n">12</td>
+        <td>productos de la energía</td></tr>
+    <tr><td><code>add</code></td><td class="n">10</td><td class="n">10</td>
+        <td>sumas de la energía</td></tr>
+    <tr><td><code>sqrt</code> / <code>divide</code> / <code>abs</code></td>
+        <td class="n">2 / 1 / 1</td><td class="n">2 / 1 / 1</td>
+        <td>renormalizar el espín a módulo 1</td></tr>
+    <tr><td><code>compare</code></td><td class="n">2</td><td class="n">2</td>
+        <td>la comparación de Metropolis</td></tr>
+    <tr><td><code>reduce</code></td><td class="n">1</td><td class="n">1</td>
+        <td>sumar sobre los vecinos</td></tr>
+    <tr><td><code>negate</code></td><td class="n">1</td><td class="dead">0</td>
+        <td class="bad">la única diferencia entre los dos</td></tr>
+    <tr><td><b>total</b></td><td class="n"><b>70</b></td><td class="n"><b>69</b></td>
+        <td></td></tr>
+  </tbody>
+</table></div>
+
+<p>Y su tipo es <code><b>kCustom</b></code>: «fusiones específicas del backend
+que no encajan en los patrones anteriores». <b>Eso explica por fin la anomalía
+de la rejilla.</b> Una <code>kLoop</code> emite «un elemento de la raíz a la
+vez», lo que le fija la rejilla en <code>⌈elementos/ancho/128⌉</code> y la hace
+proporcional a <code>B</code>. Una <code>kCustom</code> usa un emisor propio del
+backend que <b>no tiene esa obligación</b> — y por eso es el único de los 43
+cuyos bloques por réplica no son constantes: <b>19.62 contra 19.00</b>.</p>
+
+<div class="note warn"><strong>Y esto afina lo que dije antes.</strong> Llamé a
+los dos lados «las mismas operaciones». Con precisión: <b>firma de PTX idéntica</b>
+(<code>ld esc = 69</code>, <code>ld.global.v4 = 0</code>, <code>st = 16</code>) y
+<b>el mismo recuento de operaciones salvo un <code>negate</code></b>, presente en
+B=65 y ausente en B=75 — 70 contra 69. Es la misma operación <b>salvo un signo
+plegado</b>, no idéntica byte a byte.</div>
+
+<div class="note bad"><strong>Límites, y uno molesta.</strong>
+<sup>†</sup> Dos kernels de fusión <b>no se pudieron emparejar con el HLO</b>:
+el del umbral de aceptación (<b>11.5 % del tiempo</b>) y
+<code>loop_add_slice_fusion_1</code> (1.4 %). El motivo es real: los nombres de
+kernel los construye el emisor a partir de las operaciones de la fusión, así que
+<b>no siempre coinciden con el nombre de la instrucción HLO</b>. Su rol en la
+tabla está <b>inferido del nombre del kernel</b>, no del HLO, y por eso lleva
+marca. Los otros 38 de 40 sí están emparejados (36 exactos, 2 quitando un índice
+final). La <b>agrupación por rol es mía</b>, apoyada en la ruta JAX y en la
+composición de operaciones, no una etiqueta que XLA emita. Y los totales difieren
+~1 % del seguimiento anterior (8 931.5 contra 9 027.7 µs/réplica en B=65): una
+sola corrida cada uno.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las

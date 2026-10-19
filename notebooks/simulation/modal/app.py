@@ -3361,6 +3361,234 @@ def opstep(batches: str = "135,140", rd: float = 18.30, layers: int = 5,
                        rd, layers, n_temps, n_therm, n_meas, ncu)
 
 
+def _fusion_doc(batches, tag, Rd, L, n_temps, n_therm, n_meas):
+    """What does each fused kernel actually COMPUTE, and what does it cost?
+
+    `_opstep` answered "how long" and "with what instructions", but never
+    "what operation is this". The answer is in the HLO, which --xla_dump_to
+    already writes and which we had simply never read. For every fused kernel
+    this joins four sources by kernel name:
+
+      - the HLO after optimisation, for the fusion's KIND (kLoop / kInput /
+        kOutput / kCustom), the opcodes inside its fused computation, its root
+        instruction, and its output shape;
+      - the thunk sequence, for the launch grid and block;
+      - the profiler trace, for the microseconds and the launch count;
+      - the metadata op_name, which carries the JAX source line, so a kernel
+        can be traced back to the physics it implements.
+
+    The point is to be able to say "the 68% of the gap sits in THIS operation",
+    naming the operation, instead of quoting an XLA-generated label.
+    """
+    import os, sys, glob, json, re, gzip, collections, io as _io
+    os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "")
+                               + " --xla_dump_to=/tmp/dump").strip()
+    os.makedirs("/tmp/dump", exist_ok=True)
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    N = int(geo["N"])
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} sitios={int(np.asarray(geo['disco']).sum())}",
+          flush=True)
+
+    THUNK = re.compile(r"\]\s+([A-Za-z_][\w$]*) grid: \[(\d+), 1, 1\]"
+                       r" threads: \[(\d+), 1, 1\]")
+    # %fusion.1458 = f32[...]{...} fusion(%a, %b), kind=kLoop, calls=%fused_computation.1458
+    FUS = re.compile(r"^\s*%?([\w.$-]+) = (\S+) fusion\(([^)]*)\),\s*"
+                     r"kind=(k\w+),\s*calls=%?([\w.$-]+)")
+    OPN = re.compile(r'op_name="([^"]*)"')
+    SRC = re.compile(r'source_file="([^"]*)" source_line=(\d+)')
+    # a line inside a fused computation: %name = shape opcode(...)
+    INNER = re.compile(r"^\s+%?[\w.$-]+ = \S+ ([a-z][\w-]*)\(")
+    ROOT = re.compile(r"^\s+ROOT %?[\w.$-]+ = (\S+) ([a-z][\w-]*)\(")
+
+    def parse_hlo(path):
+        """-> {computation_name: {ops, root_op, root_shape}}, {fusion: info}"""
+        txt = _io.open(path, encoding="utf-8", errors="replace").read()
+        comps, cur, depth = {}, None, 0
+        for ln in txt.splitlines():
+            if cur is None:
+                m = re.match(r"^\s*%?([\w.$-]+) \(.*\) -> \S+ \{\s*$", ln)
+                if m and m.group(1) not in ("ENTRY", "main"):
+                    cur = m.group(1)
+                    comps[cur] = dict(ops=[], root_op=None, root_shape=None,
+                                      n_lines=0)
+                continue
+            if ln.strip() == "}":
+                cur = None
+                continue
+            comps[cur]["n_lines"] += 1
+            mr = ROOT.match(ln)
+            if mr:
+                comps[cur]["root_shape"], comps[cur]["root_op"] = mr.group(1), mr.group(2)
+                comps[cur]["ops"].append(mr.group(2))
+                continue
+            mi = INNER.match(ln)
+            if mi and mi.group(1) not in ("parameter", "constant"):
+                comps[cur]["ops"].append(mi.group(1))
+        fus = {}
+        for ln in txt.splitlines():
+            m = FUS.match(ln)
+            if not m:
+                continue
+            name, shape, operands, kind, calls = m.groups()
+            op = OPN.search(ln)
+            sf = SRC.search(ln)
+            fus[name] = dict(hlo_name=name, out_shape=shape, kind=kind,
+                             calls=calls, n_operands=len([o for o in
+                                 operands.split(",") if o.strip()]),
+                             op_name=(op.group(1) if op else None),
+                             source=(f"{sf.group(1)}:{sf.group(2)}" if sf else None))
+        return comps, fus
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, int(n_therm), int(n_meas))
+
+    out = {}
+    for B in batches:
+        for f in glob.glob("/tmp/dump/*"):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11), geo, B),
+                jax.random.PRNGKey(12), cols)
+        fn = jax.jit(body).lower(*args).compile()
+        jax.block_until_ready(fn(*args))
+
+        files = sorted(glob.glob("/tmp/dump/*"))
+        pre = os.path.basename(max(files, key=os.path.getsize)).split(".jit_")[0]
+        mine = [f for f in files if os.path.basename(f).startswith(pre)]
+        geom = {}
+        for f in mine:
+            if "thunk_sequence" in f:
+                t = _io.open(f, encoding="utf-8", errors="replace").read()
+                for nm, g, tt in THUNK.findall(t):
+                    geom[nm] = (int(g), int(tt))
+        hlos = [f for f in mine if "after_optimizations.txt" in f]
+        comps, fus = {}, {}
+        for f in sorted(hlos, key=os.path.getsize, reverse=True)[:1]:
+            comps, fus = parse_hlo(f)
+            print(f"  HLO: {os.path.basename(f)} -> {len(fus)} fusiones, "
+                  f"{len(comps)} computaciones fundidas", flush=True)
+
+        pdir = f"/tmp/prof_{B}"
+        with jax.profiler.trace(pdir):
+            jax.block_until_ready(fn(*args))
+        ev = collections.defaultdict(lambda: [0.0, 0])
+        for g in glob.glob(f"{pdir}/**/*.trace.json.gz", recursive=True):
+            with gzip.open(g, "rt") as fh:
+                try:
+                    tr = json.load(fh)
+                except Exception:
+                    continue
+            pids = {e["pid"] for e in tr.get("traceEvents", [])
+                    if e.get("ph") == "M" and e.get("name") == "process_name"
+                    and "GPU" in str(e.get("args", {}).get("name", ""))}
+            for e in tr.get("traceEvents", []):
+                if e.get("ph") == "X" and e.get("pid") in pids and "dur" in e:
+                    ev[e["name"]][0] += e["dur"]
+                    ev[e["name"]][1] += 1
+
+        # kernel names use _ where HLO uses . ; match on the normalised form
+        norm = lambda x: x.replace(".", "_").replace("-", "_")
+        byn = {norm(k): v for k, v in fus.items()}
+
+        def lookup(kname):
+            """Kernel names and HLO fusion names agree only up to the uniquer.
+
+            The thunk calls a kernel `loop_and_fusion_2` while the HLO names the
+            fusion `loop_and_fusion.2`; normalising the dots covers that. But
+            XLA also appends its own `_N` to a kernel whose fusion carries no
+            suffix, so fall back to stripping one trailing index, and then to a
+            unique prefix match. Anything still unmatched is reported as such
+            rather than silently guessed.
+            """
+            if kname in byn:
+                return byn[kname], "exact"
+            st = re.sub(r"_\d+$", "", kname)
+            if st in byn:
+                return byn[st], "suffix-stripped"
+            cand = [v for k, v in byn.items() if k.startswith(st)]
+            if len(cand) == 1:
+                return cand[0], "prefix"
+            return {}, "unmatched"
+        sweeps = int(n_temps) * (int(n_therm) + int(n_meas))
+        rows = []
+        for k, (us, n) in sorted(ev.items(), key=lambda kv: -kv[1][0]):
+            g, tt = geom.get(k, (None, None))
+            info, how = lookup(k)
+            comp = comps.get(info.get("calls", ""), {})
+            ops = comp.get("ops", [])
+            tally = collections.Counter(ops)
+            rows.append(dict(
+                kernel=k, us_total=us, calls=n, grid=g, block=tt,
+                us_per_replica=us / B,
+                us_per_sweep_replica=us / max(sweeps, 1) / B,
+                blocks_per_replica=(g / B) if g else None,
+                kind=info.get("kind"), hlo_name=info.get("hlo_name"),
+                matched=how,
+                out_shape=info.get("out_shape"),
+                n_operands=info.get("n_operands"),
+                op_name=info.get("op_name"), source=info.get("source"),
+                root_op=comp.get("root_op"), n_inner_ops=len(ops),
+                ops_tally=dict(tally.most_common()),
+                ops_distinct=sorted(tally)))
+        out[B] = dict(B=B, gpu_us_total=sum(v[0] for v in ev.values()),
+                      n_kernels=len(ev), n_fusions_hlo=len(fus), rows=rows)
+
+        r = out[B]
+        print(f"\n--- B={B}  {r['gpu_us_total']:,.0f} us en {r['n_kernels']} "
+              f"kernels ---", flush=True)
+        print(f"  {'kernel':<34}{'kind':>8}{'raiz':>12}{'ops':>5}"
+              f"{'us/rep':>10}{'bloq/rep':>10}  forma salida", flush=True)
+        for q in r["rows"][:16]:
+            print(f"  {q['kernel'][:33]:<34}{str(q['kind'] or '-'):>8}"
+                  f"{str(q['root_op'] or '-')[:11]:>12}{q['n_inner_ops']:>5}"
+                  f"{q['us_per_replica']:>10,.1f}"
+                  f"{(q['blocks_per_replica'] or 0):>10,.2f}  "
+                  f"{str(q['out_shape'] or '-')[:34]}", flush=True)
+        for q in r["rows"][:6]:
+            print(f"\n  == {q['kernel']} ({q['kind']}) ==", flush=True)
+            print(f"     fuente   : {q['source']}", flush=True)
+            print(f"     op_name  : {str(q['op_name'])[:110]}", flush=True)
+            print(f"     salida   : {q['out_shape']}  raiz={q['root_op']}"
+                  f"  operandos={q['n_operands']}", flush=True)
+            print(f"     contiene : {q['ops_tally']}", flush=True)
+
+    res = dict(by_batch={str(k): v for k, v in out.items()},
+               Rd=float(Rd), L=int(L), N=N, device=device_identity(),
+               n_temps=int(n_temps), n_therm=int(n_therm), n_meas=int(n_meas),
+               sweeps=int(n_temps) * (int(n_therm) + int(n_meas)))
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", **_COMMON)
+def fusion_doc_h100(b, tag, Rd, L, nt, th, me):
+    return _fusion_doc(b, tag, Rd, L, nt, th, me)
+
+
+@app.local_entrypoint()
+def fusion_doc(batches: str = "65,75", rd: float = 18.30, layers: int = 5,
+               n_temps: int = 8, n_therm: int = 300, n_meas: int = 150,
+               tag: str = "fusion_doc_65_75"):
+    """What each fused kernel computes, joined with what it costs."""
+    fusion_doc_h100.remote([int(x) for x in batches.split(",") if x], tag,
+                           rd, layers, n_temps, n_therm, n_meas)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 
