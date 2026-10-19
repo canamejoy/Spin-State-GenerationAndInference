@@ -3739,6 +3739,162 @@ def kcustom_probe(rd: float = 18.30, layers: int = 5, n_temps: int = 8,
                                   n_meas, x)
 
 
+def _split_protocol(tag, Rd, L, n_temps, n_therm, n_meas, reps):
+    """Does splitting a multiple of four into two odd batches actually pay?
+
+    The width rule says a batch with v2(B)+v2(L) >= 2 compiles to four
+    elements per thread and pays for it. B=200 with L=5 has v2=3, so it is
+    the bad case. The proposed protocol splits it into B/2+1 and B/2-1, both
+    odd, both width 1, and their sum is exactly B.
+
+    The saving is real but it is not free: two launches pay the fixed
+    per-sweep cost twice. Writing u(B) = a/B + b + c[width 4], one launch of
+    200 costs a + 200b + 200c of GPU work while two launches of 101 and 99
+    cost 2a + 200b. So the split wins exactly when a < 200c, and only a
+    measurement settles it.
+
+    Two alternatives go in the same run, because the protocol has to beat
+    them and not just beat B=200:
+      - ONE launch of 201, also odd, one replica MORE than asked;
+      - ONE launch of 199, also odd, one replica FEWER.
+    If either wins there is no need for a protocol at all.
+
+    Everything is normalised to wall clock per replica, since the configs
+    deliver different replica counts. Configurations are interleaved and
+    repeated so that thermal drift hits all of them equally.
+    """
+    import os, sys, json, time, statistics as st
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    N = int(geo["N"])
+    sweeps = int(n_temps) * (int(n_therm) + int(n_meas))
+    v2 = lambda n: (n & -n).bit_length() - 1
+    width = lambda B: min(4, 2 ** (v2(B) + v2(int(L))))
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} barridos={sweeps}  repeticiones={reps}", flush=True)
+
+    CONFIGS = [
+        ("200 de una (ancho 4)",            [200]),
+        ("101 + 99 (el protocolo)",         [101, 99]),
+        ("201 de una (una replica MAS)",    [201]),
+        ("199 de una (una replica MENOS)",  [199]),
+        ("100 de una (ancho 4)",            [100]),
+        ("51 + 49 (el protocolo, chico)",   [51, 49]),
+    ]
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, int(n_therm), int(n_meas))
+
+    # compile and warm every distinct batch size first, so no timed call
+    # ever includes compilation
+    need = sorted({B for _, bs in CONFIGS for B in bs})
+    comp, t_comp = {}, {}
+    for B in need:
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11 + B), geo, B),
+                jax.random.PRNGKey(12 + B), cols)
+        t0 = time.perf_counter()
+        fn = jax.jit(body).lower(*args).compile()
+        jax.block_until_ready(fn(*args))
+        t_comp[B] = time.perf_counter() - t0
+        comp[B] = (fn, args)
+        print(f"  compilado B={B:>4} (ancho {width(B)}) en {t_comp[B]:6.1f} s", flush=True)
+
+    # interleaved repeats
+    samples = {lab: [] for lab, _ in CONFIGS}
+    for r in range(int(reps)):
+        for lab, bs in CONFIGS:
+            t0 = time.perf_counter()
+            for B in bs:                      # one GPU: the launches are serial
+                fn, args = comp[B]
+                jax.block_until_ready(fn(*args))
+            samples[lab].append(time.perf_counter() - t0)
+        print(f"  ronda {r+1}/{reps} lista", flush=True)
+
+    rows = []
+    for lab, bs in CONFIGS:
+        s = samples[lab]
+        nrep = sum(bs)
+        rows.append(dict(label=lab, batches=bs, n_replicas=nrep,
+                         widths=[width(B) for B in bs],
+                         n_launches=len(bs),
+                         wall_min=min(s), wall_median=st.median(s),
+                         wall_max=max(s),
+                         spread_pct=100 * (max(s) / min(s) - 1),
+                         samples=s,
+                         wall_per_replica_min=min(s) / nrep,
+                         wall_per_replica_median=st.median(s) / nrep,
+                         us_per_sweep_replica=1e6 * st.median(s) / sweeps / nrep,
+                         compile_s=[t_comp[B] for B in bs],
+                         compile_total=sum(t_comp[B] for B in bs)))
+
+    print(f"\n=== reloj de pared por replica (mediana de {reps}) ===", flush=True)
+    print(f"  {'configuracion':<34}{'lanz':>5}{'repl':>6}{'ancho':>8}"
+          f"{'pared s':>10}{'s/replica':>11}{'disp':>7}{'compilar':>10}", flush=True)
+    base = next(r for r in rows if r["label"].startswith("200"))
+    for r in rows:
+        print(f"  {r['label']:<34}{r['n_launches']:>5}{r['n_replicas']:>6}"
+              f"{str(r['widths']):>8}{r['wall_median']:>10.3f}"
+              f"{r['wall_per_replica_median']:>11.5f}{r['spread_pct']:>6.1f}%"
+              f"{r['compile_total']:>10.1f}", flush=True)
+
+    print(f"\n=== contra B=200 de una ({base['wall_per_replica_median']:.5f} "
+          f"s/replica) ===", flush=True)
+    for r in rows:
+        if r is base:
+            continue
+        ch = 100 * (r["wall_per_replica_median"] / base["wall_per_replica_median"] - 1)
+        verdict = "MEJOR" if ch < 0 else "peor"
+        print(f"  {r['label']:<34}{ch:>+8.1f}%   {verdict}", flush=True)
+
+    # does the protocol beat the one-launch odd alternatives?
+    prot = next(r for r in rows if r["label"].startswith("101"))
+    for other in ("201", "199"):
+        o = next(r for r in rows if r["label"].startswith(other))
+        ch = 100 * (prot["wall_per_replica_median"] / o["wall_per_replica_median"] - 1)
+        print(f"\n  protocolo (101+99) contra {other} de una: {ch:+.1f}%  "
+              f"-> {'el protocolo gana' if ch < 0 else 'un solo lote impar gana'}",
+              flush=True)
+
+    sm = next(r for r in rows if r["label"].startswith("100"))
+    sp = next(r for r in rows if r["label"].startswith("51"))
+    ch = 100 * (sp["wall_per_replica_median"] / sm["wall_per_replica_median"] - 1)
+    print(f"\n  caso chico, 51+49 contra 100 de una: {ch:+.1f}%", flush=True)
+
+    res = dict(rows=rows, Rd=float(Rd), L=int(L), N=N, device=device_identity(),
+               n_temps=int(n_temps), n_therm=int(n_therm), n_meas=int(n_meas),
+               sweeps=sweeps, reps=int(reps),
+               note=("Replicas are independent chains, so the split is "
+                     "statistically exact but not bit-identical: the RNG keys "
+                     "differ. On one GPU the two launches are serial, so the "
+                     "wall clock of the protocol is their sum."))
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", **_COMMON)
+def split_protocol_h100(tag, Rd, L, nt, th, me, reps):
+    return _split_protocol(tag, Rd, L, nt, th, me, reps)
+
+
+@app.local_entrypoint()
+def split_protocol(rd: float = 18.30, layers: int = 5, n_temps: int = 8,
+                   n_therm: int = 300, n_meas: int = 150, reps: int = 7,
+                   tag: str = "split_protocol"):
+    """Is splitting a multiple of four into two odd batches worth it?"""
+    split_protocol_h100.remote(tag, rd, layers, n_temps, n_therm, n_meas, reps)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 

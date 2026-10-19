@@ -905,6 +905,106 @@ tienen nada que ver con la estandarización. Si el objetivo fuera
 es <b>que el tiempo sea predecible</b>, entonces sí, el orden es 1.1 (gratis,
 hoy) y luego 2.3/1.4 (un kernel propio).</div>
 
+<h2>El protocolo de partición: 200 → 101 + 99</h2>
+
+<p>Si el lote que necesitas es múltiplo de cuatro, pagas ancho 4. La propuesta
+es <b>partirlo en dos lotes impares</b>: <code>B/2+1</code> y
+<code>B/2−1</code>. Los dos impares, los dos ancho 1 (con <code>L</code>
+impar), y su suma es <b>exactamente</b> <code>B</code>.</p>
+
+<div class="key"><p><b>Y es exacto, no una aproximación.</b> Las réplicas son
+cadenas independientes, así que da igual en qué lote caiga cada una: 4 estados ×
+50 réplicas siguen siendo 50 por estado. Lo único que cambia son las claves del
+generador aleatorio, así que es <b>estadísticamente exacto, no bit-idéntico</b>
+— lo correcto para Monte Carlo.</p></div>
+
+<p>Medido en un solo H100, <b>siete repeticiones intercaladas</b> para que la
+deriva térmica afecte igual a todas, con compilación fuera del cronómetro:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>configuración</th><th>lanz.</th><th>réplicas</th><th>ancho</th>
+    <th>s/réplica</th><th>vs 200</th><th>dispersión</th></tr></thead>
+  <tbody>
+    <tr><td><b>200 de una</b> — el problema</td><td class="n">1</td>
+        <td class="n">200</td><td class="bad">4</td>
+        <td class="n">0.01045</td><td class="n">—</td><td class="n">0.0 %</td></tr>
+    <tr class="best"><td><b>101 + 99</b> — el protocolo</td><td class="n">2</td>
+        <td class="n">200</td><td class="n">1, 1</td>
+        <td class="n"><b>0.00804</b></td><td class="best"><b>−23.1 %</b></td>
+        <td class="n">0.2 %</td></tr>
+    <tr><td>201 de una — una réplica más</td><td class="n">1</td>
+        <td class="n">201</td><td class="n">1</td>
+        <td class="n">0.00802</td><td class="n">−23.2 %</td><td class="n">0.0 %</td></tr>
+    <tr><td>199 de una — una réplica menos</td><td class="n">1</td>
+        <td class="n">199</td><td class="n">1</td>
+        <td class="n">0.00767</td><td class="n">−26.6 %</td><td class="n">0.1 %</td></tr>
+    <tr><td>100 de una</td><td class="n">1</td><td class="n">100</td>
+        <td class="bad">4</td><td class="n">0.01150</td>
+        <td class="n">+10.0 %</td><td class="n">0.1 %</td></tr>
+    <tr class="best"><td><b>51 + 49</b> — el protocolo, chico</td><td class="n">2</td>
+        <td class="n">100</td><td class="n">1, 1</td>
+        <td class="n"><b>0.00886</b></td><td class="best"><b>−23.0 %</b></td>
+        <td class="n">2.1 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>El protocolo funciona: −23.1 %</b> contra el lote de ancho
+4 que reemplaza, con <b>0.0 a 0.2 % de dispersión</b> sobre siete repeticiones.
+Es la medición más limpia de todo este trabajo. Y el caso chico gana igual:
+<b>51 + 49 le saca 23.0 %</b> a un solo lote de 100.</p></div>
+
+<h3>Qué cuesta partir, exactamente</h3>
+<p>Partir no es gratis: el <b>costo fijo por lanzamiento se paga dos veces</b>.
+Con <code>W(B) = a + b·B</code> para el reloj de pared de un lanzamiento,
+un lote de <code>B</code> cuesta <code>a + b·B</code> mientras dos de
+<code>B/2</code> cuestan <code>2a + b·B</code>. La diferencia es exactamente
+<code>a</code>, o <code><b>a/B</b></code> por réplica.</p>
+
+<p>Ajustando con las dos configuraciones del protocolo:</p>
+
+<div class="key"><p style="font-family:var(--mono)">
+a = 0.0820 s &nbsp;&nbsp; b = 0.007215 s por réplica</p>
+<p>El modelo predice <code>B=199</code> en <b>0.00763</b> contra
+<b>0.00767</b> medido — <b>0.6 % de error</b>, sin haberlo usado para
+ajustar. Eso valida el modelo.</p></div>
+
+<p>Así que el costo intrínseco de partir 200 es
+<code>0.0820/200 = 0.00041 s</code> por réplica, <b>+5.4 %</b> sobre un lote
+impar ideal de exactamente 200 — que <b>no existe</b>, porque 200 es múltiplo
+de cuatro. Ese es el precio real del protocolo, y es pequeño frente al 23 % que
+ahorra.</p>
+
+<h3>Me equivoqué al predecir que 201 le ganaría</h3>
+<div class="note bad"><strong>Predije que el protocolo perdería ~2.7 % contra un
+solo lote de 201. El resultado es un empate: +0.14 %.</strong>
+Dos errores. Ajusté <code>a</code> sobre segundos-por-réplica extrapolados a
+producción entre B=125 y 195, que <b>mezcla el dentado con el término a/B</b> y
+me dio un <code>a</code> casi seis veces más grande en esas unidades. Y además
+<b>B=201 cae 5.3 % por ENCIMA del modelo</b> por su propio dentado, lo que
+cancela el 5.4 % que cuesta partir. <b>El empate es en parte suerte de la curva
+irregular, no una ley.</b> Lo que sí sobrevive es el mecanismo: partir cuesta
+<code>a/B</code>, y aquí son 5.4 %.</div>
+
+<h3>Cuándo el protocolo empieza a doler</h3>
+<p>El término <code>a/B</code> crece al partir chico. <b>51 + 49 cuesta 10.2 %
+más por réplica que 101 + 99</b>, puro costo de lanzamiento repartido entre
+menos réplicas.</p>
+
+<div class="key"><p><b>Regla práctica:</b> el protocolo es casi gratis mientras
+<code>B/2</code> se quede en la parte plana de la curva (del orden de 100 o
+más), y empieza a cobrar por debajo de eso. Aun así, a <code>B/2 ≈ 50</code>
+sigue ganando 23 %.</p></div>
+
+<div class="note warn"><strong>Alcance, y es el límite importante.</strong> Esto
+resuelve <b>el eje del ancho, y solo cuando <code>L</code> es impar</b> — que es
+nuestra geometría de producción, <code>L = 5</code>. Si <code>L</code> es
+múltiplo de cuatro, <code>v₂(L) ≥ 2</code> fuerza ancho 4 <b>para cualquier
+<code>B</code></b>, impar o no, y <b>ninguna partición ayuda</b>: la suma ya
+pasa el umbral por el lado de <code>L</code>. Para ese caso la única palanca
+viva sigue siendo un kernel propio en Pallas con tile fijo. Y el dentado queda
+intacto: el protocolo no lo toca, y los 4.6 % que separan a B=199 de B=201 son
+justamente eso.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las
