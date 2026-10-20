@@ -1,0 +1,69 @@
+{
+ "registered": "2026-10-19, BEFORE the measurement",
+ "found_how": "post hoc, by searching residues on 13 points; n=10 for the 4-vs-8 cases",
+ "candidate_rule": "for odd B: B mod 8 in {5,7} -> heavy-kernel tile_B = 8 (cheap); B mod 8 in {1,3} -> tile_B = 4 (dear, +3.5%)",
+ "known_exceptions": "B=95 took tile_B=32 and B=123/127 took tile_B=B, so the rule covers the 4-vs-8 choice only",
+ "predictions": {
+  "139": {
+   "B_mod_8": 3,
+   "predicted_tile_B": 4,
+   "predicted_group": "dear"
+  },
+  "141": {
+   "B_mod_8": 5,
+   "predicted_tile_B": 8,
+   "predicted_group": "cheap"
+  },
+  "143": {
+   "B_mod_8": 7,
+   "predicted_tile_B": 8,
+   "predicted_group": "cheap"
+  },
+  "145": {
+   "B_mod_8": 1,
+   "predicted_tile_B": 4,
+   "predicted_group": "dear"
+  },
+  "147": {
+   "B_mod_8": 3,
+   "predicted_tile_B": 4,
+   "predicted_group": "dear"
+  },
+  "149": {
+   "B_mod_8": 5,
+   "predicted_tile_B": 8,
+   "predicted_group": "cheap"
+  },
+  "151": {
+   "B_mod_8": 7,
+   "predicted_tile_B": 8,
+   "predicted_group": "cheap"
+  },
+  "153": {
+   "B_mod_8": 1,
+   "predicted_tile_B": 4,
+   "predicted_group": "dear"
+  },
+  "163": {
+   "B_mod_8": 3,
+   "predicted_tile_B": 4,
+   "predicted_group": "dear"
+  },
+  "165": {
+   "B_mod_8": 5,
+   "predicted_tile_B": 8,
+   "predicted_group": "cheap"
+  },
+  "167": {
+   "B_mod_8": 7,
+   "predicted_tile_B": 8,
+   "predicted_group": "cheap"
+  },
+  "169": {
+   "B_mod_8": 1,
+   "predicted_tile_B": 4,
+   "predicted_group": "dear"
+  }
+ },
+ "falsifier": "if the measured tile_B disagrees with the prediction on any of the 12, or if the cheap and dear groups overlap in cost, the rule is dead"
+}
