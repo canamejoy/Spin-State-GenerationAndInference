@@ -5149,6 +5149,49 @@ def _triton_stencil(batches, repeats, tag, Rd, L, tile):
             compiler_params=pltriton.CompilerParams(),
         )(sp)
 
+    # ---- the question: pad the ARRAY to a power of two instead? ----------
+    # We already pad the INDEX GRID, which is virtual and free, and mask the
+    # overhang. Padding the array itself would remove the mask but cost
+    # 64^2/39^2 = 2.69x the memory and traffic -- and worse, it puts v2 = 12
+    # into B*L*N^2*3, so XLA's width would be 4 for EVERY B and the one lever
+    # we have measured would be gone. Measured anyway, because masking might
+    # cost more than the extra traffic.
+    def padN(sp):
+        return jnp.pad(sp, ((0, 0), (0, 0), (0, T - N), (0, T - N), (0, 0)))
+
+    def kernel_nomask(s_ref, o_ref):
+        b = pl.program_id(0)
+        z = pl.program_id(1)
+        iy = jax.lax.broadcasted_iota(jnp.int32, (T, T), 0)
+        ix = jax.lax.broadcasted_iota(jnp.int32, (T, T), 1)
+        yp = jnp.where(iy + 1 >= T, 0, iy + 1)
+        ym = jnp.where(iy - 1 < 0, T - 1, iy - 1)
+        xp = jnp.where(ix + 1 >= T, 0, ix + 1)
+        xm = jnp.where(ix - 1 < 0, T - 1, ix - 1)
+        zlo, zhi = jnp.maximum(z - 1, 0), jnp.minimum(z + 1, Lz - 1)
+        has_lo = (z > 0).astype(jnp.float32)
+        has_hi = (z < Lz - 1).astype(jnp.float32)
+        e = []
+        for c in range(3):
+            ld = lambda zz, yy, xx: pltriton.load(s_ref.at[b, zz, yy, xx, c])
+            sv = (ld(z, yp, ix) + ld(z, ym, ix) + ld(z, iy, xp) + ld(z, iy, xm)
+                  + has_hi * ld(zhi, iy, ix) + has_lo * ld(zlo, iy, ix))
+            e.append(ld(z, iy, ix) + 0.1 * sv)
+        inv = 1.0 / jnp.sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2] + 1e-20)
+        for c in range(3):
+            pltriton.store(o_ref.at[b, z, iy, ix, c], e[c] * inv)
+
+    def triton_padded(sp4):
+        B = sp4.shape[0]
+        return pl.pallas_call(
+            kernel_nomask,
+            grid=(B, Lz),
+            in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
+            out_shape=jax.ShapeDtypeStruct(sp4.shape, sp4.dtype),
+            compiler_params=pltriton.CompilerParams(),
+        )(sp4)
+
     # ---- the gate: equivalence before any timing ------------------------
     sp0 = S.init_spins(jax.random.PRNGKey(5), geo, 8)
     ref = jax.jit(jax_step)(sp0); ref.block_until_ready()
@@ -5174,27 +5217,76 @@ def _triton_stencil(batches, repeats, tag, Rd, L, tile):
             json.dump(res, f, indent=1)
         return res
 
+    v2 = lambda n: (n & -n).bit_length() - 1
+    width = lambda B: min(4, 2 ** (v2(B) + v2(Lz)))
     rows = []
-    print(f"\n{'B':>6}{'jax 6 rolls':>15}{'triton':>12}{'cambio':>10}", flush=True)
+    print(f"\n{'B':>5}{'anchoXLA':>9}{'jax us/rep':>12}{'triton us/rep':>15}"
+          f"{'cambio':>9}{'padeado us/rep':>16}{'vs triton':>11}", flush=True)
     for B in batches:
         sp = S.init_spins(jax.random.PRNGKey(7 + B), geo, B)
+        sp4 = jax.jit(padN)(sp)
         fj = jax.jit(jax_step).lower(sp).compile()
         ft = jax.jit(triton_step).lower(sp).compile()
-        jax.block_until_ready(fj(sp)); jax.block_until_ready(ft(sp))
-        tj, tt = [], []
+        fq = jax.jit(triton_padded).lower(sp4).compile()
+        for f, x in ((fj, sp), (ft, sp), (fq, sp4)):
+            jax.block_until_ready(f(x))
+        tj, tt, tq = [], [], []
         for _ in range(int(repeats)):
             t0 = time.perf_counter(); jax.block_until_ready(fj(sp))
             tj.append(time.perf_counter() - t0)
             t0 = time.perf_counter(); jax.block_until_ready(ft(sp))
             tt.append(time.perf_counter() - t0)
-        mj, mt = float(np.median(tj)), float(np.median(tt))
+            t0 = time.perf_counter(); jax.block_until_ready(fq(sp4))
+            tq.append(time.perf_counter() - t0)
+        mj, mt, mq = (float(np.median(x)) for x in (tj, tt, tq))
         e2 = float(jnp.max(jnp.abs(fj(sp) - ft(sp))))
-        rows.append(dict(B=B, jax_s=mj, triton_s=mt,
-                         change_pct=100 * (mt / mj - 1), max_abs_err=e2))
-        print(f"{B:>6}{mj*1e3:>13.3f} ms{mt*1e3:>10.3f} ms"
-              f"{100*(mt/mj-1):>+9.1f}%", flush=True)
+        rows.append(dict(B=B, width_xla=width(B), v2=v2(B),
+                         jax_s=mj, triton_s=mt, padded_s=mq,
+                         jax_us_per_replica=1e6 * mj / B,
+                         triton_us_per_replica=1e6 * mt / B,
+                         padded_us_per_replica=1e6 * mq / B,
+                         change_pct=100 * (mt / mj - 1),
+                         padded_vs_triton_pct=100 * (mq / mt - 1),
+                         max_abs_err=e2))
+        r = rows[-1]
+        print(f"{B:>5}{width(B):>9}{r['jax_us_per_replica']:>12.2f}"
+              f"{r['triton_us_per_replica']:>15.2f}{r['change_pct']:>+8.1f}%"
+              f"{r['padded_us_per_replica']:>16.2f}"
+              f"{r['padded_vs_triton_pct']:>+10.1f}%", flush=True)
     res["timing"] = rows
     if rows:
+        import statistics as stx
+        def disp(key):
+            xs = [r[key] for r in rows]
+            return 100 * (max(xs) / min(xs) - 1)
+        res["dispersion_pct"] = dict(
+            jax=round(disp("jax_us_per_replica"), 1),
+            triton=round(disp("triton_us_per_replica"), 1),
+            padded=round(disp("padded_us_per_replica"), 1))
+        print(f"\n=== la prueba del dentado: dispersion de us/replica "
+              f"sobre {len(rows)} lotes ===", flush=True)
+        for k, lab in (("jax", "JAX, seis rolls"),
+                       ("triton", "Triton, tile fijo"),
+                       ("padded", "Triton, arreglo padeado")):
+            print(f"  {lab:<26}{res['dispersion_pct'][k]:>7.1f}%", flush=True)
+        print(f"\n  si el tile fijo mata el dentado, la dispersion de Triton"
+              f"\n  deberia ser mucho menor que la de JAX.", flush=True)
+        # does the XLA width effect show up on either path?
+        w1 = [r["jax_us_per_replica"] for r in rows if r["width_xla"] == 1]
+        w4 = [r["jax_us_per_replica"] for r in rows if r["width_xla"] == 4]
+        t1 = [r["triton_us_per_replica"] for r in rows if r["width_xla"] == 1]
+        t4 = [r["triton_us_per_replica"] for r in rows if r["width_xla"] == 4]
+        if w1 and w4:
+            print(f"\n=== el efecto del ancho, en cada ruta ===", flush=True)
+            print(f"  JAX    ancho1 {stx.mean(w1):.2f} vs ancho4 "
+                  f"{stx.mean(w4):.2f} us/rep -> "
+                  f"{100*(stx.mean(w4)/stx.mean(w1)-1):+.1f}%", flush=True)
+            print(f"  Triton ancho1 {stx.mean(t1):.2f} vs ancho4 "
+                  f"{stx.mean(t4):.2f} us/rep -> "
+                  f"{100*(stx.mean(t4)/stx.mean(t1)-1):+.1f}%", flush=True)
+            res["width_effect_pct"] = dict(
+                jax=round(100*(stx.mean(w4)/stx.mean(w1)-1), 1),
+                triton=round(100*(stx.mean(t4)/stx.mean(t1)-1), 1))
         bb = min(rows, key=lambda r: r["change_pct"])
         print(f"\n  mejor: B={bb['B']}  {bb['change_pct']:+.1f}%", flush=True)
         print(f"  equivalencia peor caso: "
@@ -5212,7 +5304,8 @@ def triton_stencil_h100(b, rep, tag, Rd, L, tile):
 
 
 @app.local_entrypoint()
-def triton_stencil(batches: str = "32,64,96,128", repeats: int = 9,
+def triton_stencil(batches: str = "63,64,65,66,68,96,97,99,100,128,129",
+                   repeats: int = 9,
                    rd: float = 18.30, layers: int = 5, tile: int = 64,
                    tag: str = "triton_stencil"):
     """The stencil as a real Triton kernel via pltriton.load."""

@@ -1599,6 +1599,112 @@ Triton de Pallas <b>se deprecó en jax 0.11.0</b> y esto corre en <b>0.10.2</b>.
 La ruta funciona hoy; no es una apuesta a largo plazo sin plan de migración a
 Triton directo o a un <i>custom call</i>.</div>
 
+<h2>La prueba: ¿el tile fijo mata el dentado?</h2>
+
+<p>Once lotes, nueve repeticiones intercaladas, y tres rutas en la misma
+corrida: JAX con seis rolls, Triton con tile fijo, y Triton sobre un
+<b>arreglo padeado</b> a 64 — que es la pregunta de si conviene llenar de ceros
+hasta una potencia de 2.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>JAX µs/rép</th><th>Triton µs/rép</th><th>cambio</th>
+    <th>padeado µs/rép</th><th>vs Triton</th></tr></thead>
+  <tbody>
+    <tr><td class="n">63</td><td class="n">3.87</td><td class="n">3.61</td>
+        <td class="best">−6.6 %</td><td class="n">3.50</td><td class="best">−2.9 %</td></tr>
+    <tr><td class="n">64</td><td class="n">3.32</td><td class="n">3.06</td>
+        <td class="best">−7.8 %</td><td class="n">3.22</td><td class="bad">+5.3 %</td></tr>
+    <tr><td class="n">65</td><td class="n">2.92</td><td class="n">2.97</td>
+        <td class="bad">+1.5 %</td><td class="n">2.89</td><td class="best">−2.5 %</td></tr>
+    <tr class="best"><td class="n">66</td><td class="n">3.90</td><td class="n">3.19</td>
+        <td class="best"><b>−18.4 %</b></td><td class="n">3.25</td><td class="bad">+2.1 %</td></tr>
+    <tr><td class="n">68</td><td class="n">2.43</td><td class="n">2.46</td>
+        <td class="bad">+1.5 %</td><td class="n">2.69</td><td class="bad">+9.1 %</td></tr>
+    <tr><td class="n">96</td><td class="n">2.11</td><td class="n">1.79</td>
+        <td class="best">−15.3 %</td><td class="n">2.03</td><td class="bad">+13.7 %</td></tr>
+    <tr><td class="n">97</td><td class="n">1.87</td><td class="n">1.80</td>
+        <td class="best">−3.8 %</td><td class="n">1.74</td><td class="best">−3.3 %</td></tr>
+    <tr><td class="n">99</td><td class="n">2.07</td><td class="n">1.85</td>
+        <td class="best">−10.3 %</td><td class="n">1.81</td><td class="best">−2.6 %</td></tr>
+    <tr><td class="n">100</td><td class="n">2.18</td><td class="n">2.24</td>
+        <td class="bad">+2.5 %</td><td class="n">2.02</td><td class="best">−9.8 %</td></tr>
+    <tr><td class="n">128</td><td class="n">1.78</td><td class="n">1.56</td>
+        <td class="best">−12.4 %</td><td class="n">1.71</td><td class="bad">+10.0 %</td></tr>
+    <tr><td class="n">129</td><td class="n">1.56</td><td class="n">1.52</td>
+        <td class="best">−2.3 %</td><td class="n">1.94</td><td class="bad">+27.4 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Triton le gana en 8 de 11, media −6.5 %, mejor
+−18.4 %.</b> Confirma el resultado anterior con más datos.</p></div>
+
+<h3>Y una corrección de método, mía</h3>
+<div class="note bad"><strong>Mi primera métrica del dentado estaba mal.</strong>
+Reporté la dispersión de µs/réplica cruda: 150 % en JAX, 137 % en Triton. Pero
+eso <b>es el término <code>a/B</code>, no el dentado</b> — el costo por réplica
+cae de 3.87 µs en B=63 a 1.56 en B=129 solo porque el costo fijo se reparte
+entre más réplicas. Hay que <b>quitar la tendencia primero</b>, ajustando
+<code>u(B) = a/B + b</code> y midiendo el residuo.</div>
+
+<div class="tw"><table>
+  <thead><tr><th>ruta</th><th>a</th><th>b</th><th>residuo máx−mín</th>
+    <th>residuo σ</th></tr></thead>
+  <tbody>
+    <tr><td>JAX, seis rolls</td><td class="n">228.0</td><td class="n">−0.21</td>
+        <td class="n">43.2 %</td><td class="bad">12.7 %</td></tr>
+    <tr class="best"><td>Triton, tile fijo</td><td class="n">211.4</td>
+        <td class="n">−0.19</td><td class="n">31.9 %</td>
+        <td class="best"><b>10.3 %</b></td></tr>
+    <tr><td>Triton, arreglo padeado</td><td class="n">197.0</td>
+        <td class="n">0.05</td><td class="n">39.4 %</td><td class="n">11.3 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>El tile fijo reduce el dentado un 19 %, pero NO lo elimina.</b></p>
+  <p>La σ del residuo baja de 12.7 % a 10.3 %. Es real y es modesto — queda
+  ±10 % de irregularidad.</p>
+  <p><b>Y se entiende por qué</b>: el <b>tile</b> es fijo, pero la
+  <b>rejilla no</b>. Son <code>B × L<sub>z</sub></code> programas, así que
+  cuántos bloques caen por SM y cómo queda la última oleada <b>sigue dependiendo
+  de B</b>. Fijar el tile quita la componente de <b>re-tejado de Triton</b>; no
+  quita la de <b>cuantización de oleadas</b>.</p>
+</div>
+
+<h2>¿Y si llenamos de ceros hasta una potencia de 2?</h2>
+<p>La pregunta tiene dos respuestas, y las dos son no.</p>
+
+<div class="note bad"><strong>Primero, medido: el arreglo padeado es peor.</strong>
+Media <b>+4.2 %</b> contra la versión con máscara, y gana solo en <b>5 de
+11</b>. Consistente con el tráfico: <code>64²/39² = 2.69×</code> más elementos
+por plano.</div>
+
+<div class="note bad"><strong>Y segundo, peor aún: rompería la palanca del
+ancho.</strong> El ancho de XLA depende de
+<code>v₂(B·L·N²·3)</code>. Con <code>N = 39</code> impar,
+<code>v₂(L·N²·3) = 0</code> y el ancho lo decide <code>B</code>. Con
+<code>N = 64</code>:
+<p style="font-family:var(--mono);font-size:.92rem;margin:.6rem 0">
+L·N²·3 = 61 440 &nbsp;→&nbsp; v₂ = <b>12</b><br>
+v₂(elementos) ≥ 12 ≥ 2 &nbsp;→&nbsp; <b>ancho 4 para CUALQUIER B</b></p>
+Padear el arreglo meter&iacute;a ancho 4 permanente en la parte de XLA y
+<b>mataría la única palanca que ya teníamos medida</b> — tu protocolo de
+partición dejaría de servir.</div>
+
+<div class="key"><p><b>Lo que sí hacemos es padear la rejilla de índices, no el
+arreglo.</b> Es virtual, no cuesta memoria ni tráfico, lleva máscara, y deja
+<code>N = 39</code> intacto en el producto del ancho. Esa es la razón por la que
+el kernel de Triton funciona sin tocar el layout.</p></div>
+
+<div class="note warn"><strong>Un test que montré y que no sirve.</strong> Puse
+una comparación del efecto del ancho entre las dos rutas y dio −3.9 % en JAX y
+−5.6 % en Triton, o sea <b>nada</b>. <b>No es un hallazgo: el test es
+inválido por construcción.</b> El castigo del ancho vive en las fusiones
+<code>kLoop</code> del programa completo — la mega-fusión de Threefry a +118 %
+y la aceptación a +76 % — mientras que <b>el stencil pelado siempre fue
+inmune</b> (+0.2 % los rolls, −1.4 % las reducciones). Medir el stencil solo es
+medir justamente la parte que nunca tuvo el problema.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las
