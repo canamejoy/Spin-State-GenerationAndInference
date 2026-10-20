@@ -1705,6 +1705,100 @@ y la aceptación a +76 % — mientras que <b>el stencil pelado siempre fue
 inmune</b> (+0.2 % los rolls, −1.4 % las reducciones). Medir el stencil solo es
 medir justamente la parte que nunca tuvo el problema.</div>
 
+<h2>La cuantización de oleadas, y la retractación que trajo</h2>
+
+<p>La idea a investigar era: el H100 tiene 132 SMs, nuestra rejilla es
+<code>B × L<sub>z</sub></code> bloques, así que si caben <code>W</code>
+concurrentes el costo va como <code>⌈G/W⌉</code> y la última oleada va a
+medias. Para no ajustar <code>W</code> a posteriori —el error que ya había
+cometido cuatro veces— lo medí directo: el mismo kernel con rejilla de
+<code>G</code> bloques, <code>G</code> de 1 a 597, todos haciendo trabajo
+idéntico. Eso debería dar una <b>escalera</b> cuyo escalón <i>es</i>
+<code>W</code>.</p>
+
+<div class="note bad"><strong>No hay escalera. Y lo que sí midió fue otra
+cosa.</strong> De <code>G=1</code> a <code>G=597</code> el tiempo se queda
+<b>plano en ~122 µs</b>. La pendiente lineal sale <b>negativa</b>
+(−0.0102 µs/bloque), el modelo de oleadas da <b>R² = 0.085</b> y el lineal
+<b>R² = 0.045</b> — <b>los dos explican casi nada</b>. La periodicidad máxima
+del residuo es <code>|r| = 0.296</code>, por debajo de mi propio umbral. El
+<code>W = 182</code> que salió del ajuste <b>es ruido</b>.</div>
+
+<div class="key"><p><b>Lo que la sonda midió es sobrecoste de lanzamiento:
+~122 µs por llamada, con 1 bloque o con 597.</b> El cálculo de 597 bloques de
+un stencil son microsegundos; el resto es latencia de despacho. La sonda no
+podía ver al planificador.</p></div>
+
+<h3>Y eso reinterpretó toda la medición anterior</h3>
+<p>Los ajustes <code>u(B) = a/B + b</code> habían dado <code>a = 228</code>
+(JAX) y <code>a = 211</code> (Triton). El sobrecoste medido es ~122 µs —
+<b>el mismo orden</b>. Así que <b>el término <code>a/B</code> era el sobrecoste
+de lanzamiento</b>, no física. Con un paso por llamada, <b>la mitad de lo que
+cronometrábamos era despacho</b>.</p>
+
+<p>La prueba correcta: <b>200 pasos dentro de una sola llamada</b>, que es el
+régimen en el que corre la simulación real con sus 3600 barridos.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>JAX µs/rép</th><th>Triton µs/rép</th><th>cambio</th>
+    <th>padeado µs/rép</th></tr></thead>
+  <tbody>
+    <tr><td class="n">63</td><td class="n">0.22</td><td class="n">0.31</td>
+        <td class="bad">+39.2 %</td><td class="n">0.57</td></tr>
+    <tr><td class="n">66</td><td class="n">0.24</td><td class="n">0.30</td>
+        <td class="bad">+26.2 %</td><td class="n">0.56</td></tr>
+    <tr><td class="n">99</td><td class="n">0.20</td><td class="n">0.25</td>
+        <td class="bad">+22.7 %</td><td class="n">0.58</td></tr>
+    <tr><td class="n">129</td><td class="n">0.19</td><td class="n">0.23</td>
+        <td class="bad">+19.0 %</td><td class="n">0.56</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Retiro el resultado de Triton.</strong> Dije que
+era «lo primero en todo este trabajo que le gana a la ruta JAX», media
+−6.5 %, ganando 8 de 11. <b>Con el sobrecoste amortizado es +26.3 % de media y
+gana 0 de 11</b>, entre +19.0 % y +39.2 %. El «triunfo» era despacho: <b>la
+ruta JAX lanza ~7 kernels por paso</b> (seis rolls más el elementwise) contra
+<b>uno</b> de Triton, y con una sola llamada eso domina. Con 200 pasos domina
+el cálculo, y ahí Triton pierde.</div>
+
+<h3>Por qué el cálculo de Triton es más lento</h3>
+<div class="key"><p>La rejilla 64×64 cubre <b>4096 carriles para 1521 sitios
+activos</b>: el <b>62.9 % de los carriles van enmascarados pero SE EJECUTAN</b>,
+o sea <b>2.69× el trabajo de carril</b>. Y hace <b>21 cargas dispersas</b>
+(siete vecinos × tres componentes) contra las lecturas contiguas y coalescidas
+que produce <code>jnp.roll</code>. Infravaloré las dos cosas.</p></div>
+
+<h3>El hallazgo que sí vale, y es el más importante</h3>
+<div class="tw"><table>
+  <thead><tr><th>ruta</th><th>residuo σ (amortizado)</th>
+    <th>antes (un paso)</th></tr></thead>
+  <tbody>
+    <tr><td>JAX, seis rolls</td><td class="best">1.9 %</td><td class="bad">12.7 %</td></tr>
+    <tr><td>Triton, tile fijo</td><td class="best">1.1 %</td><td class="bad">10.3 %</td></tr>
+    <tr><td>Triton, padeado</td><td class="best">1.3 %</td><td class="bad">11.3 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>Con el sobrecoste amortizado, el stencil no tiene dentado: σ de 1 a
+  2 %.</b></p>
+  <p>El ±10 % que atribuí a cuantización de oleadas <b>era jitter del
+  sobrecoste de lanzamiento</b>. Y encaja con lo que ya sabíamos: el dentado
+  del programa completo estaba <b>79 % en la fusión de Triton del
+  <code>_where</code></b>, el núcleo del Metropolis — <b>no en los rolls</b>.
+  El stencil siempre fue la parte lisa.</p>
+</div>
+
+<div class="note"><strong>Un dato inesperado y una idea sin probar.</strong> El
+<b>arreglo padeado es el más plano de los tres</b> — rango de 4.0 % contra
+23.1 % de JAX, porque todos los carriles hacen trabajo idéntico sin máscara —
+pero cuesta <b>2.69×</b>. Es el intercambio predictibilidad-por-velocidad en su
+forma más pura, y a ese precio no vale. Y la mejora obvia que queda: <b>aplanar
+en vez de tejar en 2-D</b> — los 1521 sitios activos padeados a <b>2048</b>
+desperdician <b>25.7 %</b> de carriles en vez de 62.9 %, la mitad del
+desperdicio actual. Sin probar.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las

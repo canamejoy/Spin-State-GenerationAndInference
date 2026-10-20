@@ -5046,7 +5046,7 @@ def triton_load_probe(tag: str = "triton_load_probe"):
     triton_load_probe_h100.remote(tag)
 
 
-def _triton_stencil(batches, repeats, tag, Rd, L, tile):
+def _triton_stencil(batches, repeats, tag, Rd, L, tile, steps=1):
     """The stencil as a real Triton kernel, through Pallas's masked loads.
 
     Everything before this failed on the same thing: no way to shift data
@@ -5217,17 +5217,34 @@ def _triton_stencil(batches, repeats, tag, Rd, L, tile):
             json.dump(res, f, indent=1)
         return res
 
+    # ---- amortise the launch: K steps inside one call -------------------
+    # A single call costs about 122 us of dispatch latency no matter how many
+    # blocks it launches (measured separately), and the single-step stencil at
+    # B around 100 takes roughly 200 us in total -- so half of what we were
+    # timing was overhead, which is also what the a/B term in the earlier fits
+    # really was. Looping K steps inside one jit pushes overhead to under a
+    # percent, which is the regime the real simulation runs in with its 3600
+    # sweeps per call. Equivalence is still checked on ONE step, because f32
+    # differences would compound over K.
+    K = int(steps)
+
+    def loop_of(fn):
+        def g(sp):
+            return jax.lax.fori_loop(0, K, lambda i, x: fn(x), sp)
+        return g
+
     v2 = lambda n: (n & -n).bit_length() - 1
     width = lambda B: min(4, 2 ** (v2(B) + v2(Lz)))
     rows = []
+    print(f"\n  {K} pasos por llamada, sobrecoste amortizado", flush=True)
     print(f"\n{'B':>5}{'anchoXLA':>9}{'jax us/rep':>12}{'triton us/rep':>15}"
           f"{'cambio':>9}{'padeado us/rep':>16}{'vs triton':>11}", flush=True)
     for B in batches:
         sp = S.init_spins(jax.random.PRNGKey(7 + B), geo, B)
         sp4 = jax.jit(padN)(sp)
-        fj = jax.jit(jax_step).lower(sp).compile()
-        ft = jax.jit(triton_step).lower(sp).compile()
-        fq = jax.jit(triton_padded).lower(sp4).compile()
+        fj = jax.jit(loop_of(jax_step)).lower(sp).compile()
+        ft = jax.jit(loop_of(triton_step)).lower(sp).compile()
+        fq = jax.jit(loop_of(triton_padded)).lower(sp4).compile()
         for f, x in ((fj, sp), (ft, sp), (fq, sp4)):
             jax.block_until_ready(f(x))
         tj, tt, tq = [], [], []
@@ -5239,7 +5256,9 @@ def _triton_stencil(batches, repeats, tag, Rd, L, tile):
             t0 = time.perf_counter(); jax.block_until_ready(fq(sp4))
             tq.append(time.perf_counter() - t0)
         mj, mt, mq = (float(np.median(x)) for x in (tj, tt, tq))
-        e2 = float(jnp.max(jnp.abs(fj(sp) - ft(sp))))
+        mj, mt, mq = mj / K, mt / K, mq / K     # per step
+        e2 = float(jnp.max(jnp.abs(jax.jit(jax_step)(sp)
+                                   - jax.jit(triton_step)(sp))))
         rows.append(dict(B=B, width_xla=width(B), v2=v2(B),
                          jax_s=mj, triton_s=mt, padded_s=mq,
                          jax_us_per_replica=1e6 * mj / B,
@@ -5299,18 +5318,166 @@ def _triton_stencil(batches, repeats, tag, Rd, L, tile):
 
 @app.function(gpu="H100", image=pallas_image, timeout=60 * 60,
               volumes={"/out": vol})
-def triton_stencil_h100(b, rep, tag, Rd, L, tile):
-    return _triton_stencil(b, rep, tag, Rd, L, tile)
+def triton_stencil_h100(b, rep, tag, Rd, L, tile, steps):
+    return _triton_stencil(b, rep, tag, Rd, L, tile, steps)
 
 
 @app.local_entrypoint()
 def triton_stencil(batches: str = "63,64,65,66,68,96,97,99,100,128,129",
                    repeats: int = 9,
                    rd: float = 18.30, layers: int = 5, tile: int = 64,
-                   tag: str = "triton_stencil"):
+                   steps: int = 200, tag: str = "triton_stencil"):
     """The stencil as a real Triton kernel via pltriton.load."""
     triton_stencil_h100.remote([int(x) for x in batches.split(",") if x],
-                               repeats, tag, rd, layers, tile)
+                               repeats, tag, rd, layers, tile, steps)
+
+
+def _wave_probe(tag, Rd, L, gmax, step, repeats):
+    """Measure the wave width W directly, instead of fitting it afterwards.
+
+    The residual jaggedness the fixed-tile Triton kernel still has (sigma
+    10.3% after removing a/B + b) is suspected to be wave quantisation: the
+    grid is B x Lz blocks, so if W blocks are resident at once the cost goes
+    as ceil(G/W) and the last wave is partial. The tile being fixed does
+    nothing about that, because the GRID still scales with B.
+
+    Fitting W to the observed teeth would be the fifth post-hoc pattern in
+    this work, and four of the previous four died. So measure it instead: run
+    the SAME kernel with a grid of G blocks, every block doing identical work
+    on the same data, and sweep G. Then the time is ceil(G/W) * t_wave exactly
+    -- a staircase whose tread width IS W, with no model to fit.
+
+    Every block reads plane `g mod Bm` of a small fixed array, so the data is
+    cache-resident and the only thing that changes with G is how many blocks
+    the scheduler has to place.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        from jax.experimental import pallas as pl
+        import jax.experimental.pallas.triton as pltriton
+    except Exception as e:
+        print(f"TRITON NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N, Lz = int(geo["N"]), int(geo["L"])
+    T, Bm = 64, 8
+    print(f"Rd={Rd} L={Lz} N={N}  tile {T}x{T}  "
+          f"arreglo fijo de {Bm} replicas", flush=True)
+
+    # the same arithmetic as the real stencil, so the occupancy matches
+    def kernel(s_ref, o_ref):
+        g = pl.program_id(0)
+        b = jax.lax.rem(g, Bm)
+        iy = jax.lax.broadcasted_iota(jnp.int32, (T, T), 0)
+        ix = jax.lax.broadcasted_iota(jnp.int32, (T, T), 1)
+        m = (iy < N) & (ix < N)
+        cy, cx = jnp.minimum(iy, N - 1), jnp.minimum(ix, N - 1)
+        yp = jnp.where(iy + 1 >= N, 0, jnp.minimum(iy + 1, N - 1))
+        ym = jnp.where(iy - 1 < 0, N - 1, jnp.maximum(iy - 1, 0))
+        xp = jnp.where(ix + 1 >= N, 0, jnp.minimum(ix + 1, N - 1))
+        xm = jnp.where(ix - 1 < 0, N - 1, jnp.maximum(ix - 1, 0))
+        e = []
+        for c in range(3):
+            ld = lambda yy, xx: pltriton.load(s_ref.at[b, 0, yy, xx, c], mask=m)
+            e.append(ld(cy, cx) + 0.1 * (ld(yp, cx) + ld(ym, cx)
+                                         + ld(cy, xp) + ld(cy, xm)))
+        inv = 1.0 / jnp.sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2] + 1e-20)
+        for c in range(3):
+            pltriton.store(o_ref.at[b, 0, cy, cx, c], e[c] * inv, mask=m)
+
+    def make(G):
+        def f(sp):
+            return pl.pallas_call(
+                kernel, grid=(G,),
+                in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+                out_specs=pl.BlockSpec(memory_space=pl.ANY),
+                out_shape=jax.ShapeDtypeStruct(sp.shape, sp.dtype),
+                compiler_params=pltriton.CompilerParams(),
+            )(sp)
+        return f
+
+    sp = S.init_spins(jax.random.PRNGKey(3), geo, Bm)[:, :1]
+    print(f"  arreglo: {sp.shape}", flush=True)
+    Gs = list(range(1, int(gmax) + 1, int(step)))
+    rows, fns = [], {}
+    for G in Gs:
+        try:
+            fns[G] = jax.jit(make(G)).lower(sp).compile()
+            jax.block_until_ready(fns[G](sp))
+        except Exception as e:
+            print(f"  G={G} fallo: {type(e).__name__}: {e}", flush=True)
+            fns.pop(G, None)
+    Gs = [G for G in Gs if G in fns]
+    print(f"  compilados {len(Gs)} tamaños de rejilla", flush=True)
+    for _ in range(int(repeats)):
+        for G in Gs:
+            t0 = time.perf_counter(); jax.block_until_ready(fns[G](sp))
+            rows.append((G, time.perf_counter() - t0))
+    agg = {}
+    for G, t in rows:
+        agg.setdefault(G, []).append(t)
+    times = {G: float(np.median(v)) for G, v in agg.items()}
+
+    print(f"\n{'G':>5}{'us':>10}{'us/bloque':>12}{'salto vs anterior':>19}",
+          flush=True)
+    prev, jumps = None, []
+    for G in Gs:
+        us = times[G] * 1e6
+        j = (100 * (us / prev - 1)) if prev else 0.0
+        if prev and j > 4.0:
+            jumps.append(dict(G=G, jump_pct=j))
+        print(f"{G:>5}{us:>10.1f}{us/G:>12.3f}"
+              f"{(f'{j:+.1f}%' if prev else '-'):>19}"
+              f"{'   <- ESCALON' if prev and j > 4.0 else ''}", flush=True)
+        prev = us
+
+    res = dict(available=True, device=device_identity(), N=N, L=Lz, tile=T,
+               array_replicas=Bm, grids=Gs, repeats=int(repeats),
+               us_by_grid={str(G): times[G] * 1e6 for G in Gs},
+               steps=jumps)
+    if len(jumps) >= 2:
+        ps = [jumps[i]["G"] - jumps[i - 1]["G"] for i in range(1, len(jumps))]
+        res["step_positions"] = [j["G"] for j in jumps]
+        res["step_periods"] = ps
+        res["W_estimate"] = int(np.median(ps)) if ps else None
+        print(f"\n=== escalones en G = {[j['G'] for j in jumps]}", flush=True)
+        print(f"    periodos = {ps}   ->  W ~ {res['W_estimate']} bloques "
+              f"residentes", flush=True)
+        W = res["W_estimate"]
+        if W:
+            print(f"\n=== lo que eso predice para la rejilla real (B x {Lz}) ===",
+                  flush=True)
+            print(f"  dientes donde {Lz}B cruza un multiplo de {W}:", flush=True)
+            bs = sorted({int(np.ceil(k * W / Lz)) for k in range(1, 40)
+                         if int(np.ceil(k * W / Lz)) <= 200})
+            print(f"  B = {bs}", flush=True)
+            res["predicted_teeth_B"] = bs
+    else:
+        print(f"\n  menos de dos escalones claros; no se puede estimar W",
+              flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=pallas_image, timeout=60 * 60,
+              volumes={"/out": vol})
+def wave_probe_h100(tag, Rd, L, gmax, step, repeats):
+    return _wave_probe(tag, Rd, L, gmax, step, repeats)
+
+
+@app.local_entrypoint()
+def wave_probe(rd: float = 18.30, layers: int = 5, gmax: int = 600,
+               step: int = 4, repeats: int = 7, tag: str = "wave_probe"):
+    """Measure how many blocks are resident at once, from the staircase."""
+    wave_probe_h100.remote(tag, rd, layers, gmax, step, repeats)
 
 
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):

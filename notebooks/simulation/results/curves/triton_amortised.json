@@ -1,0 +1,221 @@
+{
+ "available": true,
+ "N": 39,
+ "L": 5,
+ "tile": 64,
+ "jax": "0.10.2",
+ "backend": "pallas-triton + pltriton.load",
+ "ran": true,
+ "equivalent": true,
+ "max_abs_err": 1.7881393432617188e-07,
+ "max_rel_err": 1.7881403024949266e-07,
+ "timing": [
+  {
+   "B": 63,
+   "width_xla": 1,
+   "v2": 0,
+   "jax_s": 1.4009249999995532e-05,
+   "triton_s": 1.950624500000053e-05,
+   "padded_s": 3.599675999999441e-05,
+   "jax_us_per_replica": 0.2223690476189767,
+   "triton_us_per_replica": 0.309622936507945,
+   "padded_us_per_replica": 0.5713771428570541,
+   "change_pct": 39.23832467838573,
+   "padded_vs_triton_pct": 84.53966921872163,
+   "max_abs_err": 1.7881393432617188e-07
+  },
+  {
+   "B": 64,
+   "width_xla": 4,
+   "v2": 6,
+   "jax_s": 1.4584844999996349e-05,
+   "triton_s": 1.9568210000002752e-05,
+   "padded_s": 3.669405500000167e-05,
+   "jax_us_per_replica": 0.22788820312494296,
+   "triton_us_per_replica": 0.305753281250043,
+   "padded_us_per_replica": 0.5733446093750261,
+   "change_pct": 34.168103946306246,
+   "padded_vs_triton_pct": 87.51871019370962,
+   "max_abs_err": 2.384185791015625e-07
+  },
+  {
+   "B": 65,
+   "width_xla": 1,
+   "v2": 0,
+   "jax_s": 1.4602769999996212e-05,
+   "triton_s": 1.9624725000007004e-05,
+   "padded_s": 3.6827605000002704e-05,
+   "jax_us_per_replica": 0.22465799999994174,
+   "triton_us_per_replica": 0.3019188461539539,
+   "padded_us_per_replica": 0.5665785384615801,
+   "change_pct": 34.390427295726056,
+   "padded_vs_triton_pct": 87.65921560678972,
+   "max_abs_err": 2.384185791015625e-07
+  },
+  {
+   "B": 66,
+   "width_xla": 2,
+   "v2": 1,
+   "jax_s": 1.5597014999997328e-05,
+   "triton_s": 1.967856500000309e-05,
+   "padded_s": 3.698522000000537e-05,
+   "jax_us_per_replica": 0.2363184090908686,
+   "triton_us_per_replica": 0.2981600757576226,
+   "padded_us_per_replica": 0.5603821212122025,
+   "change_pct": 26.16878934851612,
+   "padded_vs_triton_pct": 87.94673290455661,
+   "max_abs_err": 1.7881393432617188e-07
+  },
+  {
+   "B": 68,
+   "width_xla": 4,
+   "v2": 2,
+   "jax_s": 1.5244790000004116e-05,
+   "triton_s": 1.9943804999993377e-05,
+   "padded_s": 3.835995000001091e-05,
+   "jax_us_per_replica": 0.22418808823535463,
+   "triton_us_per_replica": 0.2932912499999026,
+   "padded_us_per_replica": 0.5641169117648663,
+   "change_pct": 30.82374371826697,
+   "padded_vs_triton_pct": 92.34017781473321,
+   "max_abs_err": 1.7881393432617188e-07
+  },
+  {
+   "B": 96,
+   "width_xla": 4,
+   "v2": 5,
+   "jax_s": 1.994381000001155e-05,
+   "triton_s": 2.4017965000009413e-05,
+   "padded_s": 5.542697999999291e-05,
+   "jax_us_per_replica": 0.20774802083345367,
+   "triton_us_per_replica": 0.2501871354167647,
+   "padded_us_per_replica": 0.5773643749999261,
+   "change_pct": 20.428167937798758,
+   "padded_vs_triton_pct": 130.77300678875662,
+   "max_abs_err": 1.7881393432617188e-07
+  },
+  {
+   "B": 97,
+   "width_xla": 1,
+   "v2": 0,
+   "jax_s": 1.9801790000002484e-05,
+   "triton_s": 2.4468495000000702e-05,
+   "padded_s": 5.6523490000017775e-05,
+   "jax_us_per_replica": 0.20414216494847923,
+   "triton_us_per_replica": 0.2522525257732031,
+   "padded_us_per_replica": 0.5827163917527606,
+   "change_pct": 23.56708661185496,
+   "padded_vs_triton_pct": 131.00517624813523,
+   "max_abs_err": 2.384185791015625e-07
+  },
+  {
+   "B": 99,
+   "width_xla": 1,
+   "v2": 0,
+   "jax_s": 1.9863065000009782e-05,
+   "triton_s": 2.4381664999992836e-05,
+   "padded_s": 5.719309999999922e-05,
+   "jax_us_per_replica": 0.20063702020211902,
+   "triton_us_per_replica": 0.24627944444437208,
+   "padded_us_per_replica": 0.5777080808080729,
+   "change_pct": 22.74875503846374,
+   "padded_vs_triton_pct": 134.57421796262076,
+   "max_abs_err": 1.7881393432617188e-07
+  },
+  {
+   "B": 100,
+   "width_xla": 4,
+   "v2": 2,
+   "jax_s": 2.0416135000012046e-05,
+   "triton_s": 2.4489545000001555e-05,
+   "padded_s": 5.807003000001032e-05,
+   "jax_us_per_replica": 0.20416135000012048,
+   "triton_us_per_replica": 0.24489545000001556,
+   "padded_us_per_replica": 0.5807003000001032,
+   "change_pct": 19.95191548247064,
+   "padded_vs_triton_pct": 137.121718676303,
+   "max_abs_err": 1.7881393432617188e-07
+  },
+  {
+   "B": 128,
+   "width_xla": 4,
+   "v2": 7,
+   "jax_s": 2.490745999999433e-05,
+   "triton_s": 2.96624299999948e-05,
+   "padded_s": 7.237006000000434e-05,
+   "jax_us_per_replica": 0.1945895312499557,
+   "triton_us_per_replica": 0.23173773437495937,
+   "padded_us_per_replica": 0.5653910937500339,
+   "change_pct": 19.090545563463923,
+   "padded_vs_triton_pct": 143.9788648469361,
+   "max_abs_err": 2.384185791015625e-07
+  },
+  {
+   "B": 129,
+   "width_xla": 1,
+   "v2": 0,
+   "jax_s": 2.4755294999998512e-05,
+   "triton_s": 2.9450034999989327e-05,
+   "padded_s": 7.286734000000906e-05,
+   "jax_us_per_replica": 0.19190151162789543,
+   "triton_us_per_replica": 0.22829484496115757,
+   "padded_us_per_replica": 0.5648631007752639,
+   "change_pct": 18.96458919189248,
+   "padded_vs_triton_pct": 147.42700645359324,
+   "max_abs_err": 2.384185791015625e-07
+  }
+ ],
+ "dispersion_pct": {
+  "jax": 23.1,
+  "triton": 35.6,
+  "padded": 4.0
+ },
+ "width_effect_pct": {
+  "jax": 1.4,
+  "triton": -0.9
+ },
+ "amortised_analysis": {
+  "JAX, seis rolls": {
+   "a": 4.417421711463308,
+   "b": 0.1591367012280609,
+   "residual_sigma_pct": 1.8911051407661874,
+   "rng": [
+    0.19190151162789543,
+    0.2363184090908686
+   ],
+   "range_pct": 23.1456735729624
+  },
+  "Triton, tile fijo": {
+   "a": 9.85566531641956,
+   "b": 0.15002679887651332,
+   "residual_sigma_pct": 1.0888227826858128,
+   "rng": [
+    0.22829484496115757,
+    0.309622936507945
+   ],
+   "range_pct": 35.62414716837987
+  },
+  "Triton, padeado": {
+   "a": -0.664135597687939,
+   "b": 0.5793599983807373,
+   "residual_sigma_pct": 1.2647676548304736,
+   "rng": [
+    0.5603821212122025,
+    0.5827163917527606
+   ],
+   "range_pct": 3.98554302415024
+  }
+ },
+ "retraction": {
+  "claim": "the Triton stencil beats the JAX path (mean -6.5%, 8 of 11)",
+  "status": "RETRACTED",
+  "measured_now": "mean +26.3%, wins 0 of 11, range +19.0% to +39.2%",
+  "why": "The single-step measurement was dispatch-bound: a call costs about 122 us of launch latency regardless of grid size, and the JAX path launches roughly seven kernels per step (six rolls plus the elementwise) against one for Triton. With one step per call that difference dominates and Triton looks faster. With 200 steps per call the compute dominates and Triton is 19 to 39 percent SLOWER. The real simulation runs 3600 sweeps per call, so the amortised regime is the one that matters.",
+  "why_triton_compute_is_slower": [
+   "the 64x64 index grid covers 4096 lanes for 1521 active sites, so 62.9% of lanes are masked but still EXECUTED -- 2.69x the lane work",
+   "21 gathered loads (seven neighbours times three components) against the contiguous coalesced reads jnp.roll produces"
+  ]
+ },
+ "unexpected_useful_finding": "The padded variant is the FLATTEST of the three: 4.0% range against 23.1% for JAX, because every lane does identical unmasked work. But it costs 2.69x. That is the predictability-for-speed trade in its purest form, and at 2.4x it is not worth taking.",
+ "next_idea_untested": "Flatten instead of tiling in 2-D: 1521 active sites padded to 2048 wastes 25.7% of lanes instead of 62.9%, which is 2.00x less lane waste than the 64x64 grid."
+}
