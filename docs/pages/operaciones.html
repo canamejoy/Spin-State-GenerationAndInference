@@ -1200,11 +1200,51 @@ el único par que medimos al cronograma real vio su brecha pasar de 5.7 % a
 4 000 000 de barridos</b>. Y la familia de firmas es una propiedad de <b>este</b>
 build de XLA, que puede moverse con una versión.</div>
 
-<div class="note"><strong>En vuelo.</strong> Para zanjar el límite tercero está
-corriendo a producción el par <code>B=151</code> (firma barata, el más rápido
-medido) contra <code>B=153</code> (el más caro, 12.2 % arriba). Es la brecha más
-grande disponible, así que es la que tiene más chance de sobrevivir al ruido de
-±2.5 % de la extrapolación.</div>
+<h3>Y sobrevive a producción: 15.0 %</h3>
+<p>Para zanjar el tercer límite medimos el par <code>B=151</code> (firma barata)
+contra <code>B=153</code> (el más caro) al <b>cronograma completo de
+producción</b>: 200 temperaturas × 20 000 barridos, 4 000 000 de barridos,
+reloj de pared real.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>firma</th><th>reloj real</th><th>s/réplica</th></tr></thead>
+  <tbody>
+    <tr class="best"><td class="n">151</td>
+        <td><code>8,1,8,8,3 | 8,1,8,8,3</code></td>
+        <td class="n">1 280.1 s = <b>21.3 min</b></td>
+        <td class="n"><b>8.478</b></td></tr>
+    <tr><td class="n">153</td><td><code>32,1,1,16,3 | 32,1,4,8,3</code></td>
+        <td class="n">1 491.1 s = <b>24.9 min</b></td>
+        <td class="n">9.746</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>El selector funciona, y la brecha CRECIÓ.</b></p>
+  <p style="font-family:var(--mono);font-size:.95rem">
+  celdas cortas &nbsp;12.2 %<br>
+  producción &nbsp;&nbsp;&nbsp;&nbsp;<b>15.0 %</b></p>
+  <p>Elegir la firma barata ahorra <b>1.268 s por réplica</b>, el <b>13.0 %</b>
+  de lo que cuesta la cara. Y encontrarlo cuesta <b>~40 s de compilación por
+  candidato, sin simular nada</b>.</p>
+</div>
+
+<div class="key"><p><b>Esto cierra el patrón de la resolución.</b> El par 65/75
+era 5.7 % en celdas cortas y <b>0.6 %</b> a producción: <b>murió</b>, porque
+5.7 % cae dentro de la banda de ruido de ±2.5 % por punto. Este par era 12.2 %
+y pasó a <b>15.0 %</b>: <b>sobrevivió</b>, porque está muy fuera. La regla de
+trabajo queda: <b>en celdas cortas, lo que está por encima de ~5 % es real; lo
+que está por debajo no es resoluble.</b></p></div>
+
+<div class="note warn"><strong>Dos cosas que NO afirmo.</strong> El desglose por
+kernel muestra que los comunes (los rolls, las reducciones) se mueven solo 1 a
+3 %, y la diferencia está en las fusiones de Triton — pero aparecen con nombres
+generados distintos en cada build (<code>fusion_1364/1362</code> en B=151,
+<code>fusion_1474/1473</code> en B=153), y <b>no reclamo atribución fina por
+kernel</b>, porque comparar por nombre ya me engañó una vez en este trabajo. Y
+la validación es <b>un solo par, una corrida cada uno</b>: establece que una
+brecha del 12 % sobrevive, <b>no</b> que sobreviva el margen de 0.3 % entre
+firmas vecinas.</div>
 
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">

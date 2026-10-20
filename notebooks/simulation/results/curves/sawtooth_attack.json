@@ -207,12 +207,50 @@
   "next_mean": 0.008068821395199195,
   "gap_pct": 3.4,
   "full_range_pct": 12.2,
-  "the_procedure": "Since the tile is not predictable but IS visible at compile time, select the batch size by COMPILING the candidates and reading the tile signature out of the HLO backend_config, then pick the cheap signature. A compile is about 40 s and needs no simulation, against a full production run of 10 to 12 min per candidate."
+  "the_procedure": "Since the tile is not predictable but IS visible at compile time, select the batch size by COMPILING the candidates and reading the tile signature out of the HLO backend_config, then pick the cheap signature. A compile is about 40 s and needs no simulation, against a full production run of 10 to 12 min per candidate.",
+  "status": "VALIDATED AT PRODUCTION, worth 15.0%"
  },
  "honest_limits": [
   "The no-overlap margin is only 0.3% with n=6 on each side; another sample could overlap. This is a usable selector, not a proven law.",
   "Within the cheap signature there is still 3.2% spread (0.007702 to 0.007950), unexplained.",
-  "All of this is at 3600 sweeps. The one pair we ever measured at the real production schedule saw a 5.7% short-cell gap collapse to 0.6%, so whether these 3% differences survive 4,000,000 sweeps is UNVERIFIED. A production run of B=151 (cheap signature) against B=153 (dearest, 12.2% apart here) is in flight to settle it.",
-  "The signature set is a property of this jaxlib/XLA build and may move with a version bump."
- ]
+  "RESOLVED: the production pair B=151 against B=153 measured +15.0% at 4,000,000 sweeps against +12.2% predicted from 3600, so the effect survives and grows. The earlier worry came from the 65/75 pair, whose 5.7% gap was inside the noise band; this one is not.",
+  "The signature set is a property of this jaxlib/XLA build and may move with a version bump.",
+  "The production validation is ONE pair, a single run each, no repeats. It establishes that a 12% short-cell gap survives; it does not establish the survival of the 0.3% no-overlap margin between adjacent signatures."
+ ],
+ "production_validation": {
+  "date": "2026-10-19",
+  "schedule": "200 temperatures x 20,000 sweeps = 4,000,000 sweeps",
+  "pair": "B=151 (cheap signature 8,1,8,8,3|8,1,8,8,3) against B=153 (dearest, 32,1,1,16,3|32,1,4,8,3)",
+  "why_this_pair": "the largest gap available at 3600 sweeps, 12.2%, so the one most likely to clear the +-2.5% extrapolation noise",
+  "results": [
+   {
+    "B": 151,
+    "signature": "8,1,8,8,3|8,1,8,8,3",
+    "wall_s": 1280.1,
+    "wall_min": 21.3,
+    "sec_per_replica": 8.478,
+    "compile_s": 62.2
+   },
+   {
+    "B": 153,
+    "signature": "32,1,1,16,3|32,1,4,8,3",
+    "wall_s": 1491.1,
+    "wall_min": 24.9,
+    "sec_per_replica": 9.746,
+    "compile_s": 24.1
+   }
+  ],
+  "gap_production_pct": 15.0,
+  "gap_short_cells_pct": 12.2,
+  "extrapolation_error": "short cells UNDER-reported by 2.7 percentage points",
+  "verdict": "THE SELECTOR SURVIVES PRODUCTION, and the gap GREW. 12.2% at 3600 sweeps became 15.0% at 4,000,000. Choosing the cheap tile signature saves 1.268 s per replica, which is 13.0% of what the dear one costs.",
+  "resolution_threshold_confirmed": "This settles the pattern. The 65/75 pair was 5.7% on short cells and 0.6% at production: it died, because 5.7% sits inside the +-2.5%-per-point noise band. This pair was 12.2% and became 15.0%: it survived, because it is far outside. So the working rule is that short-cell features above roughly 5% are real and features below it are not resolvable.",
+  "per_kernel_note": "The common kernels (the rolls, the reductions) move only 1 to 3% between the two. The difference sits in the Triton fusions, which appear under different generated names in each build (fusion_1364/1362 at B=151, fusion_1474/1473 at B=153). Precise per-kernel attribution is NOT claimed here, because name-matched deltas already misled us once in this work.",
+  "payoff": {
+   "per_replica_saving_s": 1.268,
+   "pct_of_the_dear_option": 13.0,
+   "wall_clock": "21.3 min against 24.9 min for this pair",
+   "cost_of_finding_it": "about 40 s of compilation per candidate, no simulation"
+  }
+ }
 }
