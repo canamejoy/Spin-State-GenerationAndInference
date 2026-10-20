@@ -1103,6 +1103,109 @@ modelo acaba de validarse con menos de 1.5 % de error. Y todo esto es el
 <b>eje del ancho</b>: el dentado sigue intacto, y <code>B=99</code> contra
 <code>B=101</code> difieren <b>2.3 %</b> siendo los dos ancho 1.</div>
 
+<h2>Atacando el dentado</h2>
+
+<p>Con el ancho resuelto, el dentado era lo único que quedaba. El experimento:
+<b>25 lotes, todos impares</b> — todos ancho 1, así que ese eje queda congelado
+y solo el dentado puede moverse — en <b>dos corridas independientes</b> de 13 y
+12 puntos, nueve repeticiones intercaladas cada una, registrando <b>el tile que
+Triton eligió</b> junto al tiempo.</p>
+
+<h3>Primero: el mecanismo se confirma</h3>
+<p>La prueba de atribución es directa — ¿los saltos de costo caen donde cambia
+el tile?</p>
+
+<div class="tw"><table>
+  <thead><tr><th>corrida</th><th>salto medio con <b>mismo</b> tile</th>
+    <th>con tile <b>distinto</b></th><th>razón</th></tr></thead>
+  <tbody>
+    <tr><td>mapa 1 (13 lotes)</td><td class="best">0.85 % <span
+        style="color:var(--muted)">(n=2)</span></td>
+        <td class="bad">2.90 % <span style="color:var(--muted)">(n=10)</span></td>
+        <td class="n">3.4×</td></tr>
+    <tr><td>mapa 2 (12 lotes)</td><td class="best">0.97 % <span
+        style="color:var(--muted)">(n=3)</span></td>
+        <td class="bad">4.46 % <span style="color:var(--muted)">(n=8)</span></td>
+        <td class="n">4.6×</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Replicado en las dos corridas.</b> Cuando el tile no
+cambia, dos lotes vecinos difieren ~1 %. Cuando cambia, 3 a 4.5 %, con máximos
+de 12.2 %. <b>El dentado es la re-tejada de Triton</b>, confirmado.</p></div>
+
+<h3>Y una regla que propuse, y que la medición mató</h3>
+<p>Buscando residuos en el primer mapa encontré que <code>B mod 8 ∈ {5,7}</code>
+daba <code>tile_B = 8</code> (barato) y <code>{1,3}</code> daba
+<code>tile_B = 4</code> (caro), <b>acertando 10 de 10</b>. Pero la encontré
+<b>a posteriori</b>, así que dejé <b>12 predicciones firmadas en git</b> antes
+de lanzar la segunda corrida, con un falsador explícito: cualquier desacuerdo la
+mata.</p>
+
+<div class="note bad"><strong>Resultado: 9 de 12. La regla está muerta.</strong>
+<code>B=141</code> y <code>B=143</code> tomaron <code>tile_B = 16</code> y
+<code>B=153</code> tomó <code>tile_B = 32</code> — valores que la regla no
+contempla. Sobre los 25 lotes, Triton usó <code>tile_B ∈ {4, 8, 16, 32, 123,
+127}</code>: <b>seis valores distintos</b>, incluyendo «el lote entero en un
+tile». <b>Ningún residuo de <code>B</code> puede seleccionar eso.</b> Es el
+cuarto patrón post-hoc que se me cae en este trabajo, y por eso el pre-registro
+valió la pena.</div>
+
+<h3>Pero salió algo más útil que una regla</h3>
+<p>Agrupando por la <b>firma completa de tiles</b> (los dos kernels de Triton, no
+solo el pesado), el costo se ordena de forma muy estrecha:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>firma de tiles</th><th>n</th><th>media s/réplica</th>
+    <th>rango</th><th>B</th></tr></thead>
+  <tbody>
+    <tr class="best"><td><code>8,1,8,8,3 | 8,1,8,8,3</code></td>
+        <td class="n">6</td><td class="n"><b>0.007801</b></td>
+        <td class="n">0.007702–0.007950</td>
+        <td class="n">101, 103, 135, 149, 151, 167</td></tr>
+    <tr><td><code>4,1,8,16,3 | 8,1,8,8,3</code></td>
+        <td class="n">6</td><td class="n">0.008069</td>
+        <td class="n">0.007977–0.008205</td>
+        <td class="n">97, 99, 131, 145, 147, 163</td></tr>
+    <tr><td><code>4,1,8,16,3 | 16,1,8,8,3</code></td>
+        <td class="n">2</td><td class="n">0.008150</td>
+        <td class="n">0.008098–0.008203</td><td class="n">139, 169</td></tr>
+    <tr><td><code>16,1,8,8,3 | 16,1,8,8,3</code></td>
+        <td class="n">2</td><td class="n">0.008221</td>
+        <td class="n">0.008132–0.008309</td><td class="n">141, 143</td></tr>
+    <tr><td><code>32,1,1,16,3 | 32,1,4,8,3</code></td>
+        <td class="n">1</td><td class="bad">0.008643</td>
+        <td class="n">—</td><td class="n">153</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>La firma barata es separable.</b> Sobre las dos corridas,
+  <code>8,1,8,8,3|8,1,8,8,3</code> tiene n=6 y <b>máximo 0.007950</b>; la
+  siguiente firma tiene n=6 y <b>mínimo 0.007977</b>. <b>No se solapan.</b> Y
+  entre la barata y la más cara hay <b>12.2 %</b>.</p>
+  <p><b>El procedimiento que sale de ahí:</b> el tile no se puede predecir, pero
+  <b>se ve al compilar</b>. Así que para elegir el lote se <b>compilan</b> los
+  candidatos y se lee la firma del <code>backend_config</code> del HLO,
+  quedándose con la barata. Un compilado son <b>~40 segundos y no simula
+  nada</b>, contra 10–12 minutos de corrida de producción por candidato.</p>
+</div>
+
+<div class="note warn"><strong>Cuatro límites, y el tercero es el que importa.</strong>
+El margen de no-solape es de apenas <b>0.3 %</b> con n=6 por lado: es un
+selector usable, <b>no una ley probada</b>. Dentro de la firma barata queda
+<b>3.2 % de dispersión</b> sin explicar. Todo esto es a <b>3600 barridos</b>, y
+el único par que medimos al cronograma real vio su brecha pasar de 5.7 % a
+<b>0.6 %</b> — así que <b>está sin verificar si estos 3 % sobreviven a
+4 000 000 de barridos</b>. Y la familia de firmas es una propiedad de <b>este</b>
+build de XLA, que puede moverse con una versión.</div>
+
+<div class="note"><strong>En vuelo.</strong> Para zanjar el límite tercero está
+corriendo a producción el par <code>B=151</code> (firma barata, el más rápido
+medido) contra <code>B=153</code> (el más caro, 12.2 % arriba). Es la brecha más
+grande disponible, así que es la que tiene más chance de sobrevivir al ruido de
+±2.5 % de la extrapolación.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las

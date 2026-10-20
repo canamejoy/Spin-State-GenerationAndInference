@@ -3912,6 +3912,194 @@ def split_protocol(rd: float = 18.30, layers: int = 5, n_temps: int = 8,
                                spec or None)
 
 
+def _sawtooth_map(batches, tag, Rd, L, n_temps, n_therm, n_meas, reps):
+    """Does the cost jump where the Triton tile changes?
+
+    Everything we know about the sawtooth: 79% of it sits in the Triton
+    kCustom fusion, its launch grid is exactly the product of ceil(dim/tile)
+    over that fusion's output_tiles (8 of 8 exact), and Triton re-chooses the
+    tile per shape. What we do NOT know is whether the tile change is what
+    costs: the block count demonstrably does not predict the cost, since the
+    heavy kernel kept the same tile between B=65 and B=75 while its time moved
+    26.8%.
+
+    So this maps a dense series of ODD batch sizes -- every one width 1, so
+    the width axis is held fixed and only the sawtooth can move -- and records
+    for each one both the tiles Triton picked and the wall clock over several
+    interleaved repeats. Then the question is answerable: do the cost jumps sit
+    at the tile transitions, or not?
+
+    Compilation happens for every batch first, reading each HLO dump before the
+    next overwrites it; the timing rounds come afterwards, interleaved, so
+    thermal drift hits every batch equally.
+    """
+    import os, sys, glob, json, re, time, statistics as stx, io as _io
+    os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "")
+                               + " --xla_dump_to=/tmp/dump").strip()
+    os.makedirs("/tmp/dump", exist_ok=True)
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    N = int(geo["N"])
+    sweeps = int(n_temps) * (int(n_therm) + int(n_meas))
+    v2 = lambda n: (n & -n).bit_length() - 1
+    width = lambda B: min(4, 2 ** (v2(B) + v2(int(L))))
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} barridos={sweeps} reps={reps}", flush=True)
+    bad = [B for B in batches if width(B) != 1]
+    if bad:
+        print(f"  AVISO: estos no son ancho 1 y contaminan el eje: {bad}", flush=True)
+
+    THUNK = re.compile(r"\]\s+([A-Za-z_][\w$]*) grid: \[(\d+), 1, 1\]"
+                       r" threads: \[(\d+), 1, 1\]")
+    FUS = re.compile(r"^\s*%?([\w.$-]+) = (\S+) fusion\(([^)]*)\),\s*"
+                     r"kind=kCustom(.*)$", re.M)
+    TILE = re.compile(r'"sizes":\[([^\]]*)\]')
+    TRIT = re.compile(r'"kind":"__triton"')
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, int(n_therm), int(n_meas))
+
+    info, comp = {}, {}
+    for B in batches:
+        for f in glob.glob("/tmp/dump/*"):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11 + B), geo, B),
+                jax.random.PRNGKey(12 + B), cols)
+        t0 = time.perf_counter()
+        fn = jax.jit(body).lower(*args).compile()
+        jax.block_until_ready(fn(*args))
+        tc = time.perf_counter() - t0
+        comp[B] = (fn, args)
+
+        files = sorted(glob.glob("/tmp/dump/*"))
+        geom, tiles = {}, []
+        if files:
+            pre = os.path.basename(max(files, key=os.path.getsize)).split(".jit_")[0]
+            mine = [f for f in files if os.path.basename(f).startswith(pre)]
+            for f in mine:
+                if "thunk_sequence" in f:
+                    t = _io.open(f, encoding="utf-8", errors="replace").read()
+                    for nm, g, bl in THUNK.findall(t):
+                        geom[nm] = int(g)
+            hl = [f for f in mine if "after_optimizations.txt" in f]
+            if hl:
+                txt = _io.open(max(hl, key=os.path.getsize), encoding="utf-8",
+                               errors="replace").read()
+                for name, shape, ops, rest in FUS.findall(txt):
+                    if not TRIT.search(rest):
+                        continue
+                    m = TILE.search(rest)
+                    if not m:
+                        continue
+                    tl = [int(x.strip().strip('"')) for x in m.group(1).split(",")]
+                    if len(tl) != 5:
+                        continue
+                    nm = name.replace(".", "_")
+                    g = geom.get(nm)
+                    if g is None:          # a deduplicated twin, never launched
+                        continue
+                    tiles.append(dict(kernel=nm, tile=tl, grid=g,
+                                      blocks_per_replica=g / B))
+        tiles.sort(key=lambda t: -t["grid"])
+        info[B] = dict(B=B, width=width(B), compile_s=tc, tiles=tiles,
+                       n_triton=len(tiles),
+                       tile_B=[t["tile"][0] for t in tiles],
+                       signature="|".join(",".join(map(str, t["tile"])) for t in tiles))
+        print(f"  B={B:>4} compilado en {tc:5.1f} s  tiles={info[B]['signature']}",
+              flush=True)
+
+    samples = {B: [] for B in batches}
+    for r in range(int(reps)):
+        for B in batches:
+            fn, args = comp[B]
+            t0 = time.perf_counter()
+            jax.block_until_ready(fn(*args))
+            samples[B].append(time.perf_counter() - t0)
+        print(f"  ronda {r+1}/{reps}", flush=True)
+
+    for B in batches:
+        s = samples[B]
+        info[B].update(wall_median=stx.median(s), wall_min=min(s),
+                       spread_pct=100 * (max(s) / min(s) - 1), samples=s,
+                       wall_per_replica=stx.median(s) / B,
+                       us_per_sweep_replica=1e6 * stx.median(s) / sweeps / B)
+
+    print(f"\n=== el mapa: todos ancho 1, {reps} repeticiones intercaladas ===",
+          flush=True)
+    print(f"  {'B':>5}{'s/replica':>11}{'disp':>7}{'bloq/rep':>10}"
+          f"{'tile_B':>9}  firma de tiles", flush=True)
+    prev = None
+    for B in batches:
+        d = info[B]
+        mark = ""
+        if prev is not None and d["signature"] != prev:
+            mark = "  <-- CAMBIO DE TILE"
+        prev = d["signature"]
+        bpr = d["tiles"][0]["blocks_per_replica"] if d["tiles"] else 0.0
+        print(f"  {B:>5}{d['wall_per_replica']:>11.6f}{d['spread_pct']:>6.1f}%"
+              f"{bpr:>10.3f}{str(d['tile_B']):>9}  {d['signature']}{mark}",
+              flush=True)
+
+    print(f"\n=== salto de costo entre lotes vecinos, y si el tile cambio ===",
+          flush=True)
+    jumps = []
+    for i in range(1, len(batches)):
+        a, b = batches[i - 1], batches[i]
+        ch = 100 * (info[b]["wall_per_replica"] / info[a]["wall_per_replica"] - 1)
+        same = info[a]["signature"] == info[b]["signature"]
+        jumps.append(dict(a=a, b=b, change_pct=ch, same_tile=same))
+        print(f"  {a:>4} -> {b:>4}  {ch:+7.2f}%   tile "
+              f"{'IGUAL' if same else 'DISTINTO'}", flush=True)
+
+    sa = [j["change_pct"] for j in jumps if j["same_tile"]]
+    di = [j["change_pct"] for j in jumps if not j["same_tile"]]
+    print(f"\n=== la respuesta ===", flush=True)
+    for lab, xs in (("mismo tile", sa), ("tile distinto", di)):
+        if xs:
+            print(f"  salto |medio| con {lab:<14}: "
+                  f"{stx.mean(abs(x) for x in xs):6.2f}%   (n={len(xs)}, "
+                  f"max {max(abs(x) for x in xs):.2f}%)", flush=True)
+    if sa and di:
+        print(f"\n  Si el tile explicara el dentado, los saltos con tile IGUAL "
+              f"deberian ser\n  mucho menores que los de tile DISTINTO.", flush=True)
+
+    res = dict(by_batch={str(k): v for k, v in info.items()}, jumps=jumps,
+               Rd=float(Rd), L=int(L), N=N, device=device_identity(),
+               n_temps=int(n_temps), n_therm=int(n_therm), n_meas=int(n_meas),
+               sweeps=sweeps, reps=int(reps))
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", **_COMMON)
+def sawtooth_map_h100(b, tag, Rd, L, nt, th, me, reps):
+    return _sawtooth_map(b, tag, Rd, L, nt, th, me, reps)
+
+
+@app.local_entrypoint()
+def sawtooth_map(batches: str = "95,97,99,101,103,107,111,115,119,123,127,131,135",
+                 rd: float = 18.30, layers: int = 5, n_temps: int = 8,
+                 n_therm: int = 300, n_meas: int = 150, reps: int = 9,
+                 tag: str = "sawtooth_map"):
+    """Map cost against Triton tile choice over odd (width-1) batch sizes."""
+    sawtooth_map_h100.remote([int(x) for x in batches.split(",") if x], tag,
+                             rd, layers, n_temps, n_therm, n_meas, reps)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 
