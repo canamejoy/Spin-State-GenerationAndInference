@@ -1,0 +1,76 @@
+{
+ "available": true,
+ "N": 39,
+ "L": 5,
+ "tile": 64,
+ "jax": "0.10.2",
+ "backend": "pallas-triton + pltriton.load",
+ "ran": true,
+ "equivalent": true,
+ "max_abs_err": 1.7881393432617188e-07,
+ "max_rel_err": 1.7881403024949266e-07,
+ "timing": [
+  {
+   "B": 32,
+   "jax_s": 0.0003553080000013864,
+   "triton_s": 0.0003329169999997106,
+   "change_pct": -6.301856417977769,
+   "max_abs_err": 1.7881393432617188e-07
+  },
+  {
+   "B": 64,
+   "jax_s": 0.000322735999999324,
+   "triton_s": 0.00026827499999981796,
+   "change_pct": -16.874783104339187,
+   "max_abs_err": 2.384185791015625e-07
+  },
+  {
+   "B": 96,
+   "jax_s": 0.0002503049999980078,
+   "triton_s": 0.00026379599999870607,
+   "change_pct": 5.389824414536526,
+   "max_abs_err": 1.7881393432617188e-07
+  },
+  {
+   "B": 128,
+   "jax_s": 0.0003197660000004987,
+   "triton_s": 0.00028280600000130107,
+   "change_pct": -11.558452117842421,
+   "max_abs_err": 2.384185791015625e-07
+  }
+ ],
+ "verdict": {
+  "outcome": "IT WORKS, IT IS EXACT, AND IT IS FASTER. First thing in this whole effort to beat the JAX path.",
+  "equivalence": {
+   "max_rel_err": 1.7881403024949266e-07,
+   "reading": "1.788e-07 is f32 round-off, so the kernel computes the same function as the six-roll reference"
+  },
+  "wins": "3 of 4 batch sizes",
+  "mean_change_pct": -7.3,
+  "best_change_pct": -16.9,
+  "worst_change_pct": 5.4,
+  "note": "jagged: -6.3%, -16.9%, +5.4%, -11.6% at B = 32, 64, 96, 128"
+ },
+ "what_unlocked_it": {
+  "primitive": "pltriton.load(ref.at[index_arrays], mask=...)",
+  "why": "Every earlier attempt died on the same thing: no way to shift data inside a kernel. Mosaic GPU refused iota layouts, array slicing, ref slicing, concatenate and axis reductions. Pallas's Triton lowering refused non-power-of-two shapes and `slice`, which is what jnp.roll becomes. The masked indexed load is how a stencil is written in Triton in the first place, and it sidesteps all of it.",
+  "three_problems_it_removes": [
+   "BlockSpec tiling: with memory_space=pl.ANY the ref stays in global memory and we do the addressing, so there is no block shape to make legal.",
+   "N = 39 not being a power of two: the index arrays carry a mask, so a 64x64 index grid simply overhangs and the masked lanes are discarded.",
+   "The three spin components: loaded one at a time with a scalar component index, which also removes the axis reduction the normalisation needed."
+  ],
+  "api_discovery": [
+   "the backend is selected with compiler_params=pltriton.CompilerParams(), since the `backend` argument was removed in jax 0.9.1",
+   "load takes the ref ALONE: the index goes in ref.at[...], not as a positional argument",
+   "`other` requires `mask`; with pre-wrapped indices neither is needed for correctness beyond the overhang mask"
+  ],
+  "deprecation_note": "the Triton backend was deprecated in jax 0.11.0 and this runs on 0.10.2, so the route has a shelf life"
+ },
+ "the_tile_is_fixed": "T = 64 is a constant independent of B, and the grid is (B, Lz), so the work per program does not change with the batch size. That is the fixed-tile property the sawtooth argument needed. The measured times are still jagged, which is not yet explained and may be the rest of the program or noise.",
+ "limits": [
+  "This is the STENCIL only -- the neighbour sum plus the normalisation -- not the full Metropolis step. But the stencil is exactly what the six rolls do, which is the 31.5% of runtime we were aiming at.",
+  "Four batch sizes, nine repeats, ONE run. The win is not uniform: +5.4% at B=96.",
+  "Absolute times are not comparable with earlier runs: the JAX reference measured 0.355/0.323/0.250 ms here against 0.206/0.176/0.171 ms in the Mosaic GPU run, so that container was in a different state. Only the within-run ratio means anything.",
+  "To deploy it the Metropolis physics would still have to be ported into the kernel, or the stencil result fed back into the existing JAX code, which would reintroduce a materialisation."
+ ]
+}

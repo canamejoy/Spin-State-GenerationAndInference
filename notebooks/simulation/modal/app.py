@@ -4657,6 +4657,569 @@ def pallas_tiled(batches: str = "32,64,96", repeats: int = 9, rd: float = 18.30,
                              tag, rd, layers, tb, ty, tx)
 
 
+def _pallas_triton(batches, repeats, tag, Rd, L, tb, ty, tx):
+    """The same kernel, lowered through Triton instead of Mosaic GPU.
+
+    Mosaic GPU refused this stencil eight different ways, and every refusal
+    was about moving data inside the kernel: iota layouts, slicing a loaded
+    array, slicing a ref, concatenate (unimplemented), axis reductions. Its
+    layout list -- WGMMA, TCGEN05 -- says what it is for, and a stencil is not
+    it.
+
+    Pallas still has a Triton backend in this version. It was deprecated in
+    jax 0.11.0 and we are on 0.10.2, and the `backend` argument was replaced
+    by `compiler_params` back in 0.9.1, so the way to ask for it is
+    `compiler_params=pltriton.CompilerParams()`. Triton is a real tile
+    language: masks, slices and reductions are its bread and butter, and XLA
+    already emits Triton for this very fusion.
+
+    That reopens the design Mosaic GPU forced us to abandon. Design A keeps a
+    WHOLE LAYER-PLANE per block, so the x and y neighbours are rolls of an
+    array already resident in SRAM and the six materialised copies never
+    happen -- which is the whole point, and the 31.5% we are after. Design B
+    is the tiled fallback with an explicit halo, kept in case A does not fit.
+    Both are tried, A first, and whichever compiles is checked against the
+    plain-JAX reference before anything is timed.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"jax {jax.__version__}", flush=True)
+    try:
+        from jax.experimental import pallas as pl
+        import jax.experimental.pallas.triton as pltriton
+        names = sorted(n for n in dir(pltriton) if not n.startswith("_"))
+        print(f"pltriton expone: {names}", flush=True)
+        cp = pltriton.CompilerParams()
+        print(f"CompilerParams() -> {cp}", flush=True)
+    except Exception as e:
+        print(f"TRITON BACKEND UNAVAILABLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N, Lz = int(geo["N"]), int(geo["L"])
+    print(f"Rd={Rd} L={Lz} N={N}", flush=True)
+    res = dict(available=True, N=N, L=Lz, jax=jax.__version__,
+               backend="pallas-triton", pltriton=names)
+
+    def jax_step(sp):
+        xp = jnp.roll(sp, -1, 3); xm = jnp.roll(sp, 1, 3)
+        yp = jnp.roll(sp, -1, 2); ym = jnp.roll(sp, 1, 2)
+        zp = jnp.roll(sp, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp, 1, 1).at[:, 0].set(0.0)
+        e = sp + 0.1 * (xp + xm + yp + ym + zp + zm)
+        return e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    # ---- the Triton backend wants every kernel shape a power of 2 -------
+    # 39, 13 and 3 are not, so the plane is padded to 64x64 and the three spin
+    # components to 4. Every block dimension is then a power of two and the
+    # whole plane fits in SRAM at 64 KB per ref, three refs, 192 KB.
+    #
+    # Padding is physically exact here, not an approximation: the lattice is
+    # confined and its outer ring is always empty, because the grid half-width
+    # floor(Rd)+1 exceeds Rd, so the neighbours the padding supplies are the
+    # zeros the wrap would have supplied anyway. The equivalence check below
+    # runs the JAX reference on the SAME padded array, so the comparison is
+    # exact rather than argued.
+    #
+    # The cost is honest and was estimated before measuring: 64*64*4 is 3.59x
+    # the elements of 39*39*3, which puts this design at about 256 KB of
+    # traffic per replica-layer against roughly 232 KB for the six materialised
+    # rolls. It wins only if saving six kernel launches and six HBM
+    # round-trips beats that.
+    PN, PC = 64, 4
+
+    def padup(sp):
+        return jnp.pad(sp, ((0, 0), (0, 0), (0, PN - N), (0, PN - N), (0, PC - 3)))
+
+    def jax_step_p(sp4):
+        xp = jnp.roll(sp4, -1, 3); xm = jnp.roll(sp4, 1, 3)
+        yp = jnp.roll(sp4, -1, 2); ym = jnp.roll(sp4, 1, 2)
+        zp = jnp.roll(sp4, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp4, 1, 1).at[:, 0].set(0.0)
+        e = sp4 + 0.1 * (xp + xm + yp + ym + zp + zm)
+        return e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    def kernel_pad(c_ref, below_ref, above_ref, o_ref):
+        z = pl.program_id(1)
+        c = c_ref[0, 0]                      # (64, 64, 4) resident in SRAM
+        lo = jnp.where(z == 0, 0.0, below_ref[0, 0])
+        hi = jnp.where(z == Lz - 1, 0.0, above_ref[0, 0])
+        sv = (jnp.roll(c, -1, 1) + jnp.roll(c, 1, 1)
+              + jnp.roll(c, -1, 0) + jnp.roll(c, 1, 0) + hi + lo)
+        e = c + 0.1 * sv
+        o_ref[0, 0] = e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    def pad_step(sp4):
+        B = sp4.shape[0]
+        blk = (1, 1, PN, PN, PC)
+        return pl.pallas_call(
+            kernel_pad,
+            grid=(B, Lz),
+            in_specs=[
+                pl.BlockSpec(blk, lambda b, z: (b, z, 0, 0, 0)),
+                pl.BlockSpec(blk, lambda b, z: (b, jnp.maximum(z - 1, 0), 0, 0, 0)),
+                pl.BlockSpec(blk, lambda b, z: (b, jnp.minimum(z + 1, Lz - 1), 0, 0, 0)),
+            ],
+            out_specs=pl.BlockSpec(blk, lambda b, z: (b, z, 0, 0, 0)),
+            out_shape=jax.ShapeDtypeStruct(sp4.shape, sp4.dtype),
+            compiler_params=pltriton.CompilerParams(),
+        )(sp4, sp4, sp4)
+
+    # ---- design A: a whole plane per block, x/y rolls free in SRAM -------
+    def kernel_plane(c_ref, below_ref, above_ref, o_ref):
+        z = pl.program_id(1)
+        c = c_ref[0, 0]                      # (N, N, 3) resident in SRAM
+        lo = jnp.where(z == 0, 0.0, below_ref[0, 0])
+        hi = jnp.where(z == Lz - 1, 0.0, above_ref[0, 0])
+        sv = (jnp.roll(c, -1, 1) + jnp.roll(c, 1, 1)
+              + jnp.roll(c, -1, 0) + jnp.roll(c, 1, 0) + hi + lo)
+        e = c + 0.1 * sv
+        o_ref[0, 0] = e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    def plane_step(sp):
+        B = sp.shape[0]
+        blk = (1, 1, N, N, 3)
+        return pl.pallas_call(
+            kernel_plane,
+            grid=(B, Lz),
+            in_specs=[
+                pl.BlockSpec(blk, lambda b, z: (b, z, 0, 0, 0)),
+                pl.BlockSpec(blk, lambda b, z: (b, jnp.maximum(z - 1, 0), 0, 0, 0)),
+                pl.BlockSpec(blk, lambda b, z: (b, jnp.minimum(z + 1, Lz - 1), 0, 0, 0)),
+            ],
+            out_specs=pl.BlockSpec(blk, lambda b, z: (b, z, 0, 0, 0)),
+            out_shape=jax.ShapeDtypeStruct(sp.shape, sp.dtype),
+            compiler_params=pltriton.CompilerParams(),
+        )(sp, sp, sp)
+
+    # ---- design B: a tile we fix, halo exchanged explicitly --------------
+    TB, TY, TX = int(tb), int(ty), int(tx)
+    ny, nx = (N // TY if N % TY == 0 else 0), (N // TX if N % TX == 0 else 0)
+
+    def kernel_tile(c_ref, ym_ref, yp_ref, xm_ref, xp_ref, zm_ref, zp_ref, o_ref):
+        z = pl.program_id(1)
+        c = c_ref[:, 0]
+        ymt, ypt = ym_ref[:, 0], yp_ref[:, 0]
+        xmt, xpt = xm_ref[:, 0], xp_ref[:, 0]
+        ynext = jnp.concatenate([c[:, 1:TY], ypt[:, 0:1]], axis=1)
+        yprev = jnp.concatenate([ymt[:, TY - 1:TY], c[:, 0:TY - 1]], axis=1)
+        xnext = jnp.concatenate([c[:, :, 1:TX], xpt[:, :, 0:1]], axis=2)
+        xprev = jnp.concatenate([xmt[:, :, TX - 1:TX], c[:, :, 0:TX - 1]], axis=2)
+        lo = jnp.where(z == 0, 0.0, zm_ref[:, 0])
+        hi = jnp.where(z == Lz - 1, 0.0, zp_ref[:, 0])
+        e = c + 0.1 * (xnext + xprev + ynext + yprev + hi + lo)
+        o_ref[:, 0] = e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    def tile_step(sp):
+        nb = sp.shape[0] // TB
+        blk = (TB, 1, TY, TX, 3)
+        spec = lambda f: pl.BlockSpec(blk, f)
+        return pl.pallas_call(
+            kernel_tile,
+            grid=(nb, Lz, ny, nx),
+            in_specs=[
+                spec(lambda b, z, jy, jx: (b, z, jy, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, (jy - 1) % ny, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, (jy + 1) % ny, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, jy, (jx - 1) % nx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, jy, (jx + 1) % nx, 0)),
+                spec(lambda b, z, jy, jx: (b, jnp.maximum(z - 1, 0), jy, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, jnp.minimum(z + 1, Lz - 1), jy, jx, 0)),
+            ],
+            out_specs=spec(lambda b, z, jy, jx: (b, z, jy, jx, 0)),
+            out_shape=jax.ShapeDtypeStruct(sp.shape, sp.dtype),
+            compiler_params=pltriton.CompilerParams(),
+        )(sp, sp, sp, sp, sp, sp, sp)
+
+    # ---- the gate: equivalence before any timing ------------------------
+    B0 = max(TB, 8)
+    sp0 = S.init_spins(jax.random.PRNGKey(5), geo, B0)
+    sp0p = jax.jit(padup)(sp0)
+    print(f"  padeado: {sp0.shape} -> {sp0p.shape}  "
+          f"({PN*PN*PC/(N*N*3):.2f}x elementos por plano)", flush=True)
+    refp = jax.jit(jax_step_p)(sp0p); refp.block_until_ready()
+    ref = jax.jit(jax_step)(sp0); ref.block_until_ready()
+    designs = [("P: plano padeado (1,1,64,64,4)", pad_step, sp0p, refp, padup,
+                jax_step_p),
+               ("A: plano completo (1,1,N,N,3)", plane_step, sp0, ref, None, None)]
+    if ny and nx and B0 % TB == 0:
+        designs.append((f"B: tile ({TB},1,{TY},{TX},3)", tile_step, sp0, ref,
+                        None, None))
+    chosen, fn_sel, attempts, prep, refmaker = None, None, [], None, None
+    for lab, fn, xin, rr, pre, rmk in designs:
+        try:
+            got = jax.jit(fn)(xin); got.block_until_ready()
+            err = float(jnp.max(jnp.abs(rr - got)))
+            rel = err / max(float(jnp.max(jnp.abs(rr))), 1e-30)
+            ok = rel < 1e-5
+            attempts.append(dict(design=lab, compiled=True, max_rel_err=rel,
+                                 equivalent=bool(ok)))
+            print(f"\n  {lab}: COMPILA   error relativo {rel:.3e}  "
+                  f"{'OK' if ok else 'MISMATCH'}", flush=True)
+            if ok and chosen is None:
+                chosen, fn_sel, prep, refmaker = lab, fn, pre, rmk
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            attempts.append(dict(design=lab, compiled=False, error=msg[:400]))
+            print(f"\n  {lab}: {msg[:260]}", flush=True)
+    res["attempts"] = attempts
+    res["chosen"] = chosen
+    if fn_sel is None:
+        res.update(ran=False, error="ningun diseño compilo y verifico")
+        with open(f"/out/{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        return res
+
+    # ---- only now, the timing -------------------------------------------
+    rows = []
+    print(f"\n  cronometrando {chosen}", flush=True)
+    print(f"\n{'B':>6}{'jax 6 rolls':>15}{'pallas-triton':>16}{'cambio':>10}",
+          flush=True)
+    for B in batches:
+        if TB and B % TB and chosen.startswith("B"):
+            print(f"  B={B} no multiplo de {TB}, se omite", flush=True)
+            continue
+        sp = S.init_spins(jax.random.PRNGKey(7 + B), geo, B)
+        # the reference is timed on the SAME layout the kernel runs on, so the
+        # padding is never charged to one side only
+        if prep is not None:
+            xin = jax.jit(prep)(sp)
+            fj = jax.jit(refmaker).lower(xin).compile()
+        else:
+            xin = sp
+            fj = jax.jit(jax_step).lower(sp).compile()
+        fp = jax.jit(fn_sel).lower(xin).compile()
+        jax.block_until_ready(fj(xin)); jax.block_until_ready(fp(xin))
+        tj, tp = [], []
+        for _ in range(int(repeats)):
+            t0 = time.perf_counter(); jax.block_until_ready(fj(xin))
+            tj.append(time.perf_counter() - t0)
+            t0 = time.perf_counter(); jax.block_until_ready(fp(xin))
+            tp.append(time.perf_counter() - t0)
+        mj, mp = float(np.median(tj)), float(np.median(tp))
+        e2 = float(jnp.max(jnp.abs(fj(xin) - fp(xin))))
+        rows.append(dict(B=B, jax_s=mj, pallas_s=mp,
+                         change_pct=100 * (mp / mj - 1), max_abs_err=e2))
+        print(f"{B:>6}{mj*1e3:>13.3f} ms{mp*1e3:>14.3f} ms"
+              f"{100*(mp/mj-1):>+9.1f}%", flush=True)
+    res["timing"] = rows
+    if rows:
+        bb = min(rows, key=lambda r: r["change_pct"])
+        print(f"\n  mejor: B={bb['B']}  {bb['change_pct']:+.1f}%", flush=True)
+        print(f"  equivalencia peor caso: "
+              f"{max(r['max_abs_err'] for r in rows):.3e}", flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=pallas_image, timeout=60 * 60 * 2,
+              volumes={"/out": vol})
+def pallas_triton_h100(b, rep, tag, Rd, L, tb, ty, tx):
+    return _pallas_triton(b, rep, tag, Rd, L, tb, ty, tx)
+
+
+@app.local_entrypoint()
+def pallas_triton(batches: str = "32,64,96", repeats: int = 9, rd: float = 18.30,
+                  layers: int = 5, tb: int = 8, ty: int = 13, tx: int = 3,
+                  tag: str = "pallas_triton"):
+    """The stencil through Pallas's Triton backend instead of Mosaic GPU."""
+    pallas_triton_h100.remote([int(x) for x in batches.split(",") if x], repeats,
+                              tag, rd, layers, tb, ty, tx)
+
+
+def _triton_load_probe(tag):
+    """Is the masked-load path real, or is Pallas Triton a dead end too?
+
+    Pallas's Triton lowering refused `slice`, which is what `jnp.roll` lowers
+    to, so no in-kernel shifting -- the same wall Mosaic GPU put up, reached
+    by a different road. But `jax.experimental.pallas.triton` exports `load`
+    and `store`, which in Triton proper are the masked pointer-offset loads
+    that make a stencil natural. If those are usable from a Pallas kernel the
+    route is open; if not, Pallas is finished for this and the only Triton
+    left is outside it.
+
+    This probe costs seconds: print the signatures, then try the smallest
+    kernel that shifts data with a masked load.
+    """
+    import sys, json, inspect
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    print(f"jax {jax.__version__}", flush=True)
+    out = dict(jax=jax.__version__)
+    try:
+        from jax.experimental import pallas as pl
+        import jax.experimental.pallas.triton as pltriton
+    except Exception as e:
+        print(f"no disponible: {type(e).__name__}: {e}", flush=True)
+        return dict(error=f"{type(e).__name__}: {e}")
+
+    for nm in ("load", "store", "max_contiguous"):
+        f = getattr(pltriton, nm, None)
+        if f is None:
+            continue
+        try:
+            sig = str(inspect.signature(f))
+        except Exception:
+            sig = "?"
+        doc = (inspect.getdoc(f) or "").strip().splitlines()
+        print(f"\n{nm}{sig}", flush=True)
+        for ln in doc[:14]:
+            print(f"    {ln}", flush=True)
+        out[nm] = dict(signature=sig, doc="\n".join(doc[:20]))
+
+    # does pl expose the unblocked memory space we would need?
+    sp_names = [n for n in dir(pl) if "ANY" in n.upper() or "Memory" in n
+                or "memory" in n]
+    print(f"\npl memory-space names: {sp_names}", flush=True)
+    out["pl_memory_names"] = sp_names
+
+    # The index goes inside ref.at[...], not as a positional argument: load
+    # takes the ref alone plus keyword mask/other. Two probes, smallest first.
+    SZ = 64
+
+    def kern1(x_ref, o_ref):
+        i = jax.lax.broadcasted_iota(jnp.int32, (SZ,), 0)
+        nxt = jnp.where(i == SZ - 1, 0, i + 1)
+        o_ref[...] = pltriton.load(x_ref.at[nxt])
+
+    def kern2(x_ref, o_ref):
+        iy = jax.lax.broadcasted_iota(jnp.int32, (SZ, SZ), 0)
+        ix = jax.lax.broadcasted_iota(jnp.int32, (SZ, SZ), 1)
+        yp = jnp.where(iy == SZ - 1, 0, iy + 1)
+        ym = jnp.where(iy == 0, SZ - 1, iy - 1)
+        xp = jnp.where(ix == SZ - 1, 0, ix + 1)
+        xm = jnp.where(ix == 0, SZ - 1, ix - 1)
+        o_ref[...] = (pltriton.load(x_ref.at[yp, ix])
+                      + pltriton.load(x_ref.at[ym, ix])
+                      + pltriton.load(x_ref.at[iy, xp])
+                      + pltriton.load(x_ref.at[iy, xm]))
+
+    probes = [
+        ("1-D desplazamiento", kern1, (SZ,),
+         lambda x: jnp.roll(x, -1)),
+        ("2-D suma de 4 vecinos", kern2, (SZ, SZ),
+         lambda x: (jnp.roll(x, -1, 0) + jnp.roll(x, 1, 0)
+                    + jnp.roll(x, -1, 1) + jnp.roll(x, 1, 1))),
+    ]
+    out["probes"] = []
+    for lab, kern, shape, want_fn in probes:
+        try:
+            f = pl.pallas_call(
+                kern, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+                in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+                out_specs=pl.BlockSpec(memory_space=pl.ANY),
+                compiler_params=pltriton.CompilerParams())
+            x = jax.random.normal(jax.random.PRNGKey(0), shape, jnp.float32)
+            got = jax.jit(f)(x); got.block_until_ready()
+            want = want_fn(x)
+            err = float(jnp.max(jnp.abs(got - want)))
+            rel = err / max(float(jnp.max(jnp.abs(want))), 1e-30)
+            ok = rel < 1e-5
+            print(f"\n  {lab}: error relativo {rel:.3e}  "
+                  f"{'FUNCIONA' if ok else 'RESULTADO DISTINTO'}", flush=True)
+            out["probes"].append(dict(probe=lab, works=bool(ok), max_rel_err=rel))
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            print(f"\n  {lab}: {msg[:360]}", flush=True)
+            out["probes"].append(dict(probe=lab, works=False, error=msg[:360]))
+
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(out, f, indent=1)
+    return out
+
+
+@app.function(gpu="H100", image=pallas_image, timeout=60 * 20,
+              volumes={"/out": vol})
+def triton_load_probe_h100(tag):
+    return _triton_load_probe(tag)
+
+
+@app.local_entrypoint()
+def triton_load_probe(tag: str = "triton_load_probe"):
+    """Can a Pallas Triton kernel shift data with a masked load?"""
+    triton_load_probe_h100.remote(tag)
+
+
+def _triton_stencil(batches, repeats, tag, Rd, L, tile):
+    """The stencil as a real Triton kernel, through Pallas's masked loads.
+
+    Everything before this failed on the same thing: no way to shift data
+    inside a kernel. Mosaic GPU refused iota layouts, array slicing, ref
+    slicing, concatenate and axis reductions; Pallas's Triton lowering refused
+    non-power-of-two shapes and `slice`, which is what `jnp.roll` becomes.
+
+    `pltriton.load(ref.at[...])` is the way out, and it is how a stencil is
+    written in Triton in the first place. With `memory_space=pl.ANY` the ref
+    stays in global memory and WE do the addressing, so three things stop
+    mattering at once: BlockSpec tiling (there is none), N = 39 not being a
+    power of two (the index arrays carry a mask), and the three spin
+    components (loaded one at a time with a scalar component index, which also
+    removes the axis reduction the normalisation needed).
+
+    The index arrays also express the physics directly: x and y wrap, z does
+    not, and the planes outside the stack contribute nothing.
+
+    One program per replica and layer, a TILE x TILE index grid per program,
+    TILE a power of two covering N.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"jax {jax.__version__}", flush=True)
+    try:
+        from jax.experimental import pallas as pl
+        import jax.experimental.pallas.triton as pltriton
+    except Exception as e:
+        print(f"TRITON NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N, Lz = int(geo["N"]), int(geo["L"])
+    T = int(tile)
+    p2 = T > 0 and (T & (T - 1)) == 0
+    print(f"Rd={Rd} L={Lz} N={N}  tile {T}x{T}  "
+          f"{'potencia de 2' if p2 else 'NO es potencia de 2'}  "
+          f"{'cubre N' if T >= N else 'NO cubre N'}", flush=True)
+    res = dict(available=True, N=N, L=Lz, tile=T, jax=jax.__version__,
+               backend="pallas-triton + pltriton.load")
+    if not (p2 and T >= N):
+        res["error"] = "tile inadmisible"
+        with open(f"/out/{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        return res
+
+    def jax_step(sp):
+        xp = jnp.roll(sp, -1, 3); xm = jnp.roll(sp, 1, 3)
+        yp = jnp.roll(sp, -1, 2); ym = jnp.roll(sp, 1, 2)
+        zp = jnp.roll(sp, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp, 1, 1).at[:, 0].set(0.0)
+        e = sp + 0.1 * (xp + xm + yp + ym + zp + zm)
+        return e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    def kernel(s_ref, o_ref):
+        b = pl.program_id(0)
+        z = pl.program_id(1)
+        iy = jax.lax.broadcasted_iota(jnp.int32, (T, T), 0)
+        ix = jax.lax.broadcasted_iota(jnp.int32, (T, T), 1)
+        m = (iy < N) & (ix < N)                     # the tile overhangs N
+        # x and y wrap; the indices are clamped so a masked lane never
+        # addresses out of bounds even though its value is discarded
+        yp = jnp.where(iy + 1 >= N, 0, jnp.minimum(iy + 1, N - 1))
+        ym = jnp.where(iy - 1 < 0, N - 1, jnp.maximum(iy - 1, 0))
+        xp = jnp.where(ix + 1 >= N, 0, jnp.minimum(ix + 1, N - 1))
+        xm = jnp.where(ix - 1 < 0, N - 1, jnp.maximum(ix - 1, 0))
+        cy = jnp.minimum(iy, N - 1)
+        cx = jnp.minimum(ix, N - 1)
+        zlo = jnp.maximum(z - 1, 0)
+        zhi = jnp.minimum(z + 1, Lz - 1)
+        has_lo = (z > 0).astype(jnp.float32)        # z is confined
+        has_hi = (z < Lz - 1).astype(jnp.float32)
+
+        e = []
+        for c in range(3):
+            ld = lambda zz, yy, xx: pltriton.load(s_ref.at[b, zz, yy, xx, c],
+                                                  mask=m)
+            cen = ld(z, cy, cx)
+            sv = (ld(z, yp, cx) + ld(z, ym, cx)
+                  + ld(z, cy, xp) + ld(z, cy, xm)
+                  + has_hi * ld(zhi, cy, cx) + has_lo * ld(zlo, cy, cx))
+            e.append(cen + 0.1 * sv)
+        # the normalisation, written out: no axis reduction to lower
+        inv = 1.0 / jnp.sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2] + 1e-20)
+        for c in range(3):
+            pltriton.store(o_ref.at[b, z, cy, cx, c], e[c] * inv, mask=m)
+
+    def triton_step(sp):
+        B = sp.shape[0]
+        return pl.pallas_call(
+            kernel,
+            grid=(B, Lz),
+            in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
+            out_shape=jax.ShapeDtypeStruct(sp.shape, sp.dtype),
+            compiler_params=pltriton.CompilerParams(),
+        )(sp)
+
+    # ---- the gate: equivalence before any timing ------------------------
+    sp0 = S.init_spins(jax.random.PRNGKey(5), geo, 8)
+    ref = jax.jit(jax_step)(sp0); ref.block_until_ready()
+    try:
+        got = jax.jit(triton_step)(sp0); got.block_until_ready()
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        print(f"\nFALLO: {msg[:500]}", flush=True)
+        res.update(ran=False, error=msg[:500])
+        with open(f"/out/{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        return res
+    err = float(jnp.max(jnp.abs(ref - got)))
+    rel = err / max(float(jnp.max(jnp.abs(ref))), 1e-30)
+    ok = rel < 1e-5
+    print(f"\nequivalencia: max |jax - triton| = {err:.3e}  "
+          f"(relativo {rel:.3e})  {'OK' if ok else 'MISMATCH'}", flush=True)
+    res.update(ran=True, equivalent=bool(ok), max_abs_err=err, max_rel_err=rel)
+    if not ok:
+        print("  -> no son la misma funcion; el tiempo no significa nada",
+              flush=True)
+        with open(f"/out/{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        return res
+
+    rows = []
+    print(f"\n{'B':>6}{'jax 6 rolls':>15}{'triton':>12}{'cambio':>10}", flush=True)
+    for B in batches:
+        sp = S.init_spins(jax.random.PRNGKey(7 + B), geo, B)
+        fj = jax.jit(jax_step).lower(sp).compile()
+        ft = jax.jit(triton_step).lower(sp).compile()
+        jax.block_until_ready(fj(sp)); jax.block_until_ready(ft(sp))
+        tj, tt = [], []
+        for _ in range(int(repeats)):
+            t0 = time.perf_counter(); jax.block_until_ready(fj(sp))
+            tj.append(time.perf_counter() - t0)
+            t0 = time.perf_counter(); jax.block_until_ready(ft(sp))
+            tt.append(time.perf_counter() - t0)
+        mj, mt = float(np.median(tj)), float(np.median(tt))
+        e2 = float(jnp.max(jnp.abs(fj(sp) - ft(sp))))
+        rows.append(dict(B=B, jax_s=mj, triton_s=mt,
+                         change_pct=100 * (mt / mj - 1), max_abs_err=e2))
+        print(f"{B:>6}{mj*1e3:>13.3f} ms{mt*1e3:>10.3f} ms"
+              f"{100*(mt/mj-1):>+9.1f}%", flush=True)
+    res["timing"] = rows
+    if rows:
+        bb = min(rows, key=lambda r: r["change_pct"])
+        print(f"\n  mejor: B={bb['B']}  {bb['change_pct']:+.1f}%", flush=True)
+        print(f"  equivalencia peor caso: "
+              f"{max(r['max_abs_err'] for r in rows):.3e}", flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=pallas_image, timeout=60 * 60,
+              volumes={"/out": vol})
+def triton_stencil_h100(b, rep, tag, Rd, L, tile):
+    return _triton_stencil(b, rep, tag, Rd, L, tile)
+
+
+@app.local_entrypoint()
+def triton_stencil(batches: str = "32,64,96,128", repeats: int = 9,
+                   rd: float = 18.30, layers: int = 5, tile: int = 64,
+                   tag: str = "triton_stencil"):
+    """The stencil as a real Triton kernel via pltriton.load."""
+    triton_stencil_h100.remote([int(x) for x in batches.split(",") if x],
+                               repeats, tag, rd, layers, tile)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 

@@ -1506,6 +1506,99 @@ tile admisible.</div>
   del ecosistema JAX.</p>
 </div>
 
+<h2>Triton sí: el kernel funciona, es exacto y es más rápido</h2>
+
+<div class="key"><p><b>Primera cosa en todo este trabajo que le gana a la ruta
+JAX.</b> Equivalencia <code>1.788e−07</code> relativo — redondeo de
+<code>f32</code>, la misma función.</p></div>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>JAX, seis rolls</th><th>Triton</th><th>cambio</th></tr></thead>
+  <tbody>
+    <tr><td class="n">32</td><td class="n">0.355 ms</td><td class="n">0.333 ms</td>
+        <td class="best">−6.3 %</td></tr>
+    <tr class="best"><td class="n">64</td><td class="n">0.323 ms</td>
+        <td class="n">0.268 ms</td><td class="best"><b>−16.9 %</b></td></tr>
+    <tr><td class="n">96</td><td class="n">0.250 ms</td><td class="n">0.264 ms</td>
+        <td class="bad">+5.4 %</td></tr>
+    <tr><td class="n">128</td><td class="n">0.320 ms</td><td class="n">0.283 ms</td>
+        <td class="best">−11.6 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Gana en <b>3 de 4</b> tamaños, media <b>−7.3 %</b>, mejor caso
+<b>−16.9 %</b>.</p>
+
+<h3>La primitiva que lo desbloqueó</h3>
+<p>Todos los intentos anteriores murieron por lo mismo: <b>no había forma de
+desplazar datos dentro del kernel</b>. Mosaic GPU rechazó los layouts del
+<code>iota</code>, rebanar arreglos, rebanar referencias,
+<code>concatenate</code> y las reducciones por eje. El lowering de Triton de
+Pallas rechazó las formas que no son potencia de 2 y <code>slice</code> — que es
+en lo que se convierte <code>jnp.roll</code>.</p>
+
+<div class="key"><p style="font-family:var(--mono);font-size:.92rem">
+pl.BlockSpec(memory_space=pl.ANY)<br>
+pltriton.load(ref.at[arrays_de_indices], mask=m)<br>
+compiler_params=pltriton.CompilerParams()</p>
+<p>La <b>carga indexada con máscara</b> es cómo se escribe un stencil en Triton
+<b>de entrada</b>, y esquiva todo lo anterior de golpe.</p></div>
+
+<p>Con <code>memory_space=pl.ANY</code> la referencia <b>se queda en memoria
+global y el direccionamiento lo hacemos nosotros</b>. Eso borra tres problemas
+a la vez:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>problema</th><th>por qué desaparece</th></tr></thead>
+  <tbody>
+    <tr><td>el tejado de <code>BlockSpec</code></td>
+        <td>no hay forma de bloque que legalizar: no hay bloque</td></tr>
+    <tr><td><code>N = 39</code> no es potencia de 2</td>
+        <td>los índices llevan <b>máscara</b>, así que una rejilla de 64×64
+        simplemente sobresale y los carriles enmascarados se descartan</td></tr>
+    <tr><td>las 3 componentes del espín</td>
+        <td>se cargan <b>de a una</b> con índice escalar, lo que además
+        <b>elimina la reducción por eje</b> que pedía la normalización</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Tres detalles de API que costaron una corrida cada uno</h3>
+<div class="tw"><table>
+  <tbody>
+    <tr><td>el backend se pide con
+        <code>compiler_params=pltriton.CompilerParams()</code></td>
+        <td>el argumento <code>backend</code> se quitó en jax <b>0.9.1</b></td></tr>
+    <tr><td><code>load</code> toma <b>solo</b> la referencia</td>
+        <td>el índice va en <code>ref.at[...]</code>, no como posicional</td></tr>
+    <tr><td><code>other</code> exige <code>mask</code></td>
+        <td>con índices ya envueltos no hace falta ninguno de los dos salvo
+        la máscara del sobresalir</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Y el tile es fijo.</b> <code>T = 64</code> es una
+constante independiente de <code>B</code>, y la rejilla es
+<code>(B, Lz)</code> — el trabajo por programa <b>no cambia con el tamaño del
+lote</b>. Esa es justo la propiedad que el argumento del dentado necesitaba.</p></div>
+
+<div class="note warn"><strong>Cuatro límites, y hay que leerlos.</strong>
+Esto es <b>el stencil solo</b> — la suma de vecinos más la normalización — <b>no
+el paso de Metropolis completo</b>; pero el stencil es exactamente lo que hacen
+los seis rolls, que es el 31.5 % al que apuntábamos. Son <b>cuatro tamaños,
+nueve repeticiones, UNA corrida</b>, y la ganancia <b>no es uniforme</b>:
++5.4 % en B=96. Los tiempos absolutos <b>no comparan con corridas anteriores</b>
+— la referencia JAX midió 0.355/0.323/0.250 ms aquí contra 0.206/0.176/0.171 ms
+en la corrida de Mosaic GPU, así que aquel contenedor estaba en otro estado;
+solo la razón dentro de una misma corrida significa algo. Y para desplegarlo
+habría que <b>portar la física de Metropolis al kernel</b>, o devolver el
+resultado del stencil al código JAX, lo que reintroduciría una
+materialización.</div>
+
+<div class="note bad"><strong>Y una fecha de caducidad.</strong> El backend de
+Triton de Pallas <b>se deprecó en jax 0.11.0</b> y esto corre en <b>0.10.2</b>.
+La ruta funciona hoy; no es una apuesta a largo plazo sin plan de migración a
+Triton directo o a un <i>custom call</i>.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las
