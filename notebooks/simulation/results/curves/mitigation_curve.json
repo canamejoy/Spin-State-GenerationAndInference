@@ -1,0 +1,468 @@
+{
+ "by_target": {
+  "100": {
+   "R": 100,
+   "naive": {
+    "label": "naive",
+    "batches": [
+     100
+    ],
+    "n_launches": 1,
+    "widths": [
+     4
+    ],
+    "signatures": [
+     "4,1,8,16,3|8,1,8,8,3"
+    ],
+    "all_cheap": false,
+    "n_cheap": 0,
+    "wall": 1.1461056089999602,
+    "wall_per_replica": 0.011461056089999602
+   },
+   "protocol": {
+    "label": "split 51+49",
+    "batches": [
+     51,
+     49
+    ],
+    "n_launches": 2,
+    "widths": [
+     1,
+     1
+    ],
+    "signatures": [
+     "4,1,8,16,3|8,1,8,8,3",
+     "4,1,8,16,3|8,1,8,8,3"
+    ],
+    "all_cheap": false,
+    "n_cheap": 0,
+    "wall": 0.8801844760000677,
+    "wall_per_replica": 0.008801844760000677
+   },
+   "selector_pick": {
+    "label": "split 53+47",
+    "batches": [
+     53,
+     47
+    ],
+    "n_launches": 2,
+    "widths": [
+     1,
+     1
+    ],
+    "signatures": [
+     "8,1,8,8,3|8,1,8,8,3",
+     "16,1,4,8,3|8,1,8,8,3"
+    ],
+    "all_cheap": false,
+    "n_cheap": 1,
+    "wall": 0.8299528200000168,
+    "wall_per_replica": 0.008299528200000168
+   },
+   "measured_best": {
+    "label": "split 53+47",
+    "batches": [
+     53,
+     47
+    ],
+    "n_launches": 2,
+    "widths": [
+     1,
+     1
+    ],
+    "signatures": [
+     "8,1,8,8,3|8,1,8,8,3",
+     "16,1,4,8,3|8,1,8,8,3"
+    ],
+    "all_cheap": false,
+    "n_cheap": 1,
+    "wall": 0.8299528200000168,
+    "wall_per_replica": 0.008299528200000168
+   },
+   "rows": [
+    {
+     "label": "naive",
+     "batches": [
+      100
+     ],
+     "n_launches": 1,
+     "widths": [
+      4
+     ],
+     "signatures": [
+      "4,1,8,16,3|8,1,8,8,3"
+     ],
+     "all_cheap": false,
+     "n_cheap": 0,
+     "wall": 1.1461056089999602,
+     "wall_per_replica": 0.011461056089999602
+    },
+    {
+     "label": "split 51+49",
+     "batches": [
+      51,
+      49
+     ],
+     "n_launches": 2,
+     "widths": [
+      1,
+      1
+     ],
+     "signatures": [
+      "4,1,8,16,3|8,1,8,8,3",
+      "4,1,8,16,3|8,1,8,8,3"
+     ],
+     "all_cheap": false,
+     "n_cheap": 0,
+     "wall": 0.8801844760000677,
+     "wall_per_replica": 0.008801844760000677
+    },
+    {
+     "label": "split 53+47",
+     "batches": [
+      53,
+      47
+     ],
+     "n_launches": 2,
+     "widths": [
+      1,
+      1
+     ],
+     "signatures": [
+      "8,1,8,8,3|8,1,8,8,3",
+      "16,1,4,8,3|8,1,8,8,3"
+     ],
+     "all_cheap": false,
+     "n_cheap": 1,
+     "wall": 0.8299528200000168,
+     "wall_per_replica": 0.008299528200000168
+    },
+    {
+     "label": "split 55+45",
+     "batches": [
+      55,
+      45
+     ],
+     "n_launches": 2,
+     "widths": [
+      1,
+      1
+     ],
+     "signatures": [
+      "8,1,8,8,3|8,1,8,8,3",
+      "16,1,4,8,3|8,1,8,8,3"
+     ],
+     "all_cheap": false,
+     "n_cheap": 1,
+     "wall": 0.8300894829998242,
+     "wall_per_replica": 0.008300894829998242
+    }
+   ],
+   "selector_found_best": true
+  },
+  "200": {
+   "R": 200,
+   "naive": {
+    "label": "naive",
+    "batches": [
+     200
+    ],
+    "n_launches": 1,
+    "widths": [
+     4
+    ],
+    "signatures": [
+     "8,1,8,8,3|8,1,8,8,3"
+    ],
+    "all_cheap": true,
+    "n_cheap": 1,
+    "wall": 2.0629566779999777,
+    "wall_per_replica": 0.01031478338999989
+   },
+   "protocol": {
+    "label": "split 101+99",
+    "batches": [
+     101,
+     99
+    ],
+    "n_launches": 2,
+    "widths": [
+     1,
+     1
+    ],
+    "signatures": [
+     "8,1,8,8,3|8,1,8,8,3",
+     "4,1,8,16,3|8,1,8,8,3"
+    ],
+    "all_cheap": false,
+    "n_cheap": 1,
+    "wall": 1.5993602309998778,
+    "wall_per_replica": 0.00799680115499939
+   },
+   "selector_pick": {
+    "label": "split 101+99",
+    "batches": [
+     101,
+     99
+    ],
+    "n_launches": 2,
+    "widths": [
+     1,
+     1
+    ],
+    "signatures": [
+     "8,1,8,8,3|8,1,8,8,3",
+     "4,1,8,16,3|8,1,8,8,3"
+    ],
+    "all_cheap": false,
+    "n_cheap": 1,
+    "wall": 1.5993602309998778,
+    "wall_per_replica": 0.00799680115499939
+   },
+   "measured_best": {
+    "label": "split 101+99",
+    "batches": [
+     101,
+     99
+    ],
+    "n_launches": 2,
+    "widths": [
+     1,
+     1
+    ],
+    "signatures": [
+     "8,1,8,8,3|8,1,8,8,3",
+     "4,1,8,16,3|8,1,8,8,3"
+    ],
+    "all_cheap": false,
+    "n_cheap": 1,
+    "wall": 1.5993602309998778,
+    "wall_per_replica": 0.00799680115499939
+   },
+   "rows": [
+    {
+     "label": "naive",
+     "batches": [
+      200
+     ],
+     "n_launches": 1,
+     "widths": [
+      4
+     ],
+     "signatures": [
+      "8,1,8,8,3|8,1,8,8,3"
+     ],
+     "all_cheap": true,
+     "n_cheap": 1,
+     "wall": 2.0629566779999777,
+     "wall_per_replica": 0.01031478338999989
+    },
+    {
+     "label": "split 101+99",
+     "batches": [
+      101,
+      99
+     ],
+     "n_launches": 2,
+     "widths": [
+      1,
+      1
+     ],
+     "signatures": [
+      "8,1,8,8,3|8,1,8,8,3",
+      "4,1,8,16,3|8,1,8,8,3"
+     ],
+     "all_cheap": false,
+     "n_cheap": 1,
+     "wall": 1.5993602309998778,
+     "wall_per_replica": 0.00799680115499939
+    },
+    {
+     "label": "split 103+97",
+     "batches": [
+      103,
+      97
+     ],
+     "n_launches": 2,
+     "widths": [
+      1,
+      1
+     ],
+     "signatures": [
+      "8,1,8,8,3|8,1,8,8,3",
+      "4,1,8,16,3|8,1,8,8,3"
+     ],
+     "all_cheap": false,
+     "n_cheap": 1,
+     "wall": 1.606848580000019,
+     "wall_per_replica": 0.008034242900000094
+    },
+    {
+     "label": "split 105+95",
+     "batches": [
+      105,
+      95
+     ],
+     "n_launches": 2,
+     "widths": [
+      1,
+      1
+     ],
+     "signatures": [
+      "4,1,8,16,3|16,1,4,8,3",
+      "32,1,2,8,3|16,1,4,8,3"
+     ],
+     "all_cheap": false,
+     "n_cheap": 0,
+     "wall": 1.6231279620000123,
+     "wall_per_replica": 0.008115639810000061
+    }
+   ],
+   "selector_found_best": true
+  }
+ },
+ "per_batch": {
+  "45": {
+   "B": 45,
+   "width": 1,
+   "compile_s": 29.30270195,
+   "signature": "16,1,4,8,3|8,1,8,8,3",
+   "cheap": false,
+   "wall_median": 0.3759811519998948,
+   "spread_pct": 0.4206371959334376
+  },
+  "47": {
+   "B": 47,
+   "width": 1,
+   "compile_s": 42.014041943,
+   "signature": "16,1,4,8,3|8,1,8,8,3",
+   "cheap": false,
+   "wall_median": 0.395359051000014,
+   "spread_pct": 0.5394766039904741
+  },
+  "49": {
+   "B": 49,
+   "width": 1,
+   "compile_s": 47.426715048000005,
+   "signature": "4,1,8,16,3|8,1,8,8,3",
+   "cheap": false,
+   "wall_median": 0.43232554799999434,
+   "spread_pct": 0.5023372893237177
+  },
+  "51": {
+   "B": 51,
+   "width": 1,
+   "compile_s": 38.88956905100001,
+   "signature": "4,1,8,16,3|8,1,8,8,3",
+   "cheap": false,
+   "wall_median": 0.4478589280000733,
+   "spread_pct": 0.48016984383165706
+  },
+  "53": {
+   "B": 53,
+   "width": 1,
+   "compile_s": 44.435408126,
+   "signature": "8,1,8,8,3|8,1,8,8,3",
+   "cheap": true,
+   "wall_median": 0.4345937690000028,
+   "spread_pct": 0.42770616409120166
+  },
+  "55": {
+   "B": 55,
+   "width": 1,
+   "compile_s": 30.137745252000002,
+   "signature": "8,1,8,8,3|8,1,8,8,3",
+   "cheap": true,
+   "wall_median": 0.4541083309999294,
+   "spread_pct": 0.4223667161249445
+  },
+  "95": {
+   "B": 95,
+   "width": 1,
+   "compile_s": 43.91980865300002,
+   "signature": "32,1,2,8,3|16,1,4,8,3",
+   "cheap": false,
+   "wall_median": 0.755152006000003,
+   "spread_pct": 0.10728984289660737
+  },
+  "97": {
+   "B": 97,
+   "width": 1,
+   "compile_s": 46.456073237,
+   "signature": "4,1,8,16,3|8,1,8,8,3",
+   "cheap": false,
+   "wall_median": 0.7953934439999557,
+   "spread_pct": 0.08207085641422918
+  },
+  "99": {
+   "B": 99,
+   "width": 1,
+   "compile_s": 33.51642123900001,
+   "signature": "4,1,8,16,3|8,1,8,8,3",
+   "cheap": false,
+   "wall_median": 0.8017396219999,
+   "spread_pct": 0.08096015737091289
+  },
+  "100": {
+   "B": 100,
+   "width": 4,
+   "compile_s": 23.008529850000002,
+   "signature": "4,1,8,16,3|8,1,8,8,3",
+   "cheap": false,
+   "wall_median": 1.1461056089999602,
+   "spread_pct": 0.06300394194340697
+  },
+  "101": {
+   "B": 101,
+   "width": 1,
+   "compile_s": 53.34594565400005,
+   "signature": "8,1,8,8,3|8,1,8,8,3",
+   "cheap": true,
+   "wall_median": 0.7976206089999778,
+   "spread_pct": 0.09812946014211565
+  },
+  "103": {
+   "B": 103,
+   "width": 1,
+   "compile_s": 50.619279011,
+   "signature": "8,1,8,8,3|8,1,8,8,3",
+   "cheap": true,
+   "wall_median": 0.8114551360000632,
+   "spread_pct": 0.16613740273190292
+  },
+  "105": {
+   "B": 105,
+   "width": 1,
+   "compile_s": 43.88669032900003,
+   "signature": "4,1,8,16,3|16,1,4,8,3",
+   "cheap": false,
+   "wall_median": 0.8679759560000093,
+   "spread_pct": 0.11262445733724036
+  },
+  "200": {
+   "B": 200,
+   "width": 4,
+   "compile_s": 55.82785084200009,
+   "signature": "8,1,8,8,3|8,1,8,8,3",
+   "cheap": true,
+   "wall_median": 2.0629566779999777,
+   "spread_pct": 0.021202802608444316
+  }
+ },
+ "cheap_signature": "8,1,8,8,3|8,1,8,8,3",
+ "Rd": 18.3,
+ "L": 5,
+ "N": 39,
+ "device": {
+  "repr": "cuda:0",
+  "kind": "NVIDIA H100 80GB HBM3",
+  "platform": "gpu",
+  "n_devices": 1,
+  "smi": [
+   "NVIDIA H100 80GB HBM3, GPU-889d706d-1a6a-d98a-8cab-eb465a856e98, 81559 MiB, 1980 MHz, 610.57.04, 5"
+  ]
+ },
+ "sweeps": 3600,
+ "reps": 9,
+ "window": 6
+}

@@ -4100,6 +4100,208 @@ def sawtooth_map(batches: str = "95,97,99,101,103,107,111,115,119,123,127,131,13
                              rd, layers, n_temps, n_therm, n_meas, reps)
 
 
+def _mitigation_curve(targets, tag, Rd, L, n_temps, n_therm, n_meas, reps, window):
+    """How much do the two mitigations actually save, end to end?
+
+    The question is not what a batch size costs, it is what a REQUIRED NUMBER
+    OF REPLICAS costs. For a target R there are three ways to get it:
+
+      naive      -- one launch of B = R, whatever v2(R) happens to be;
+      protocol   -- if R is a multiple of four, split into R/2+1 and R/2-1,
+                    both odd, both vector width 1, summing to exactly R;
+      selector   -- among the partitions of R into two odd batches, compile
+                    each candidate, read the Triton tile signature out of the
+                    HLO, and take the partition whose batches carry the cheap
+                    signature.
+
+    Everything is measured, so the selector's pick can be scored against the
+    partition that actually turned out fastest. That is the real test: a
+    selector that does not find the best candidate is not a selector.
+    """
+    import os, sys, glob, json, re, time, statistics as stx, io as _io, itertools
+    os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "")
+                               + " --xla_dump_to=/tmp/dump").strip()
+    os.makedirs("/tmp/dump", exist_ok=True)
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    kB = 0.086173404
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    theta = PA.load_thetas("/root/theta4.json")[0]
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    N = int(geo["N"])
+    sweeps = int(n_temps) * (int(n_therm) + int(n_meas))
+    v2 = lambda n: (n & -n).bit_length() - 1
+    width = lambda B: min(4, 2 ** (v2(B) + v2(int(L))))
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"Rd={Rd} L={L} N={N} barridos={sweeps} reps={reps}", flush=True)
+
+    # ---- candidate set per target ---------------------------------------
+    plans = {}
+    for R in targets:
+        cands = [("naive", (R,))]
+        half = R // 2
+        for d in range(1, int(window) + 1):
+            a, b = half + d, half - d
+            if a % 2 and b % 2 and a > 0 and b > 0 and a + b == R:
+                cands.append((f"split {a}+{b}", (a, b)))
+        plans[R] = cands
+        print(f"  R={R}: {len(cands)} candidatos", flush=True)
+    need = sorted({B for R in targets for _, bs in plans[R] for B in bs})
+    print(f"\n  lotes distintos a compilar: {len(need)} -> {need}", flush=True)
+
+    THUNK = re.compile(r"\]\s+([A-Za-z_][\w$]*) grid: \[(\d+), 1, 1\]"
+                       r" threads: \[(\d+), 1, 1\]")
+    FUS = re.compile(r"^\s*%?([\w.$-]+) = (\S+) fusion\(([^)]*)\),\s*"
+                     r"kind=kCustom(.*)$", re.M)
+    TILE = re.compile(r'"sizes":\[([^\]]*)\]')
+    TRIT = re.compile(r'"kind":"__triton"')
+    CHEAP = "8,1,8,8,3|8,1,8,8,3"
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, int(n_therm), int(n_meas))
+
+    comp, meta = {}, {}
+    for B in need:
+        for f in glob.glob("/tmp/dump/*"):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        cols = PA.pack([theta], B)
+        args = (S.init_spins(jax.random.PRNGKey(11 + B), geo, B),
+                jax.random.PRNGKey(12 + B), cols)
+        t0 = time.perf_counter()
+        fn = jax.jit(body).lower(*args).compile()
+        jax.block_until_ready(fn(*args))
+        tc = time.perf_counter() - t0
+        comp[B] = (fn, args)
+        files = sorted(glob.glob("/tmp/dump/*"))
+        geom, tiles = {}, []
+        if files:
+            pre = os.path.basename(max(files, key=os.path.getsize)).split(".jit_")[0]
+            mine = [f for f in files if os.path.basename(f).startswith(pre)]
+            for f in mine:
+                if "thunk_sequence" in f:
+                    t = _io.open(f, encoding="utf-8", errors="replace").read()
+                    for nm, g, bl in THUNK.findall(t):
+                        geom[nm] = int(g)
+            hl = [f for f in mine if "after_optimizations.txt" in f]
+            if hl:
+                txt = _io.open(max(hl, key=os.path.getsize), encoding="utf-8",
+                               errors="replace").read()
+                for name, shape, ops, rest in FUS.findall(txt):
+                    if not TRIT.search(rest):
+                        continue
+                    m = TILE.search(rest)
+                    if not m:
+                        continue
+                    tl = [int(x.strip().strip('"')) for x in m.group(1).split(",")]
+                    nm = name.replace(".", "_")
+                    if len(tl) == 5 and nm in geom:
+                        tiles.append((geom[nm], ",".join(map(str, tl))))
+        tiles.sort(key=lambda t: -t[0])
+        sig = "|".join(t[1] for t in tiles)
+        meta[B] = dict(B=B, width=width(B), compile_s=tc, signature=sig,
+                       cheap=(sig == CHEAP))
+        print(f"  B={B:>4} ancho {width(B)}  compilado {tc:5.1f} s  "
+              f"{'BARATA' if sig == CHEAP else '      '}  {sig}", flush=True)
+
+    # ---- interleaved timing of every distinct batch ---------------------
+    samples = {B: [] for B in need}
+    for r in range(int(reps)):
+        for B in need:
+            fn, args = comp[B]
+            t0 = time.perf_counter()
+            jax.block_until_ready(fn(*args))
+            samples[B].append(time.perf_counter() - t0)
+        print(f"  ronda {r+1}/{reps}", flush=True)
+    for B in need:
+        s = samples[B]
+        meta[B].update(wall_median=stx.median(s),
+                       spread_pct=100 * (max(s) / min(s) - 1))
+
+    # ---- score every plan ------------------------------------------------
+    out = {}
+    for R in targets:
+        rows = []
+        for lab, bs in plans[R]:
+            wall = sum(meta[B]["wall_median"] for B in bs)
+            rows.append(dict(label=lab, batches=list(bs), n_launches=len(bs),
+                             widths=[meta[B]["width"] for B in bs],
+                             signatures=[meta[B]["signature"] for B in bs],
+                             all_cheap=all(meta[B]["cheap"] for B in bs),
+                             n_cheap=sum(meta[B]["cheap"] for B in bs),
+                             wall=wall, wall_per_replica=wall / R))
+        naive = next(r for r in rows if r["label"] == "naive")
+        splits = [r for r in rows if r["label"] != "naive"]
+        prot = min(splits, key=lambda r: abs(r["batches"][0] - r["batches"][1])) \
+            if splits else None
+        best = min(rows, key=lambda r: r["wall"])
+        cheapest_sig = [r for r in splits if r["all_cheap"]]
+        pick = min(cheapest_sig, key=lambda r: r["n_launches"]) if cheapest_sig else \
+            (max(splits, key=lambda r: r["n_cheap"]) if splits else None)
+        out[R] = dict(R=R, naive=naive, protocol=prot, selector_pick=pick,
+                      measured_best=best, rows=rows,
+                      selector_found_best=(pick is not None
+                                           and pick["label"] == best["label"]))
+        print(f"\n=== R = {R} replicas ===", flush=True)
+        print(f"  {'plan':<22}{'lanz':>5}{'ancho':>9}{'firmas baratas':>16}"
+              f"{'pared s':>10}{'s/replica':>11}{'vs naive':>10}", flush=True)
+        for r in sorted(rows, key=lambda r: r["wall"]):
+            tag3 = ""
+            if r is naive:
+                tag3 = "  <- naive"
+            elif prot and r["label"] == prot["label"]:
+                tag3 += "  <- protocolo"
+            if pick and r["label"] == pick["label"]:
+                tag3 += "  <- SELECTOR"
+            print(f"  {r['label']:<22}{r['n_launches']:>5}{str(r['widths']):>9}"
+                  f"{r['n_cheap']:>8}/{len(r['batches']):<7}{r['wall']:>10.4f}"
+                  f"{r['wall_per_replica']:>11.6f}"
+                  f"{100*(r['wall_per_replica']/naive['wall_per_replica']-1):>+9.1f}%"
+                  f"{tag3}", flush=True)
+        if prot:
+            print(f"  protocolo contra naive : "
+                  f"{100*(prot['wall']/naive['wall']-1):+.1f}%", flush=True)
+        if pick:
+            print(f"  selector  contra naive : "
+                  f"{100*(pick['wall']/naive['wall']-1):+.1f}%", flush=True)
+            print(f"  selector  contra protocolo: "
+                  f"{100*(pick['wall']/prot['wall']-1):+.1f}%", flush=True)
+            print(f"  el selector encontro el mejor medido? "
+                  f"{'SI' if out[R]['selector_found_best'] else 'NO -> el mejor fue ' + best['label']}",
+                  flush=True)
+
+    res = dict(by_target={str(k): v for k, v in out.items()},
+               per_batch={str(k): v for k, v in meta.items()},
+               cheap_signature=CHEAP, Rd=float(Rd), L=int(L), N=N,
+               device=device_identity(), sweeps=sweeps, reps=int(reps),
+               window=int(window))
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", **_COMMON)
+def mitigation_curve_h100(t, tag, Rd, L, nt, th, me, reps, window):
+    return _mitigation_curve(t, tag, Rd, L, nt, th, me, reps, window)
+
+
+@app.local_entrypoint()
+def mitigation_curve(targets: str = "100,200", rd: float = 18.30, layers: int = 5,
+                     n_temps: int = 8, n_therm: int = 300, n_meas: int = 150,
+                     reps: int = 9, window: int = 6,
+                     tag: str = "mitigation_curve"):
+    """Measure what the protocol and the tile selector save, per target R."""
+    mitigation_curve_h100.remote([int(x) for x in targets.split(",") if x], tag,
+                                 rd, layers, n_temps, n_therm, n_meas, reps, window)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 

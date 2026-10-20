@@ -101,7 +101,8 @@ el estado final, y debajo está el detalle de cómo se llegó a cada parte.</p>
         <td><b>Triton re-teja</b> el kernel para cada tamaño de lote, con su
         propio modelo de costo y de forma no monótona</td>
         <td>compilar los candidatos y <b>leer la firma de tiles</b> del HLO</td>
-        <td class="best">validado a producción</td></tr>
+        <td class="n">vale 15 % si <code>B</code> es libre;<br>
+        <b>−1.0 % y poco fiable</b> si <code>R</code> está fijo</td></tr>
     <tr><td><code>L</code> múltiplo de 4</td>
         <td class="bad">+44.5 %, sin escape</td>
         <td><code>v₂(L) ≥ 2</code> fuerza ancho 4 para <b>cualquier</b>
@@ -124,11 +125,15 @@ el estado final, y debajo está el detalle de cómo se llegó a cada parte.</p>
   necesitas es múltiplo de cuatro, <b>pártelo en <code>B/2+1</code> y
   <code>B/2−1</code></b>: los dos impares, la suma exacta, y como las réplicas
   son cadenas independientes <b>es estadísticamente exacto</b>.</p>
-  <p>2. Entre los candidatos que pasen el filtro, <b>compilarlos</b> (~40 s cada
-  uno, sin simular) y quedarse con el de firma de tiles
-  <code>8,1,8,8,3 | 8,1,8,8,3</code>.</p>
-  <p>Medido: el paso 1 vale <b>−23 %</b> contra el lote múltiplo de cuatro, y el
-  paso 2 vale <b>−15 %</b> a producción real contra la peor firma.</p>
+  <p>2. <b>Solo si <code>B</code> es libre</b>: entre los candidatos que pasen
+  el filtro, <b>compilarlos</b> (~40 s cada uno, sin simular) y quedarse con el
+  de firma de tiles <code>8,1,8,8,3 | 8,1,8,8,3</code>.</p>
+  <p>Medido: el paso 1 vale <b>−22.7 % a −30.3 %</b> sobre seis objetivos, y el
+  paso 2 vale <b>−15 % a producción</b> cuando <code>B</code> es libre — pero
+  <b>−1.0 % y falla un tercio de las veces si <code>R</code> está fijo</b> y hay
+  que partirlo. El orden no es negociable: <b><code>v₂</code> primero, firma
+  después</b>, porque <code>B=200</code> tiene la firma barata y es el peor plan
+  de su objetivo.</p>
 </div>
 
 <div class="note warn"><strong>Y la regla de método que salió de equivocarme.</strong>
@@ -1305,6 +1310,103 @@ kernel</b>, porque comparar por nombre ya me engañó una vez en este trabajo. Y
 la validación es <b>un solo par, una corrida cada uno</b>: establece que una
 brecha del 12 % sobrevive, <b>no</b> que sobreviva el margen de 0.3 % entre
 firmas vecinas.</div>
+
+<h2>La curva rehecha: antes contra después</h2>
+
+<p>La pregunta que importa no es qué cuesta un lote, es <b>qué cuesta el número
+de réplicas que necesitas</b>. Para seis objetivos múltiplos de cuatro, tres
+caminos: <b>naive</b> (un lanzamiento de <code>B = R</code>), el
+<b>protocolo</b> (partir en <code>R/2+1</code> y <code>R/2−1</code>) y el
+<b>selector</b> de firma de tiles. Siete repeticiones intercaladas, y todos los
+candidatos medidos para poder puntuar al selector contra el que de hecho
+ganó.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>R</th><th>naive<br>s/réplica</th><th>protocolo<br>s/réplica</th>
+    <th>protocolo<br>vs naive</th><th>selector<br>vs protocolo</th>
+    <th>¿halló el mejor?</th></tr></thead>
+  <tbody>
+    <tr><td class="n">100</td><td class="bad">0.011562</td><td class="n">0.008846</td>
+        <td class="best">−23.5 %</td><td class="best">−6.1 %</td>
+        <td class="best">sí</td></tr>
+    <tr><td class="n">120</td><td class="bad">0.010826</td><td class="n">0.007985</td>
+        <td class="best">−26.2 %</td><td class="n">+0.0 %</td>
+        <td class="best">sí</td></tr>
+    <tr><td class="n">140</td><td class="bad">0.011417</td><td class="n">0.007958</td>
+        <td class="best">−30.3 %</td><td class="n">+0.0 %</td>
+        <td class="best">sí</td></tr>
+    <tr><td class="n">160</td><td class="bad">0.011479</td><td class="n">0.008101</td>
+        <td class="best">−29.4 %</td><td class="n">+0.0 %</td>
+        <td class="bad">NO</td></tr>
+    <tr><td class="n">180</td><td class="bad">0.011170</td><td class="n">0.008214</td>
+        <td class="best">−26.5 %</td><td class="bad">+0.4 %</td>
+        <td class="bad">NO</td></tr>
+    <tr><td class="n">200</td><td class="bad">0.010443</td><td class="n">0.008077</td>
+        <td class="best">−22.7 %</td><td class="n">+0.0 %</td>
+        <td class="best">sí</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>El protocolo gana 6 de 6: entre −22.7 % y −30.3 %, media −26.4 %.</b></p>
+  <p>Extrapolado al cronograma real de producción, por cada lote de réplicas:</p>
+  <p style="font-family:var(--mono);font-size:.92rem">
+  R=100 &nbsp;21.4 → 16.4 min &nbsp;(−5.0)<br>
+  R=140 &nbsp;29.6 → 20.6 min &nbsp;(−9.0)<br>
+  R=160 &nbsp;34.0 → 24.0 min &nbsp;(−10.0)<br>
+  R=200 &nbsp;38.7 → 29.9 min &nbsp;(−8.8)</p>
+</div>
+
+<div class="note bad"><strong>Y retiro lo que dije con dos puntos: el selector
+no generaliza.</strong> Con los dos primeros objetivos afirmé que añadía 5.7 %
+sobre el protocolo. Con seis, la media es <b>−1.0 %</b>: ayudó una vez (−6.1 %
+en R=100), <b>no hizo nada cuatro veces</b> y <b>fue 0.4 % peor</b> una vez. Y
+<b>halló el mejor solo 4 de 6</b>: en R=160 eligió <code>81+79</code> cuando el
+mejor era <code>83+77</code> (1.9 % peor) y en R=180 eligió <code>93+87</code>
+cuando ganaba <code>91+89</code>. En los dos fallos <b>ganó la partición sin
+ninguna mitad barata</b>. Los dos puntos iniciales eran la mitad favorable de
+los datos.</div>
+
+<div class="key"><p><b>Por qué no generaliza, y es coherente con lo demás.</b>
+Cuando <code>B</code> es libre puedes mudarte a un lote cuya firma completa es
+barata, y eso valía <b>+15 % a producción</b>. Cuando <code>R</code> está fijo
+solo puedes elegir el corte, <b>casi nunca caen las dos mitades en la firma
+barata</b>, y la dispersión que queda entre particiones (2 a 4 %) es del mismo
+tamaño que el dentado residual <b>dentro</b> de una firma — que la firma no
+captura.</p></div>
+
+<h3>Y un hallazgo que corrige el orden de las operaciones</h3>
+<div class="note warn"><strong><code>B = 200</code> tiene la firma BARATA
+<code>8,1,8,8,3 | 8,1,8,8,3</code> y es el plan más caro de su objetivo.</strong>
+Porque paga <b>ancho 4</b>. La firma <b>no protege del ancho</b>: los dos ejes
+son independientes, uno vive en las fusiones <code>kLoop</code> y el otro en la
+de Triton. Así que el orden importa: <b>primero filtrar por
+<code>v₂(B)+v₂(L)</code>, después ordenar por firma</b>. Al revés te lleva
+directo al peor lote. (<code>B=100</code> es malo por los dos lados a la vez:
+firma cara y ancho 4.)</div>
+
+<div class="key">
+  <p><b>Qué hacer, en orden.</b></p>
+  <p><b>1.</b> Elegir el lote con <code>v₂(B)+v₂(L) &lt; 2</code>. Si el número
+  que necesitas es múltiplo de cuatro, <b>pártelo en <code>R/2+1</code> y
+  <code>R/2−1</code></b>. Vale <b>−22.7 % a −30.3 %</b>.</p>
+  <p><b>2.</b> <b>No usar la firma de tiles cuando <code>R</code> está
+  fijo</b>: vale −1.0 % de media y elige peor un tercio de las veces. Úsala solo
+  cuando <code>B</code> es genuinamente libre, donde sí está validada
+  en +15 % a producción.</p>
+  <p><b>3.</b> Si a <code>R</code> fijo importan los últimos puntos
+  porcentuales, <b>no hay atajo</b>: hay que medir las particiones. Entre ellas
+  hay 2 a 4 % y <b>ninguna regla que tengamos lo predice</b>.</p>
+</div>
+
+<div class="note warn"><strong>Límites.</strong> Seis objetivos, una GPU, 3600
+barridos con 7 repeticiones intercaladas; <b>la columna de producción está
+escalada, no medida</b>. El 22–30 % del protocolo está muy por encima del piso
+de resolución de ~5 %, así que se traslada; los fallos del selector (0.4 y
+1.9 %) están cerca de ese piso y podrían ser ruido — lo que no lo rescata,
+porque entonces valdría <b>cero</b> en vez de poco. La ventana de partición fue
+de ±4 alrededor de <code>R/2</code>, así que no se probaron cortes más
+desiguales.</div>
 
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
