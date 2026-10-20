@@ -76,9 +76,69 @@ td.dead{color:var(--muted);font-style:italic}
 <p class="eyebrow">H100 · Rd 18.30 · 5 capas · trazado por kernel</p>
 <h1>Paso a paso de un barrido</h1>
 <p class="lede">Cada operación que la GPU ejecuta para avanzar un barrido de
-Monte Carlo, con su geometría de lanzamiento y su tiempo medido. Dos pares: uno
-que contrasta el <b>ancho de vector</b> y otro que contrasta el <b>dentado</b>,
-este último medido al cronograma completo de producción.</p>
+Monte Carlo, con su geometría de lanzamiento y su tiempo medido. De ahí salieron
+las dos causas de que el tiempo por réplica cambie con el tamaño del lote, y las
+dos quedaron con una palanca concreta.</p>
+
+<h2>En qué quedó todo</h2>
+<p>Esta página se escribió en el orden en que se descubrieron las cosas. Este es
+el estado final, y debajo está el detalle de cómo se llegó a cada parte.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>causa</th><th>cuánto cuesta</th><th>mecanismo</th>
+    <th>palanca</th><th>estado</th></tr></thead>
+  <tbody>
+    <tr><td><b>El ancho de vector</b></td>
+        <td class="bad">+44.5 %</td>
+        <td>XLA da a cada hilo <code>min(4, 2<sup>v₂(B)+v₂(L)</sup>)</code>
+        elementos como <b>cargas escalares</b>, no vectoriales: pide 512 B para
+        usar 128</td>
+        <td>elegir <code>v₂(B)+v₂(L) &lt; 2</code>, o partir el lote en dos
+        impares</td>
+        <td class="best">resuelto si <code>L</code> es impar</td></tr>
+    <tr><td><b>El dentado</b></td>
+        <td class="bad">hasta +15 %</td>
+        <td><b>Triton re-teja</b> el kernel para cada tamaño de lote, con su
+        propio modelo de costo y de forma no monótona</td>
+        <td>compilar los candidatos y <b>leer la firma de tiles</b> del HLO</td>
+        <td class="best">validado a producción</td></tr>
+    <tr><td><code>L</code> múltiplo de 4</td>
+        <td class="bad">+44.5 %, sin escape</td>
+        <td><code>v₂(L) ≥ 2</code> fuerza ancho 4 para <b>cualquier</b>
+        <code>B</code></td>
+        <td>kernel propio en Pallas, bloques de 32 elementos <b>incluyendo el
+        halo</b></td>
+        <td class="n">abierto, ruta despejada</td></tr>
+    <tr><td>Los seis <i>rolls</i></td>
+        <td class="n">31.5 % del tiempo</td>
+        <td><code>jnp.roll</code> materializa seis copias desplazadas completas
+        del tensor</td>
+        <td>el mismo kernel propio, como <i>stencil</i> con halo</td>
+        <td class="n">abierto — es velocidad, no estandarización</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>Lo que hay que hacer hoy, y es gratis.</b></p>
+  <p>1. Elegir el lote con <code>v₂(B)+v₂(L) &lt; 2</code>. Si el número que
+  necesitas es múltiplo de cuatro, <b>pártelo en <code>B/2+1</code> y
+  <code>B/2−1</code></b>: los dos impares, la suma exacta, y como las réplicas
+  son cadenas independientes <b>es estadísticamente exacto</b>.</p>
+  <p>2. Entre los candidatos que pasen el filtro, <b>compilarlos</b> (~40 s cada
+  uno, sin simular) y quedarse con el de firma de tiles
+  <code>8,1,8,8,3 | 8,1,8,8,3</code>.</p>
+  <p>Medido: el paso 1 vale <b>−23 %</b> contra el lote múltiplo de cuatro, y el
+  paso 2 vale <b>−15 %</b> a producción real contra la peor firma.</p>
+</div>
+
+<div class="note warn"><strong>Y la regla de método que salió de equivocarme.</strong>
+Las curvas f(B) se midieron con celdas cortas (3600 barridos), y la
+extrapolación a producción tiene <b>±2.5 % de ruido por punto, en los dos
+sentidos</b>. Validado con dos pares medidos al cronograma real: el de 5.7 %
+colapsó a <b>0.6 %</b> y el de 12.2 % creció a <b>15.0 %</b>. Así que
+<b>por encima de ~5 % lo que ve una celda corta es real; por debajo no es
+resoluble</b>. Cuatro patrones que yo había dado por buenos murieron por
+ignorar esto, y están documentados abajo con su refutación.</div>
 
 <div class="key">
   <p><b>Los dos lotes.</b> <code>B</code> = 135 (impar, el compilador no
