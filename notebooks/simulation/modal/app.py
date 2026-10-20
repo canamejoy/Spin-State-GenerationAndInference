@@ -4302,6 +4302,361 @@ def mitigation_curve(targets: str = "100,200", rd: float = 18.30, layers: int = 
                                  rd, layers, n_temps, n_therm, n_meas, reps, window)
 
 
+_LAYOUT = None
+
+
+def _pallas_tiled(batches, repeats, tag, Rd, L, tb, ty, tx):
+    """A Pallas stencil with a tile WE fix, over a 4-component layout.
+
+    Three blockers had to fall, and only the third was the real one.
+
+    1. mosaic_gpu refuses a copy whose byte count is not a multiple of 128,
+       so a block needs a multiple of 32 f32 elements. The first attempt used
+       a whole layer-plane, (1,1,N,N,3) = 4563 elements, and 4563 is odd for
+       EVERY geometry because N = 2(floor(Rd)+1)+1 is always odd.
+    2. Keeping the plane and tiling only the batch does not rescue it: an odd
+       plane forces a batch tile that is a multiple of 32, and 32 whole planes
+       need 570 KB of SRAM against an H100 SM's 228 KB.
+    3. So the plane gets tiled too -- and that still failed, with
+       `async_copy requires all GMEM strides except the last one to be a
+       multiple of 16 bytes`. THAT is the real blocker and it has nothing to
+       do with the tile. The innermost axis holds the 3 spin components, and
+       3 * 4 = 12 bytes is not a multiple of 16, which poisons every enclosing
+       stride: x is 12 B, y is 468 B, z is 18252 B, the batch is 91260 B, and
+       all four fail.
+
+    Padding the component axis from 3 to 4 fixes all of them at once -- x
+    becomes 16 B, y 624 B, z 24336 B, the batch 121680 B -- and it drops the
+    batch tile from 32 to 8, since the block is now 8*13*3*4 = 1248 elements.
+    The fourth component stays zero, so `sum(e*e, -1)` is unchanged and the
+    physics is exact, not approximated.
+
+    Tiles must still DIVIDE N or the reference's periodic wrap stops lining
+    up; the divisors of 39 are 1, 3, 13, 39. Tiling the plane also costs what
+    the whole-plane version got for free: a 13x3 tile does not contain its own
+    neighbours, so the halo is exchanged by passing the array seven times
+    under seven index maps -- the trick the first attempt already used for z.
+
+    Timed two ways, because which one is honest depends on a choice we have
+    not made: with the pad inside the timed call (what it costs if spins stay
+    3-component in memory) and with the array already 4-component (what it
+    costs if the storage changes).
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    print(f"jax {jax.__version__}", flush=True)
+    try:
+        import jax._src.pallas.mosaic_gpu.pallas_call_registration  # noqa: F401
+        from jax.experimental import pallas as pl
+    except Exception as e:
+        print(f"PALLAS UNAVAILABLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N, Lz = int(geo["N"]), int(geo["L"])
+    TB, TY, TX, C = int(tb), int(ty), int(tx), 4
+    el = TB * 1 * TY * TX * C
+    ny, nx = N // TY, N // TX
+    # mosaic_gpu wants the SRAM block to hold a multiple of 128 ELEMENTS,
+    # not a multiple of 128 bytes; we learned the difference the hard way.
+    ok_bytes = el % 128 == 0
+    ok_div = (N % TY == 0) and (N % TX == 0)
+    strides = [Lz * N * N * C, N * N * C, N * C, C, 1]
+    ok_stride = all((st * 4) % 16 == 0 for st in strides[:-1])
+    print(f"Rd={Rd} L={Lz} N={N}  componentes 3 -> {C} (padded)", flush=True)
+    print(f"tile ({TB},1,{TY},{TX},{C}) = {el} el = {el*4:,} B -> "
+          f"{el/128:.1f} x 128 elementos  "
+          f"{'LEGAL' if ok_bytes else 'ILEGAL'}", flush=True)
+    print(f"  N/{TY}={N//TY} N/{TX}={N//TX} -> "
+          f"{'divide exacto' if ok_div else 'NO DIVIDE'}", flush=True)
+    print(f"  strides GMEM (B): {[st*4 for st in strides]}  -> "
+          f"{'todos multiplos de 16' if ok_stride else 'ALGUNO FALLA'}", flush=True)
+    print(f"  SRAM 7 refs = {7*el*4/1024:.1f} KB   grid = (B/{TB},{Lz},{ny},{nx})",
+          flush=True)
+    res = dict(available=True, N=N, L=Lz, components=C,
+               tile=[TB, 1, TY, TX, C], tile_elements=el, tile_bytes=el * 4,
+               sram_kb=round(7 * el * 4 / 1024, 1), grid=[None, Lz, ny, nx],
+               gmem_strides_bytes=[st * 4 for st in strides],
+               legal_bytes=ok_bytes, divides_N=ok_div, legal_strides=ok_stride)
+    if not (ok_bytes and ok_div and ok_stride):
+        res["error"] = "tile o layout inadmisible"
+        with open(f"/out/{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        return res
+
+    # ---- what does this build of mosaic_gpu actually offer? -------------
+    # Four kernel bodies have now been refused: iota without a layout cast,
+    # slicing a loaded array, slicing a ref, and concatenate (unimplemented
+    # outright). The iota error named its own fix, so find the layout API
+    # before guessing at it.
+    try:
+        import jax.experimental.pallas.mosaic_gpu as plgpu
+        names = sorted(n for n in dir(plgpu) if not n.startswith("_"))
+        print(f"\nplgpu expone {len(names)} nombres", flush=True)
+        print(f"  con 'layout': {[n for n in names if 'ayout' in n]}", flush=True)
+        lay = getattr(plgpu, "Layout", None)
+        cands = []
+        if lay is not None:
+            import inspect
+            mem = sorted(n for n in dir(lay) if not n.startswith("_"))
+            print(f"  Layout.*: {mem}", flush=True)
+            for n in ("WG_STRIDED", "WG_SPLAT", "TILED"):
+                v = getattr(lay, n, None)
+                if v is None:
+                    continue
+                try:
+                    sig = str(inspect.signature(v))
+                except Exception:
+                    sig = "?"
+                print(f"    {n}{sig}", flush=True)
+            shp = (TB, TY, TX, 4)
+            ws = getattr(lay, "WG_STRIDED", None)
+            for vec in (1, 2, 4):
+                if ws is None:
+                    break
+                try:
+                    cands.append((f"WG_STRIDED(vec={vec})", ws(shp, vec)))
+                except Exception as e:
+                    print(f"    WG_STRIDED vec={vec} no construye: "
+                          f"{type(e).__name__}: {e}", flush=True)
+        print(f"  layouts construidos: {[n for n, _ in cands]}", flush=True)
+    except Exception as e:
+        plgpu, cands, res_layouts = None, [], []
+        print(f"\nplgpu no disponible: {type(e).__name__}: {e}", flush=True)
+
+    pad4 = lambda a: jnp.pad(a, ((0, 0), (0, 0), (0, 0), (0, 0), (0, 1)))
+
+    # ---- the reference: six materialised rolls, on the real 3 components --
+    def jax_step(sp):
+        xp = jnp.roll(sp, -1, 3); xm = jnp.roll(sp, 1, 3)
+        yp = jnp.roll(sp, -1, 2); ym = jnp.roll(sp, 1, 2)
+        zp = jnp.roll(sp, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp, 1, 1).at[:, 0].set(0.0)
+        e = sp + 0.1 * (xp + xm + yp + ym + zp + zm)
+        return e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    # ---- our kernel: fixed tile, halo exchanged by hand -------------------
+    def kernel(c_ref, ym_ref, yp_ref, xm_ref, xp_ref, zm_ref, zp_ref, o_ref):
+        z = pl.program_id(1)
+        c = c_ref[:, 0]                       # (TB, TY, TX, C) in SRAM
+        ymt, ypt = ym_ref[:, 0], yp_ref[:, 0]
+        xmt, xpt = xm_ref[:, 0], xp_ref[:, 0]
+        # Roll inside the tile, then replace the one edge row or column with
+        # the neighbouring tile's. roll and where are both lowered; the iota
+        # that selects the edge is not, unless its layout is cast explicitly,
+        # which is what the lowering error asked for by name.
+        def cast(a):
+            return plgpu.layout_cast(a, _LAYOUT) if _LAYOUT is not None else a
+        iy = cast(jax.lax.broadcasted_iota(jnp.int32, c.shape, 1))
+        ix = cast(jax.lax.broadcasted_iota(jnp.int32, c.shape, 2))
+        ynext = jnp.where(iy == TY - 1, ypt[:, 0:1], jnp.roll(c, -1, 1))
+        yprev = jnp.where(iy == 0, ymt[:, TY - 1:TY], jnp.roll(c, 1, 1))
+        xnext = jnp.where(ix == TX - 1, xpt[:, :, 0:1], jnp.roll(c, -1, 2))
+        xprev = jnp.where(ix == 0, xmt[:, :, TX - 1:TX], jnp.roll(c, 1, 2))
+        # z is confined: planes outside the stack contribute nothing
+        lo = jnp.where(z == 0, 0.0, zm_ref[:, 0])
+        hi = jnp.where(z == Lz - 1, 0.0, zp_ref[:, 0])
+        e = c + 0.1 * (xnext + xprev + ynext + yprev + hi + lo)
+        o_ref[:, 0] = e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    blk = (TB, 1, TY, TX, C)
+
+    def pallas_on4(sp4):
+        """The kernel alone, over an already 4-component array."""
+        nb = sp4.shape[0] // TB
+        spec = lambda f: pl.BlockSpec(blk, f)
+        return pl.pallas_call(
+            kernel,
+            grid=(nb, Lz, ny, nx),
+            in_specs=[
+                spec(lambda b, z, jy, jx: (b, z, jy, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, (jy - 1) % ny, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, (jy + 1) % ny, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, jy, (jx - 1) % nx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, jy, (jx + 1) % nx, 0)),
+                spec(lambda b, z, jy, jx: (b, jnp.maximum(z - 1, 0), jy, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, jnp.minimum(z + 1, Lz - 1), jy, jx, 0)),
+            ],
+            out_specs=spec(lambda b, z, jy, jx: (b, z, jy, jx, 0)),
+            out_shape=jax.ShapeDtypeStruct(sp4.shape, sp4.dtype),
+        )(sp4, sp4, sp4, sp4, sp4, sp4, sp4)
+
+    def pallas_with_pad(sp):
+        """What it costs if spins stay 3-component in memory."""
+        return pallas_on4(pad4(sp))[..., :3]
+
+    # ---- fallback: let the BlockSpec do every shift ----------------------
+    # With a block extent of one in y and x, the block index IS the element
+    # index, so the six neighbours arrive already shifted and the kernel body
+    # is pure arithmetic: no roll, no iota, no slice, no concatenate, none of
+    # the four primitives mosaic_gpu refused. The tile is degenerate, which
+    # costs arithmetic intensity, but it is still a tile WE fix.
+    DBLK = (TB, 1, 1, 1, C)
+    d_el = TB * C
+
+    def kernel_point(c_ref, ym_ref, yp_ref, xm_ref, xp_ref, zm_ref, zp_ref, o_ref):
+        # No reduction here: jnp.sum over an axis is refused with "No support
+        # for axes yet". The normalisation is a cheap elementwise pass that
+        # XLA does outside, and the stencil -- the memory-bound part worth
+        # moving -- is what stays in the kernel.
+        z = pl.program_id(1)
+        lo = jnp.where(z == 0, 0.0, zm_ref[:, 0, 0, 0])
+        hi = jnp.where(z == Lz - 1, 0.0, zp_ref[:, 0, 0, 0])
+        o_ref[:, 0, 0, 0] = (c_ref[:, 0, 0, 0]
+                             + 0.1 * (xp_ref[:, 0, 0, 0] + xm_ref[:, 0, 0, 0]
+                                      + yp_ref[:, 0, 0, 0] + ym_ref[:, 0, 0, 0]
+                                      + hi + lo))
+
+    def pallas_point_on4(sp4):
+        nb = sp4.shape[0] // TB
+        spec = lambda f: pl.BlockSpec(DBLK, f)
+        return pl.pallas_call(
+            kernel_point,
+            grid=(nb, Lz, N, N),
+            in_specs=[
+                spec(lambda b, z, jy, jx: (b, z, jy, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, (jy - 1) % N, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, (jy + 1) % N, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, z, jy, (jx - 1) % N, 0)),
+                spec(lambda b, z, jy, jx: (b, z, jy, (jx + 1) % N, 0)),
+                spec(lambda b, z, jy, jx: (b, jnp.maximum(z - 1, 0), jy, jx, 0)),
+                spec(lambda b, z, jy, jx: (b, jnp.minimum(z + 1, Lz - 1), jy, jx, 0)),
+            ],
+            out_specs=spec(lambda b, z, jy, jx: (b, z, jy, jx, 0)),
+            out_shape=jax.ShapeDtypeStruct(sp4.shape, sp4.dtype),
+        )(sp4, sp4, sp4, sp4, sp4, sp4, sp4)
+
+    def norm(e):
+        return e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    def pallas_point_with_pad(sp):
+        return norm(pallas_point_on4(pad4(sp))[..., :3])
+
+    # ---- the gate: equivalence before any timing -------------------------
+    B0 = TB
+    sp = S.init_spins(jax.random.PRNGKey(5), geo, B0)
+    a = jax.jit(jax_step)(sp)
+    a.block_until_ready()
+    attempts, b, chosen = [], None, None
+    global _LAYOUT
+    for name, val in ([(None, None)] + cands):
+        _LAYOUT = val
+        try:
+            b = jax.jit(pallas_with_pad)(sp)
+            b.block_until_ready()
+            chosen = name
+            attempts.append(dict(layout=name, ok=True))
+            print(f"\n  layout {name!r}: COMPILA", flush=True)
+            break
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            attempts.append(dict(layout=name, ok=False, error=msg[:300]))
+            print(f"\n  layout {name!r}: {msg[:180]}", flush=True)
+    res["layout_attempts"] = attempts
+    res["layout_chosen"] = chosen
+    res["kernel_used"] = "tiled" if b is not None else None
+    if b is None:
+        print(f"\n  el tile (13,3) no compila con ningun layout; "
+              f"probando el kernel punto a punto", flush=True)
+        print(f"  tile punto ({TB},1,1,1,{C}) = {d_el} el -> "
+              f"{d_el/128:.1f} x 128 elementos  "
+              f"{'LEGAL' if d_el % 128 == 0 else 'ILEGAL'}   "
+              f"SRAM 7 refs = {7*d_el*4/1024:.1f} KB   "
+              f"grid = (B/{TB},{Lz},{N},{N})", flush=True)
+        res["point_tile"] = [TB, 1, 1, 1, C]
+        res["point_elements"] = d_el
+        res["point_legal"] = d_el % 128 == 0
+        try:
+            b = jax.jit(pallas_point_with_pad)(sp)
+            b.block_until_ready()
+            pallas_with_pad = pallas_point_with_pad
+            pallas_on4 = lambda a: norm(pallas_point_on4(a))
+            res["kernel_used"] = "point"
+            print(f"  kernel punto a punto: COMPILA", flush=True)
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            print(f"  kernel punto a punto: {msg[:300]}", flush=True)
+            res.update(ran=False, error=msg)
+            with open(f"/out/{tag}.json", "w") as f:
+                json.dump(res, f, indent=1)
+            return res
+    err = float(jnp.max(jnp.abs(a - b)))
+    rel = err / max(float(jnp.max(jnp.abs(a))), 1e-30)
+    good = rel < 1e-5
+    print(f"\nequivalencia en B={B0}: max |jax - pallas| = {err:.3e}  "
+          f"(relativo {rel:.3e})  {'OK' if good else 'MISMATCH'}", flush=True)
+    res.update(ran=True, equivalent=bool(good), max_abs_err=err, max_rel_err=rel)
+    if not good:
+        print("  -> no son la misma funcion; el tiempo no significa nada", flush=True)
+        with open(f"/out/{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        return res
+
+    # ---- only now, the timing -------------------------------------------
+    rows = []
+    print(f"\n{'B':>6}{'jax 6 rolls':>14}{'pallas+pad':>13}{'vs jax':>9}"
+          f"{'pallas en 4c':>14}{'vs jax':>9}", flush=True)
+    for B in batches:
+        if B % TB:
+            print(f"  B={B} no es multiplo de TB={TB}, se omite", flush=True)
+            continue
+        sp = S.init_spins(jax.random.PRNGKey(7 + B), geo, B)
+        sp4 = jax.jit(pad4)(sp)
+        fj = jax.jit(jax_step).lower(sp).compile()
+        fp = jax.jit(pallas_with_pad).lower(sp).compile()
+        f4 = jax.jit(pallas_on4).lower(sp4).compile()
+        for f, x in ((fj, sp), (fp, sp), (f4, sp4)):
+            jax.block_until_ready(f(x))
+        tj, tp, t4 = [], [], []
+        for _ in range(int(repeats)):
+            t0 = time.perf_counter(); jax.block_until_ready(fj(sp))
+            tj.append(time.perf_counter() - t0)
+            t0 = time.perf_counter(); jax.block_until_ready(fp(sp))
+            tp.append(time.perf_counter() - t0)
+            t0 = time.perf_counter(); jax.block_until_ready(f4(sp4))
+            t4.append(time.perf_counter() - t0)
+        mj, mp, m4 = (float(np.median(x)) for x in (tj, tp, t4))
+        e2 = float(jnp.max(jnp.abs(fj(sp) - fp(sp))))
+        rows.append(dict(B=B, jax_s=mj, pallas_pad_s=mp, pallas_4c_s=m4,
+                         pad_change_pct=100 * (mp / mj - 1),
+                         c4_change_pct=100 * (m4 / mj - 1),
+                         max_abs_err=e2))
+        print(f"{B:>6}{mj*1e3:>12.3f} ms{mp*1e3:>11.3f} ms"
+              f"{100*(mp/mj-1):>+8.1f}%{m4*1e3:>12.3f} ms"
+              f"{100*(m4/mj-1):>+8.1f}%", flush=True)
+    res["timing"] = rows
+    if rows:
+        b4 = min(r["c4_change_pct"] for r in rows)
+        bp = min(r["pad_change_pct"] for r in rows)
+        print(f"\n  mejor con pad dentro: {bp:+.1f}%", flush=True)
+        print(f"  mejor ya en 4 componentes: {b4:+.1f}%", flush=True)
+        print(f"  equivalencia peor caso: "
+              f"{max(r['max_abs_err'] for r in rows):.3e}", flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=pallas_image, timeout=60 * 60 * 2,
+              volumes={"/out": vol})
+def pallas_tiled_h100(b, rep, tag, Rd, L, tb, ty, tx):
+    return _pallas_tiled(b, rep, tag, Rd, L, tb, ty, tx)
+
+
+@app.local_entrypoint()
+def pallas_tiled(batches: str = "32,64,96", repeats: int = 9, rd: float = 18.30,
+                 layers: int = 5, tb: int = 32, ty: int = 13, tx: int = 3,
+                 tag: str = "pallas_tiled"):
+    """A fixed-tile Pallas stencil against the six-roll JAX reference."""
+    pallas_tiled_h100.remote([int(x) for x in batches.split(",") if x], repeats,
+                             tag, rd, layers, tb, ty, tx)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 

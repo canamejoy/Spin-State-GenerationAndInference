@@ -1408,6 +1408,104 @@ porque entonces valdría <b>cero</b> en vez de poco. La ventana de partición fu
 de ±4 alrededor de <code>R/2</code>, así que no se probaron cortes más
 desiguales.</div>
 
+<h2>El kernel de Pallas con tile fijo: existe, es exacto, y es más lento</h2>
+
+<p>Lo escribimos. <b>Compila, y calcula exactamente la misma función</b> que la
+referencia de seis rolls — error relativo máximo <code>1.788e−07</code>, que es
+redondeo de <code>f32</code>, no una aproximación. <b>Y es más lento que lo que
+reemplaza.</b></p>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>JAX, seis rolls</th><th>Pallas, ya en 4 comp.</th>
+    <th>cambio</th></tr></thead>
+  <tbody>
+    <tr><td class="n">32</td><td class="n">0.206 ms</td><td class="n">0.244 ms</td>
+        <td class="bad">+18.1 %</td></tr>
+    <tr><td class="n">64</td><td class="n">0.176 ms</td><td class="n">0.201 ms</td>
+        <td class="bad">+14.7 %</td></tr>
+    <tr><td class="n">96</td><td class="n">0.171 ms</td><td class="n">0.225 ms</td>
+        <td class="bad">+31.3 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Por qué es más lento, y era predecible una vez
+visto el único tile admisible.</strong> El único que <code>mosaic_gpu</code>
+acepta es <b>degenerado</b>: un sitio en <code>x</code> y uno en <code>y</code>.
+Con un tile de 1×1 <b>los seis vecinos no se reutilizan desde SRAM</b>, así que
+cada sitio se trae <b>siete veces</b> de memoria global — tráfico estrictamente
+peor que seis rolls materializados, que leen cada sitio una vez por roll. Por eso
+la brecha <b>crece con <code>B</code></b>.</div>
+
+<h3>Los ocho rechazos, en orden</h3>
+<p>El camino no fue un fallo sino ocho, y cada uno enseñó algo distinto:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>#</th><th>dónde</th><th>qué dijo</th><th>causa</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td>tamaño de copia</td>
+        <td><code>bytes=18252</code> no múltiplo de 128</td>
+        <td>el plano entero son <b>4563 elementos, impar para toda
+        geometría</b></td></tr>
+    <tr><td class="n">2</td><td>SRAM</td><td class="dead">aritmética</td>
+        <td>conservar el plano exige lote múltiplo de 32 → <b>570 KB</b> contra
+        228 disponibles</td></tr>
+    <tr class="best"><td class="n">3</td><td>strides GMEM</td>
+        <td>deben ser múltiplos de <b>16 B</b></td>
+        <td><b>EL BLOQUEO REAL</b>: 3 componentes × 4 B = <b>12 B</b> envenena
+        los cuatro strides. Se arregla <b>padeando a 4 componentes</b></td></tr>
+    <tr><td class="n">4</td><td>bloque SRAM</td>
+        <td>múltiplo de 128 <b>elementos</b></td>
+        <td>yo tenía la regla en bytes; era en elementos</td></tr>
+    <tr><td class="n">5</td><td>cuerpo</td><td>no infiere el layout del
+        <code>iota</code></td>
+        <td>seleccionar el borde del halo. <b>El <code>layout_cast</code> que el
+        propio error recomienda NO lo arregla</b> — probé
+        <code>WG_STRIDED</code> con vec 1, 2 y 4</td></tr>
+    <tr><td class="n">6</td><td>cuerpo</td><td>solo se rebanan arreglos con
+        layout tejado</td><td>desplazar dentro del tile</td></tr>
+    <tr><td class="n">7</td><td>cuerpo</td>
+        <td><code>concatenate</code> <b>no implementado</b></td>
+        <td>ensamblar el desplazado desde rebanadas de la referencia</td></tr>
+    <tr><td class="n">8</td><td>cuerpo</td><td><code>No support for axes
+        yet</code></td>
+        <td><code>jnp.sum</code> sobre el eje de componentes. Se saca la
+        normalización del kernel</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>La conclusión es sobre la madurez del backend, no sobre nuestro
+  diseño.</b></p>
+  <p><b>Toda</b> forma de desplazar datos dentro del kernel está sin soportar en
+  el <code>mosaic_gpu</code> de jax 0.10.2 — <code>iota</code>+<code>where</code>,
+  rebanar un arreglo cargado, rebanar una referencia, <code>concatenate</code> —
+  y las reducciones por eje también. <b>Un tile no degenerado EXIGE desplazar
+  dentro del kernel</b>, así que el único tile que compila es justamente el que
+  destruye la ventaja de tráfico.</p>
+  <p>Y la lista de layouts que sí ofrece delata para qué está hecho:
+  <code>WGMMA</code>, <code>TCGEN05</code>, <code>WGMMA_UPCAST</code> — formas de
+  <i>matmul</i> sobre tensor cores, <b>no stencils generales</b>.</p>
+</div>
+
+<div class="note warn"><strong>Lo que sí quedó demostrado, y lo que no.</strong>
+<b>El tile es fijo de verdad</b>: no cambia con <code>B</code>, así que el
+dentado de ese kernel desaparece por construcción. Pero cuesta 15–31 % y el
+dentado que elimina es como mucho 15 %, <b>así que tampoco vale para eso</b>. Y
+el premio grande —el 31.5 % de los rolls— <b>no se materializa</b> con el único
+tile admisible.</div>
+
+<div class="key">
+  <p><b>Qué lo cambiaría.</b></p>
+  <p><b>1.</b> Un <code>jaxlib</code> donde <code>mosaic_gpu</code> baje
+  <code>concatenate</code>, <b>o</b> el rebanado de arreglos, <b>o</b> las
+  reducciones por eje. <b>Cualquiera de las tres</b> permitiría un tile real.</p>
+  <p><b>2.</b> Escribir el kernel en <b>Triton directamente</b>, que no tiene
+  ninguna de estas restricciones — y es especialmente razonable porque
+  <b>XLA ya emite Triton para esta misma fusión</b>.</p>
+  <p><b>3.</b> CUDA C++ por <i>custom call</i>: sin restricciones, pero fuera
+  del ecosistema JAX.</p>
+</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las
