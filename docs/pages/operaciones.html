@@ -1870,6 +1870,124 @@ tendencia <code>a/B</code>, no dentado. <b>Ninguna de las tres variantes del
 stencil tiene dentado</b> — consistente con que el del programa completo viva
 en la fusión del <code>_where</code>, el núcleo del Metropolis.</div>
 
+<h2>Ingeniería inversa del tile: el dentado tiene estructura</h2>
+
+<p>El dentado es una decisión de compilador, así que es código, así que tiene
+una regla. Esto es lo que se pudo <b>derivar</b>, no ajustar.</p>
+
+<h3>Tres restricciones documentadas</h3>
+<div class="tw"><table>
+  <thead><tr><th>regla de XLA</th><th>qué implica para nosotros</th>
+    <th>verificado</th></tr></thead>
+  <tbody>
+    <tr class="best"><td>el modelo de costo cuenta memoria en <b>sectores de
+        32 bytes</b> y penaliza los almacenamientos de <b>sector parcial</b></td>
+        <td><b>DERIVADO</b>: un tile <code>[tb,1,ty,tx,3]</code> escribe una
+        tirada contigua de <code>3·tx</code> floats, así que llenar sectores
+        enteros exige <code>3·tx ≡ 0 (mod 8)</code>, y como 3 es impar →
+        <b><code>tx ≡ 0 (mod 8)</code></b></td>
+        <td class="best"><b>18/18</b><br>tx ∈ {8,16}<br>nunca 1, 2 ni 4</td></tr>
+    <tr class="best"><td>cada tamaño de tile debe ser <b>potencia de 2, o igual
+        al tamaño de la dimensión</b></td>
+        <td><b>explica los dos regímenes</b> sin ajustar nada: <code>tb ∈
+        {4,8,16,32}</code> es la rama de potencias, y <code>tb = B</code>
+        (visto en B = 59, 61, 63, 123, 127) es la rama «igual a la
+        dimensión»</td>
+        <td class="best">documentado</td></tr>
+    <tr><td>un tile se rechaza si su carga pasa de <b>1 048 576
+        elementos</b></td>
+        <td>techo durísimo, lejísimos de lo que vemos → <b>el 1536 que
+        observamos es una PREFERENCIA del modelo, no una restricción</b></td>
+        <td class="n">documentado</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Y el presupuesto observado</h3>
+<div class="key">
+  <p><b>El tile mide exactamente 1536 elementos = 6144 B = 48 × 128 en 51 de
+  56 casos registrados.</b></p>
+  <p>O sea <code><b>tb · ty · tx = 512 = 2⁹</b></code>. Las excepciones son los
+  cinco casos <code>tb = B</code> y tres en B = 140, 141, 143 que toman 3072,
+  exactamente el doble.</p>
+</div>
+
+<div class="key">
+  <p><b>Juntando la regla de sectores con el presupuesto, la elección baja de
+  infinita a DOCE candidatos:</b></p>
+  <p style="font-family:var(--mono);font-size:.9rem">
+  (1,32,16) (2,16,16) (2,32,8) (4,8,16) (4,16,8) (8,4,16)<br>
+  (8,8,8) (16,2,16) (16,4,8) (32,1,16) (32,2,8) (64,1,8)</p>
+  <p>Ese es el resultado principal: <b>el dentado es un pick entre doce, no un
+  continuo.</b> Y eso acota su amplitud, porque los doce candidatos abarcan
+  ~17 % en carriles totales.</p>
+</div>
+
+<h3>Lo que NO pude descifrar</h3>
+<div class="note bad"><strong>Cuál de los doce elige para cada B.</strong>
+Probé la hipótesis natural —que minimice carriles totales,
+<code>⌈B/tb⌉·tb × ⌈39/ty⌉·ty × ⌈39/tx⌉·tx × 3</code>— y <b>acierta 36 %
+(17 de 47)</b>, con fallos que son <b>11 a 17 % PEORES</b> en carriles. Así que
+<b>minimizar carriles no es el objetivo</b>.</div>
+
+<div class="note warn"><strong>Hay un patrón parcial, y NO lo ofrezco como
+regla.</strong> <code>(8,8,8)</code> aparece cuando <code>B mod 8 ∈ {5,7,0}</code>
+y <code>(4,8,16)</code> cuando <code>B mod 8 ∈ {1,3,4}</code> — cubre las dos
+elecciones dominantes pero <b>rompe en 8 de 56</b> (B = 45, 47, 75, 77, 93, 95,
+153, 160). Y hay un <b>confound mío</b>: mi extracción toma el <b>primer</b>
+tile de cada firma, y los dos kernels de Triton no vienen ordenados igual en
+todas las corridas, así que parte de esos 8 pueden ser el segundo kernel y no el
+pesado. No lo desenredé. <b>En esta investigación ya se me cayeron cuatro
+patrones post-hoc; este no va a ser el quinto.</b></div>
+
+<h2>Los cuatro puntos de ataque que salen de esto</h2>
+
+<div class="tw"><table>
+  <thead><tr><th>#</th><th>objetivo</th><th>mecanismo</th><th>ataque</th>
+    <th>estado</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td>la regla de sectores <b>pincha tx</b></td>
+        <td><code>tx</code> debe ser múltiplo de 8 <b>solo porque</b> la tirada
+        contigua son 3 floats = 12 B, que nunca llena un sector de 32</td>
+        <td>hacer la tirada múltiplo de 8 floats y <code>tx</code> queda
+        libre</td>
+        <td class="bad">envenenado: padear a 4 componentes mete
+        <code>v₂ = 2</code> y fuerza ancho 4 para todo B, matando el protocolo
+        de partición</td></tr>
+    <tr><td class="n">2</td><td>el <b>presupuesto de 1536</b></td>
+        <td>el techo duro es 1 048 576, así que 1536 lo <b>calcula</b> el
+        modelo, no es un muro</td>
+        <td>hallar el flag o la entrada que lo fija; otro presupuesto cambia
+        todo el conjunto de candidatos</td>
+        <td class="n">no está en los 79 flags de este build ni en la
+        documentación; haría falta la fuente de XLA</td></tr>
+    <tr class="best"><td class="n">3</td>
+        <td><b>la escapatoria «igual a la dimensión»</b></td>
+        <td><code>tb = B</code> es legal y se tomó en B = 59, 61, 63, 123, 127.
+        En ese régimen el tile es una <b>función determinista de B</b>, así que
+        <b>la aleatoriedad del re-tejado desaparece</b></td>
+        <td>averiguar qué hace que XLA tome esa rama y forzarlo: un tile que
+        siempre iguala la dimensión <b>no tiene dentado de selección</b></td>
+        <td class="best"><b>EL MÁS PROMETEDOR</b> y sin probar. No sabemos el
+        disparador: esos cinco B son impares, pero muchos impares tomaron
+        potencia de 2</td></tr>
+    <tr><td class="n">4</td><td>la <b>amplitud está acotada</b></td>
+        <td>la elección es entre doce candidatos cuyos carriles totales abarcan
+        ~17 %</td>
+        <td>no es un ataque sino una cota: el dentado de selección <b>no puede
+        exceder</b> ese abanico</td>
+        <td class="n">establecido</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note warn"><strong>Alcance honesto.</strong> La regla de sectores
+(<code>tx ≡ 0 mod 8</code>) está <b>derivada</b> de comportamiento documentado y
+se cumple 18/18. El presupuesto de 1536 está <b>observado</b> (51/56),
+<b>no derivado</b>. La selección entre los doce <b>no está resuelta</b>, y la
+minimización de carriles queda refutada al 36 %. Todo es para
+<code>Rd = 18.30</code>, <code>L = 5</code>, <code>N = 39</code> en un build de
+XLA: la regla de sectores debería generalizar porque se sigue del layout, el
+presupuesto puede que no.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las

@@ -1,0 +1,138 @@
+{
+ "title": "Reverse-engineering XLA's tile choice for the Triton fusion",
+ "date": "2026-10-20",
+ "why": "The sawtooth is a compiler decision, so it is code, so it has a rule. This is what could be derived rather than fitted.",
+ "documented_constraints": [
+  {
+   "rule": "the tiling cost model counts memory in 32-BYTE SECTORS and penalises partial-sector stores",
+   "source": "XLA PR on the tiling cost model",
+   "consequence": "DERIVED: in f32[B,L,N,N,3] a tile [tb,1,ty,tx,3] writes a contiguous run of 3*tx floats, so filling whole sectors needs 3*tx = 0 (mod 8), and since 3 is odd, tx = 0 (mod 8)",
+   "verified": "18 of 18 genuine tiles recorded in this work have tx in {8, 16}. Never 1, 2 or 4."
+  },
+  {
+   "rule": "every tile size must be a POWER OF TWO, or EQUAL TO THE DIMENSION SIZE",
+   "source": "XLA TritonEmitterConstraints test comments",
+   "consequence": "explains the two regimes seen in the data without fitting anything: tb in {4,8,16,32} is the power-of-two branch, and tb = B (seen at B = 59, 61, 63, 123, 127) is the equal-to-the-dimension branch"
+  },
+  {
+   "rule": "a tile is rejected when its load exceeds 1048576 elements",
+   "source": "XLA test comment",
+   "consequence": "a hard ceiling far above anything we see, so the 1536 we observe is a cost-model PREFERENCE, not a constraint"
+  }
+ ],
+ "observed_budget": {
+  "finding": "the tile is exactly 1536 elements = 6144 B = 48 x 128 in 51 of 56 recorded cases",
+  "consequence": "tb * ty * tx = 512 = 2^9",
+  "exceptions": "the five tb=B cases (1416, 1464, 1512, 2952, 3048 elements) and three at B=140,141,143 which take 3072, exactly double budget"
+ },
+ "the_search_space": {
+  "size": 12,
+  "candidates": [
+   [
+    1,
+    32,
+    16
+   ],
+   [
+    2,
+    16,
+    16
+   ],
+   [
+    2,
+    32,
+    8
+   ],
+   [
+    4,
+    8,
+    16
+   ],
+   [
+    4,
+    16,
+    8
+   ],
+   [
+    8,
+    4,
+    16
+   ],
+   [
+    8,
+    8,
+    8
+   ],
+   [
+    16,
+    2,
+    16
+   ],
+   [
+    16,
+    4,
+    8
+   ],
+   [
+    32,
+    1,
+    16
+   ],
+   [
+    32,
+    2,
+    8
+   ],
+   [
+    64,
+    1,
+    8
+   ]
+  ],
+  "reading": "Combining the sector rule with the 512 budget reduces the choice from unbounded to TWELVE discrete candidates. That is the main result: the sawtooth is a pick among twelve, not a continuum."
+ },
+ "what_i_could_not_crack": {
+  "question": "which of the twelve it picks for a given B",
+  "hypothesis_tested": "that it minimises total lanes, ceil(B/tb)*tb * ceil(39/ty)*ty * ceil(39/tx)*tx * 3",
+  "result": "36% (17 of 47), and the misses are 11 to 17% WORSE in lanes, so lane minimisation is NOT the objective",
+  "partial_pattern": "(8,8,8) appears when B mod 8 is in {5,7,0} and (4,8,16) when B mod 8 is in {1,3,4}, which covers the two dominant choices but breaks on 8 of 56 cases (B = 45,47,75,77,93,95,153,160)",
+  "confound": "my extraction takes the FIRST tile of each signature, and the two Triton kernels are not consistently ordered across runs, so some of those 8 may be the second kernel rather than the heavy one. Not disentangled."
+ },
+ "attack_points": [
+  {
+   "n": 1,
+   "target": "the sector rule pins tx",
+   "mechanism": "tx must be a multiple of 8 only because the innermost contiguous run is 3 floats = 12 B, which never fills a 32 B sector",
+   "attack": "make the innermost run a multiple of 8 floats and tx becomes a free parameter",
+   "cost": "padding components 3->4 puts v2=2 into the element count, forcing width 4 for every B and killing the split protocol. Padding to 8 is worse still. So this attack costs the width lever.",
+   "status": "identified, poisoned by the width rule"
+  },
+  {
+   "n": 2,
+   "target": "the 1536-element budget",
+   "mechanism": "the hard limit is 1048576 elements, so 1536 is a preference the cost model computes, not a wall",
+   "attack": "find the flag or the input that sets it; a different budget changes the whole candidate set",
+   "status": "not found in 79 flags of this build, nor in the docs; would need the XLA source"
+  },
+  {
+   "n": 3,
+   "target": "the equal-to-the-dimension escape",
+   "mechanism": "tb = B is legal and was taken at B = 59, 61, 63, 123, 127. In that regime the tile is a DETERMINISTIC function of B, so the re-tiling randomness disappears",
+   "attack": "find what makes XLA take that branch and force it; a tile that always equals the dimension has no selection sawtooth at all",
+   "status": "MOST PROMISING and untested. We do not know the trigger: those five B are all odd, but so are many that took a power-of-two tile."
+  },
+  {
+   "n": 4,
+   "target": "the amplitude is bounded",
+   "mechanism": "the choice is among twelve candidates whose total-lane counts span about 17%",
+   "attack": "not an attack but a bound: the tile-selection sawtooth cannot exceed the spread over those twelve, which caps what is at stake",
+   "status": "established"
+  }
+ ],
+ "honest_scope": [
+  "The sector rule (tx = 0 mod 8) is DERIVED from documented cost-model behaviour and holds 18 of 18. The budget of 1536 elements is OBSERVED, 51 of 56, not derived.",
+  "The selection among the twelve is NOT solved. Lane minimisation is refuted at 36%.",
+  "The mod-8 pattern is post-hoc and breaks on 8 of 56, and part of that may be my own extraction confound. It is NOT offered as a rule -- four post-hoc patterns have already died in this work.",
+  "All of this is for Rd=18.30, L=5, N=39 on one XLA build. The sector rule should generalise since it follows from the layout; the budget may not."
+ ]
+}
