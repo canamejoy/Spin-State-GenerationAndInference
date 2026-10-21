@@ -1,4 +1,4 @@
-<title>Paso a paso de un barrido</title>
+<title>Réplicas y tiempo</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{--bg:#f7f5f2;--surface:#fffefc;--ink:#1c1a17;--muted:#6b645b;--rule:#e2ddd5;
@@ -73,2527 +73,362 @@ td.dead{color:var(--muted);font-style:italic}
 </style>
 
 <div class="wrap">
-<p class="eyebrow">H100 · Rd 18.30 · 5 capas · trazado por kernel</p>
-<h1>Paso a paso de un barrido</h1>
-<p class="lede">Cada operación que la GPU ejecuta para avanzar un barrido de
-Monte Carlo, con su geometría de lanzamiento y su tiempo medido. De ahí salieron
-las dos causas de que el tiempo por réplica cambie con el tamaño del lote, y las
-dos quedaron con una palanca concreta.</p>
+<p class="eyebrow">simulación · paralelización en GPU</p>
+<h1>Por qué un número de réplicas tarda más que otro</h1>
 
-<h2>En qué quedó todo</h2>
-<p>Esta página se escribió en el orden en que se descubrieron las cosas. Este es
-el estado final, y debajo está el detalle de cómo se llegó a cada parte.</p>
+<p class="lede">La misma física, el mismo hardware, el mismo número de barridos:
+<b>cambias cuántas réplicas van en un lote y el tiempo por réplica cambia hasta
+un 44 %</b>. Esta página explica por qué, qué parte es predecible y qué hacer al
+respecto.</p>
+
+<div class="key">
+  <p><b>La respuesta corta: son dos causas distintas, y viven en sitios
+  distintos del programa.</b></p>
+</div>
 
 <div class="tw"><table>
-  <thead><tr><th>causa</th><th>cuánto cuesta</th><th>mecanismo</th>
-    <th>palanca</th><th>estado</th></tr></thead>
+  <thead><tr><th>causa</th><th>cuánto</th><th>qué la provoca</th>
+    <th>dónde vive</th><th>qué hacer</th></tr></thead>
   <tbody>
-    <tr><td><b>El ancho de vector</b></td>
-        <td class="bad">+44.5 %</td>
-        <td>XLA da a cada hilo <code>min(4, 2<sup>v₂(B)+v₂(L)</sup>)</code>
-        elementos como <b>cargas escalares</b>, no vectoriales: pide 512 B para
-        usar 128</td>
-        <td>elegir <code>v₂(B)+v₂(L) &lt; 2</code>, o partir el lote en dos
-        impares</td>
-        <td class="best">resuelto si <code>L</code> es impar</td></tr>
-    <tr><td><b>El dentado</b></td>
-        <td class="bad">hasta +15 %</td>
-        <td><b>Triton re-teja</b> el kernel para cada tamaño de lote, con su
-        propio modelo de costo y de forma no monótona</td>
-        <td>compilar los candidatos y <b>leer la firma de tiles</b> del HLO</td>
-        <td class="n">vale 15 % si <code>B</code> es libre;<br>
-        <b>−1.0 % y poco fiable</b> si <code>R</code> está fijo</td></tr>
-    <tr><td><code>L</code> múltiplo de 4</td>
-        <td class="bad">+44.5 %, sin escape</td>
-        <td><code>v₂(L) ≥ 2</code> fuerza ancho 4 para <b>cualquier</b>
-        <code>B</code></td>
-        <td>kernel propio en Pallas, bloques de 32 elementos <b>incluyendo el
-        halo</b></td>
-        <td class="n">abierto, ruta despejada</td></tr>
-    <tr><td>Los seis <i>rolls</i></td>
-        <td class="n">31.5 % del tiempo</td>
-        <td><code>jnp.roll</code> materializa seis copias desplazadas completas
-        del tensor</td>
-        <td>el mismo kernel propio, como <i>stencil</i> con halo</td>
-        <td class="n">abierto — es velocidad, no estandarización</td></tr>
+    <tr><td><b>El ancho de vector</b></td><td class="bad">+44 %</td>
+        <td>XLA reparte <code>min(4, 2^(v₂(B)+v₂(L)))</code> elementos por hilo
+        y los lee <b>uno a uno</b></td>
+        <td>las fusiones <code>kLoop</code></td>
+        <td class="best">predecible y evitable</td></tr>
+    <tr><td><b>El dentado</b></td><td class="bad">hasta 15 %</td>
+        <td>Triton <b>re-teja</b> el kernel para cada forma, con su propio
+        modelo de costo</td>
+        <td>una fusión <code>kCustom</code> de Triton</td>
+        <td class="n">medible, no predecible</td></tr>
   </tbody>
 </table></div>
 
 <div class="key">
-  <p><b>Lo que hay que hacer hoy, y es gratis.</b></p>
-  <p>1. Elegir el lote con <code>v₂(B)+v₂(L) &lt; 2</code>. Si el número que
-  necesitas es múltiplo de cuatro, <b>pártelo en <code>B/2+1</code> y
-  <code>B/2−1</code></b>: los dos impares, la suma exacta, y como las réplicas
-  son cadenas independientes <b>es estadísticamente exacto</b>.</p>
-  <p>2. <b>Solo si <code>B</code> es libre</b>: entre los candidatos que pasen
-  el filtro, <b>compilarlos</b> (~40 s cada uno, sin simular) y quedarse con el
-  de firma de tiles <code>8,1,8,8,3 | 8,1,8,8,3</code>.</p>
-  <p>Medido: el paso 1 vale <b>−22.7 % a −30.3 %</b> sobre seis objetivos, y el
-  paso 2 vale <b>−15 % a producción</b> cuando <code>B</code> es libre — pero
-  <b>−1.0 % y falla un tercio de las veces si <code>R</code> está fijo</b> y hay
-  que partirlo. El orden no es negociable: <b><code>v₂</code> primero, firma
-  después</b>, porque <code>B=200</code> tiene la firma barata y es el peor plan
-  de su objetivo.</p>
+  <p><b>Y lo que hay que hacer, en dos pasos.</b></p>
+  <p><b>1.</b> Elegir el lote de modo que <code>v₂(B) + v₂(L) &lt; 2</code>. Si
+  el número que necesitas es múltiplo de cuatro, <b>pártelo en
+  <code>B/2+1</code> y <code>B/2−1</code></b>: los dos impares, la suma exacta.
+  Vale entre <b>−22 % y −30 %</b>.</p>
+  <p><b>2.</b> Solo si <code>B</code> es libre: entre los candidatos que pasen
+  el filtro, <b>compilarlos</b> (~40 s, sin simular) y quedarse con el de firma
+  de tiles barata. Vale <b>−15 % a producción</b>.</p>
+  <p>El orden no es negociable: <b><code>v₂</code> primero, firma después</b> —
+  <code>B = 200</code> tiene la firma más barata que existe y es el peor lote de
+  su grupo, porque paga ancho 4.</p>
 </div>
 
-<div class="note warn"><strong>Y la regla de método que salió de equivocarme.</strong>
-Las curvas f(B) se midieron con celdas cortas (3600 barridos), y la
-extrapolación a producción tiene <b>±2.5 % de ruido por punto, en los dos
-sentidos</b>. Validado con dos pares medidos al cronograma real: el de 5.7 %
-colapsó a <b>0.6 %</b> y el de 12.2 % creció a <b>15.0 %</b>. Así que
-<b>por encima de ~5 % lo que ve una celda corta es real; por debajo no es
-resoluble</b>. Cuatro patrones que yo había dado por buenos murieron por
-ignorar esto, y están documentados abajo con su refutación.</div>
+<h2>1 · El ancho de vector</h2>
+
+<p>XLA decide cuántos elementos procesa cada hilo. Para nuestro arreglo
+<code>f32[B, L, N, N, 3]</code> la decisión es:</p>
+
+<p style="font-family:var(--mono);text-align:center;font-size:1.05rem">
+ancho = min(4, 2<sup>v₂(B) + v₂(L)</sup>)</p>
+
+<p>donde <code>v₂(n)</code> es cuántas veces el 2 divide a <code>n</code>.
+<code>N</code> no entra porque es siempre impar por construcción
+(<code>N = 2(⌊Rd⌋+1)+1</code>). Verificado <b>exacto en 89 de 89 rejillas</b>
+sobre cinco dispositivos distintos — T4, L4, A100, H100 y H200.</p>
 
 <div class="key">
-  <p><b>Los dos lotes.</b> <code>B</code> = 135 (impar, el compilador no
-  vectoriza) contra <code>B</code> = 140 (múltiplo de cuatro, vectoriza por 4).
-  Están a <b>cinco réplicas de distancia</b>, así que nada más cambia, y difieren
-  <b class="n">+48 %</b> en tiempo total de GPU.</p>
-  <p style="color:var(--muted);font-size:.93rem">Los tiempos de cada caja son
-  <b>microsegundos por réplica y por barrido</b> — el total trazado dividido
-  entre los 3600 barridos y entre las réplicas, que es lo único comparable entre
-  lotes de distinto tamaño.</p>
+  <p><b>Y el ancho 4 es el malo, por una razón concreta que se ve en el
+  PTX.</b></p>
+  <p>Cuando XLA da cuatro elementos por hilo, <b>no emite una carga vectorial
+  de 128 bits</b>: emite <b>cuatro cargas escalares</b>
+  (<code>ld.global.v4 = 0</code> en el volcado). Un warp pide entonces
+  <b>512 bytes para entregar 128 útiles</b>. El ancho 2 es gratis; el 4 cuesta.</p>
 </div>
 
-<h2>Dónde recae la diferencia</h2>
+<p>Y no afecta a todo el programa por igual. Comparando <code>B = 135</code>
+(ancho 1) contra <code>B = 140</code> (ancho 4), el <b>91 % del exceso</b> está
+en dos grupos, y los dos son fusiones <code>kLoop</code> — las que XLA emite
+«un elemento de la raíz a la vez», que es justo el bucle que vectoriza:</p>
+
 <div class="tw"><table>
-  <thead><tr><th>operación</th><th>B=135 · ancho 1</th><th>B=140 · ancho 4</th>
-    <th>cambio</th><th>del exceso total</th></tr></thead>
+  <thead><tr><th>proceso</th><th>tipo</th><th>cambio</th>
+    <th>% del exceso</th></tr></thead>
   <tbody>
-    <tr class="best"><td><b>Energía por sitio</b></td><td class="n">0.495 µs</td>
-        <td class="bad">1.080 µs</td><td class="bad">+118 %</td><td class="bad"><b>61 %</b></td></tr>
-    <tr><td>Aceptación de Metropolis</td><td class="n">0.376</td>
-        <td class="bad">0.662</td><td class="bad">+76 %</td><td class="bad">30 %</td></tr>
-    <tr><td>Fusiones intermedias</td><td class="n">0.349</td><td class="n">0.444</td>
+    <tr><td>Mega-fusión: Threefry + energía + exponencial</td><td class="n">kLoop</td>
+        <td class="bad">+118 %</td><td class="bad">61 %</td></tr>
+    <tr><td>Umbral de aceptación y selección</td><td class="n">kLoop</td>
+        <td class="bad">+76 %</td><td class="bad">30 %</td></tr>
+    <tr><td>Espín de prueba (el <code>_where</code>)</td><td class="n">Triton</td>
         <td class="n">+27 %</td><td class="n">10 %</td></tr>
-    <tr><td><b>Los seis vecinos</b></td><td class="n">0.568</td><td class="n">0.569</td>
-        <td class="good">+0 %</td><td class="good">0 %</td></tr>
-    <tr><td>Observables</td><td class="n">0.237</td><td class="n">0.234</td>
-        <td class="good">−1 %</td><td class="good">0 %</td></tr>
-    <tr><td>Resto · 30 kernels chicos</td><td class="n">0.210</td>
-        <td class="n">0.208</td><td class="good">−1 %</td><td class="good">0 %</td></tr>
-    <tr><td><b>total trazado · 44 kernels</b></td><td class="n"><b>2.235</b></td>
-        <td class="n"><b>3.197</b></td><td class="bad"><b>+43 %</b></td><td></td></tr>
+    <tr class="best"><td>Los seis desplazamientos de vecinos</td>
+        <td class="n">kInput</td><td class="best">+0.2 %</td>
+        <td class="best">0 %</td></tr>
+    <tr class="best"><td>Observables</td><td class="n">reduce</td>
+        <td class="best">−1.4 %</td><td class="best">0 %</td></tr>
   </tbody>
 </table></div>
 
-<p><b>El 91 % del exceso cae en dos operaciones</b> — la energía por sitio y la
-aceptación— y son exactamente las dos que el compilador vectoriza. Las otras tres
-filas no se mueven. <b>Los seis vecinos son la caja más cara con lote impar</b>
-(0.568 de 2.235, un 25 %) y aun así <b>no aportan nada al exceso</b>: cambian
-0 %.</p>
+<div class="note"><strong>No hay flag que lo apague.</strong> Este build de XLA
+expone 79 flags y <b>ninguno controla la vectorización</b>. Y forzar un elemento
+por hilo en CUDA puro sí elimina el castigo (−0.07 %), pero exige escribir el
+kernel a mano. <b>La única palanca práctica es elegir <code>B</code>.</b></div>
 
-<div class="note"><strong>Cómo leer la tabla.</strong> Las cinco cajas del
-diagrama cubren el <b class="n">91 %</b> del tiempo total y, lo que importa, el
-<b class="n">100 % del exceso</b>: la suma de sus cambios es +0.964 µs contra un
-cambio total de +0.962 µs. Los 30 kernels restantes son chicos y planos, por eso
-van en una sola fila. Y el <b class="n">+43 %</b> del total por réplica no es el
-<b class="n">+48 %</b> de tiempo bruto de GPU que mide el trazado: la diferencia
-son las cinco réplicas de más que B=140 reparte el costo entre
-(1.483 ÷ 1.037 = 1.430).</div>
+<h2>2 · El dentado</h2>
 
-<h2>El diagrama</h2>
-<div class="flow">
+<p>Quitado el ancho, queda una irregularidad más chica: dos lotes <b>del mismo
+ancho</b> pueden diferir hasta un 15 %. La causa es que XLA le entrega ese
+kernel a <b>Triton</b>, y Triton <b>re-teja</b> para cada forma.</p>
 
-  <div class="step cold">
-    <header><span class="stepno">1</span><b>Los seis vecinos</b>
-      <span class="tag cold">no se vectoriza</span></header>
-    <div class="body">
-      <p>Cada sitio necesita sus seis vecinos (±x, ±y, ±z). El código los pide
-      con seis <code>jnp.roll</code>, y XLA baja cada uno a un
-      <b>concatenate</b>: no es una vista, <b>materializa una copia completa</b>
-      del arreglo de espines.</p>
-      <div class="what">
-        <div><span>Qué hace CUDA</span>6 kernels separados
-          <code>input_concatenate_fusion_9…14</code>, cada uno copia
-          <code>(B, 5, 39, 39, 3)</code> desplazado un sitio</div>
-        <div><span>Dónde arranca</span>el host lanza los 6 al principio de cada
-          medio paso, antes de cualquier cálculo</div>
-        <div><span>Hilos</span>un hilo por elemento del arreglo:
-          <b class="n">23 446</b> bloques × 128 = <b class="n">3.0 M</b> hilos
-          (B=135)</div>
-        <div><span>Por qué no cambia</span>un concatenate no depende del ancho
-          de vector: siempre un elemento por hilo, en los dos lotes</div>
-      </div>
-    </div>
-    <div class="cmp">
-      <div><div class="hd">B = 135 · ancho 1</div><b>0.568 µs</b>
-        <div class="sub">grid 23 446 × 128 · 2–4 cargas escalares por kernel</div></div>
-      <div><div class="hd">B = 140 · ancho 4</div><b>0.569 µs</b>
-        <div class="sub">grid 24 315 × 128 · <span class="delta flat">+0 %</span></div></div>
-    </div>
-  </div>
-  <div class="arrow">↓</div>
+<p>El <code>backend_config</code> del HLO lo dice sin ambigüedad:</p>
 
-  <div class="step hot">
-    <header><span class="stepno">2</span><b>Energía por sitio</b>
-      <span class="tag hot">aquí recae el 61 %</span></header>
-    <div class="body">
-      <p>Con los vecinos ya en memoria, se calcula el cambio de energía de
-      proponer un giro: suma de intercambio, anisotropía uniaxial y cúbica,
-      superficie, DMI y Zeeman. Un número por sitio.</p>
-      <div class="what">
-        <div><span>Qué hace CUDA</span><code>loop_and_fusion_2</code> y
-          <code>loop_and_fusion_3</code>, sobre la forma <em>por sitio</em>
-          <code>(B, 5, 39, 39)</code> — sin el eje de las 3 componentes</div>
-        <div><span>Dónde arranca</span>después de los seis concatenates, dentro
-          del mismo medio paso</div>
-        <div><span>Hilos · B=135</span><b class="n">8 021</b> bloques × 128 =
-          <b class="n">1.03 M</b> hilos, <b>uno por sitio</b></div>
-        <div><span>Hilos · B=140</span><b class="n">2 080</b> bloques × 128 =
-          <b class="n">266 K</b> hilos — <b>4× menos</b>, cada uno hace 4 sitios</div>
-      </div>
-      <p style="margin-top:.6em"><b>Y acá está el costo.</b> Las cargas
-      escalares por kernel pasan de <b class="n">95</b> a <b class="n">326</b>:
-      el cuerpo está desenrollado 4 veces y <b>XLA no emite una carga vectorial
-      de 128 bits</b> (medimos <code>ld.global.v4</code> = 0). Son cuatro cargas
-      escalares separadas, cada una con paso de 16 bytes a lo ancho del warp, así
-      que el warp pide <b>512 bytes para entregar 128 útiles</b>.</p>
-    </div>
-    <div class="cmp">
-      <div><div class="hd">B = 135 · ancho 1</div><b>0.495 µs</b>
-        <div class="sub">1.03 M hilos · 95 cargas escalares</div></div>
-      <div><div class="hd">B = 140 · ancho 4</div><b class="n" style="color:var(--up)">1.080 µs</b>
-        <div class="sub">266 K hilos · 326 cargas ·
-          <span class="delta up">+118 %</span></div></div>
-    </div>
-  </div>
-  <div class="arrow">↓</div>
+<pre style="overflow-x:auto;font-size:.85rem;line-height:1.5"><code>"kind": "__triton", "num_warps": "4",
+"output_tiles": [{"sizes": ["4","1","8","16","3"]}]</code></pre>
 
-  <div class="step">
-    <header><span class="stepno">3</span><b>Fusiones intermedias</b>
-      <span class="tag">cambian de identidad</span></header>
-    <div class="body">
-      <p>Dos fusiones grandes sin nombre descriptivo, que llevan el espín de
-      prueba y los términos auxiliares. <b>No son las mismas en los dos
-      lotes:</b> en B=135 son <code>fusion_1486</code> y
-      <code>fusion_1484</code>; en B=140 desaparecen y aparecen
-      <code>fusion_1405</code> y <code>fusion_1396</code>.</p>
-      <div class="what">
-        <div><span>Qué hace CUDA</span>dos kernels por barrido, bloque de 128</div>
-        <div><span>Lo que esto prueba</span>XLA no re-tilea el mismo programa:
-          <b>emite un programa distinto</b> según el tamaño del lote</div>
-      </div>
-    </div>
-    <div class="cmp">
-      <div><div class="hd">B = 135 · ancho 1</div><b>0.349 µs</b>
-        <div class="sub">grid 2 125 × 128 · fusion_1486 + 1484</div></div>
-      <div><div class="hd">B = 140 · ancho 4</div><b>0.444 µs</b>
-        <div class="sub">grid 2 625 × 128 · fusion_1405 + 1396 ·
-          <span class="delta up">+27 %</span></div></div>
-    </div>
-  </div>
-  <div class="arrow">↓</div>
+<p>De ahí sale la rejilla de lanzamiento, exacta:</p>
 
-  <div class="step hot">
-    <header><span class="stepno">4</span><b>Aceptación de Metropolis</b>
-      <span class="tag hot">aquí recae el 30 %</span></header>
-    <div class="body">
-      <p>Se compara un número aleatorio contra <code>exp(−ΔE·β)</code> y se
-      elige: o el espín de prueba, o el que había. Es un
-      <code>where</code> sobre todo el arreglo.</p>
-      <div class="what">
-        <div><span>Qué hace CUDA</span><code>loop_maximum_negate_fusion_1</code>
-          (el máximo y la exponencial) y <code>loop_select_fusion_1</code>
-          (la selección), sobre la forma completa <code>(B, 5, 39, 39, 3)</code></div>
-        <div><span>Dónde arranca</span>al final del medio paso; su salida es el
-          estado de entrada del medio paso siguiente</div>
-        <div><span>Hilos · B=135</span><b class="n">24 063</b> × 128 =
-          <b class="n">3.1 M</b> hilos, uno por elemento</div>
-        <div><span>Hilos · B=140</span><b class="n">6 239</b> × 128 =
-          <b class="n">799 K</b> hilos — <b>4× menos</b></div>
-      </div>
-    </div>
-    <div class="cmp">
-      <div><div class="hd">B = 135 · ancho 1</div><b>0.376 µs</b>
-        <div class="sub">3.1 M hilos · 13 cargas escalares</div></div>
-      <div><div class="hd">B = 140 · ancho 4</div><b class="n" style="color:var(--up)">0.662 µs</b>
-        <div class="sub">799 K hilos · 34 cargas ·
-          <span class="delta up">+76 %</span></div></div>
-    </div>
-  </div>
-  <div class="arrow">↓</div>
-
-  <div class="step cold">
-    <header><span class="stepno">5</span><b>Observables</b>
-      <span class="tag cold">solo en barridos de medición</span></header>
-    <div class="body">
-      <p>Energía, magnetización y carga topológica. <b>No corren en cada
-      barrido:</b> se lanzan <b class="n">1 208</b> veces contra las
-      <b class="n">3 600</b> de las cajas anteriores — una por barrido de
-      medición, no de termalización.</p>
-      <div class="what">
-        <div><span>Qué hace CUDA</span><code>loop_reduce_fusion_1</code> y
-          <code>input_reduce_fusion</code>: reducciones con
-          <em>warp shuffles</em> y memoria compartida</div>
-        <div><span>Bloque distinto</span><b class="n">480</b> hilos por bloque,
-          no 128 — el emisor de reducciones elige su propia geometría</div>
-      </div>
-    </div>
-    <div class="cmp">
-      <div><div class="hd">B = 135 · ancho 1</div><b>0.237 µs</b>
-        <div class="sub">grid 206 × 128 y 135 × 480</div></div>
-      <div><div class="hd">B = 140 · ancho 4</div><b>0.234 µs</b>
-        <div class="sub">grid 214 × 128 y 140 × 480 ·
-          <span class="delta flat">−1 %</span></div></div>
-    </div>
-  </div>
-</div>
-
-<h2>Segundo par: el dentado, a producción real</h2>
-<p>El par de arriba contrasta <b>el ancho</b>. Este contrasta <b>el dentado</b>:
-<code>B</code> = 65 y <code>B</code> = 75 son <b>los dos ancho 1</b>, así que
-el compilador los trata igual y lo que los separa es la parte que no
-entendemos. Y por primera vez se midieron al cronograma <b>completo de
-producción</b>: 200 temperaturas × 20 000 barridos, 4 000 000 de barridos,
-reloj de pared real.</p>
-
-<div class="tw"><table>
-  <thead><tr><th><code>B</code></th><th>ancho</th><th>extrapolado<br>desde 60 000</th>
-    <th>REAL<br>4 000 000</th><th>error de la extrapolación</th></tr></thead>
-  <tbody>
-    <tr><td class="n">65</td><td class="n">1</td><td class="n">9.757 s</td>
-        <td class="n"><b>9.532 s</b></td><td class="bad">+2.4 %</td></tr>
-    <tr><td class="n">75</td><td class="n">1</td><td class="n">9.230 s</td>
-        <td class="n"><b>9.471 s</b></td><td class="bad">−2.5 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>La brecha entre los dos casi desaparece a producción.</b></p>
-  <p style="font-family:var(--mono);font-size:.95rem">
-  celdas cortas &nbsp;&nbsp;9.757 contra 9.230 &nbsp;→&nbsp; <b>+5.7 %</b><br>
-  producción &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;9.532 contra 9.471 &nbsp;→&nbsp;
-  <b>+0.6 %</b></p>
-  <p>Se encogió <b class="n">9×</b>. Los dos errores de extrapolación apuntan en
-  <b>direcciones opuestas</b> y juntos explican casi toda la diferencia que
-  veíamos.</p>
-</div>
-
-<div class="note warn"><strong>Esto corrige dos cosas que afirmamos.</strong>
-Primero, yo había predicho que las celdas cortas <b>sobre-reportan</b> siempre,
-entre +2.6 % y +12.9 %. Acerté la magnitud (~2.5 %) y <b>erré el signo</b>: no
-es un sesgo sistemático hacia arriba, es <b>ruido de ±2.5 % en los dos
-sentidos</b>. Segundo, y más importante: <b>el 5.7 % que separaba a estos dos
-lotes era artefacto de medición</b>, no una propiedad de la curva. A producción
-son indistinguibles.</div>
-
-<div class="note"><strong>Hasta dónde llega esa corrección, y hasta dónde
-no.</strong> Un ruido de ±2.5 % en cada punto puede fabricar brechas aparentes
-de hasta ~5 %, y la de este par (5.7 %) cae justo ahí. Pero <b>no explica las
-grandes</b>: el 18.5 % entre <code>B</code> = 63 y 65 en la T4, o el 20 % de
-dispersión entre los 19 lotes de ancho 1 en [325, 525], están muy por encima.
-Esas siguen en pie. Y <b>no toca el efecto del ancho en absoluto</b>, que va de
-+29 % a +118 % — entre diez y cuarenta veces el ruido, confirmado además en CUDA
-puro y al nivel de instrucción.</div>
-
-<div class="note bad"><strong>Y una advertencia sobre el 0.6 %.</strong> Cada
-corrida de producción se hizo <b>una sola vez</b> — 10 y 12 minutos cada una, sin
-repeticiones. Así que lo correcto es decir que a producción los dos lotes son
-<b>indistinguibles dentro de la resolución de una corrida única</b>, no que
-<code>B</code> = 75 sea 0.6 % mejor.</div>
-
-<h3>El programa NO es distinto — me equivoqué</h3>
-
-<div class="note bad"><strong>Corrección.</strong> Ayer escribí aquí que XLA
-emitía «conjuntos de kernels completamente distintos» para estos dos lotes.
-<b>Es falso.</b> Lo deduje de los nombres, y los nombres engañan. El
-seguimiento completo con volcado de PTX lo prueba: los dos lotes compilan a
-<b>los mismos 43 kernels</b>, y los tres que parecían exclusivos de cada lado
-son <b>las mismas operaciones con otro nombre autogenerado</b>.</div>
-
-<p>La prueba es la firma de instrucciones. Dos kernels con el mismo número de
-cargas escalares, cargas no-coherentes y almacenamientos, lanzados el mismo
-número de veces, son el mismo kernel:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>nombre en B=65</th><th>nombre en B=75</th>
-    <th>ld esc</th><th>ld nc</th><th>st</th><th>llamadas</th><th>¿mismo?</th></tr></thead>
-  <tbody>
-    <tr><td><code>fusion_1458</code></td><td><code>fusion_1377</code></td>
-        <td class="n">69</td><td class="n">0</td><td class="n">16</td>
-        <td class="n">3 600</td><td class="best">idéntico</td></tr>
-    <tr><td><code>loop_log_plus_one_maximum_fusion_1</code></td>
-        <td><code>loop_maximum_negate_fusion_1</code></td>
-        <td class="n">7</td><td class="n">7</td><td class="n">4</td>
-        <td class="n">3 600</td><td class="best">idéntico</td></tr>
-    <tr><td><code>fusion_1459</code></td><td><code>fusion_1375</code></td>
-        <td class="n">50 / 49</td><td class="n">0</td><td class="n">16</td>
-        <td class="n">3 600</td><td class="best">idéntico</td></tr>
-  </tbody>
-</table></div>
-
-<p>XLA numera sus fusiones anónimas de forma distinta en cada compilación, y en
-el caso del medio etiquetó la fusión por una operación distinta de las que
-contiene (<code>log_plus_one+maximum</code> contra
-<code>maximum+negate</code>). <b>Cero cargas vectoriales
-(<code>ld.global.v4</code>) en los dos programas</b>, como corresponde a dos
-lotes de ancho 1.</p>
-
-<div class="note warn"><strong>Y la tabla de deltas de ayer tenía un segundo
-artefacto.</strong> Decía que <code>loop_and_fusion_3</code> subía
-<b>+55.0 %</b>. No es cierto: <code>loop_and_fusion_2</code> y
-<code>_3</code> <b>se intercambian el nombre</b> entre las dos compilaciones —
-el kernel de <code>ld esc = 51</code> se llama <code>_2</code> en B=65 y
-<code>_3</code> en B=75. Compararlos por nombre compara operaciones distintas.
-Pareados por su firma, los deltas reales por réplica son <b>+5.1 %</b>
-(ld=51) y <b>+9.1 %</b> (ld=44).</div>
-
-<div class="key"><p>La conclusión de ayer sobrevive, pero por la razón
-opuesta. Dije que la selección de programa no causa el dentado porque dos
-programas distintos empataban en costo. <b>En realidad nunca hubo dos
-programas.</b> La selección de programa queda descartada porque el programa es
-<b>idéntico</b> — no porque dos versiones distintas hayan coincidido.</p></div>
-
-<h2>Seguimiento completo: 3600 barridos, operación por operación</h2>
-<p>Mismo cronograma que el par de ancho (135 contra 140):
-<code>8 temperaturas × (300 + 150) = <b>3600 barridos</b></code>. Lo que agrega
-sobre el trazado anterior es el <b>volcado de PTX unido por kernel</b>: no solo
-cuánto tarda cada caja, sino qué instrucciones de memoria ejecuta y con cuántos
-bloques se lanza.</p>
-
-<div class="note bad"><strong>Primero, la trampa del total.</strong> El
-reloj de GPU crudo dice <code>586 800 → 638 700 µs</code>, un
-<b>+8.8 %</b> para B=75. <b>Ese número no sirve para comparar</b>: B=75 hace
-15.4 % más trabajo, porque son 75 réplicas en vez de 65. Normalizado por
-réplica se invierte el signo.</div>
-
-<div class="tw"><table>
-  <thead><tr><th></th><th>B=65</th><th>B=75</th><th>cambio</th></tr></thead>
-  <tbody>
-    <tr><td>kernels compilados</td><td class="n">43</td><td class="n">43</td>
-        <td class="n">—</td></tr>
-    <tr><td>µs de GPU, total crudo</td><td class="n">586 800</td>
-        <td class="n">638 700</td><td class="bad">+8.8 % (engaña)</td></tr>
-    <tr class="best"><td><b>µs por réplica</b></td><td class="n"><b>9 027.7</b></td>
-        <td class="n"><b>8 516.0</b></td><td class="n"><b>−5.7 %</b></td></tr>
-    <tr><td>µs por barrido-réplica</td><td class="n">2.5077</td>
-        <td class="n">2.3656</td><td class="n">−5.7 %</td></tr>
-  </tbody>
-</table></div>
-
-<p>Ese <b>−5.7 %</b> reproduce exactamente la brecha de la curva de celdas
-cortas. El trazado mide lo mismo que medía la curva, así que podemos preguntarle
-<b>dónde</b> vive.</p>
-
-<h3>Dónde vive: en un solo kernel</h3>
-<p>Pareando los 43 kernels por firma de instrucciones y normalizando por
-réplica, la brecha total es <code>−511.7 µs</code> por réplica. No está
-repartida — está <b>concentrada</b>:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>kernel (nombre en B=65)</th><th>ld esc</th>
-    <th>bloq/rép<br>B=65</th><th>bloq/rép<br>B=75</th>
-    <th>µs/rép<br>B=65</th><th>µs/rép<br>B=75</th><th>cambio</th>
-    <th>% de la brecha</th></tr></thead>
-  <tbody>
-    <tr class="best"><td><code>fusion_1458</code> → <code>fusion_1377</code></td>
-        <td class="n">69</td><td class="bad">19.62</td><td class="n">19.00</td>
-        <td class="n">1 292.6</td><td class="n">945.7</td>
-        <td class="n"><b>−26.8 %</b></td><td class="n"><b>67.8 %</b></td></tr>
-    <tr><td><code>loop_log_plus_one_maximum_fusion_1</code></td>
-        <td class="n">7</td><td class="n">178.25</td><td class="n">178.25</td>
-        <td class="n">1 025.3</td><td class="n">1 015.6</td>
-        <td class="n">−1.0 %</td><td class="n">1.9 %</td></tr>
-    <tr><td>kernel <code>ld esc = 51</code></td>
-        <td class="n">51</td><td class="n">59.42</td><td class="n">59.43</td>
-        <td class="n">803.2</td><td class="n">844.0</td>
-        <td class="bad">+5.1 %</td><td class="n">−8.0 %</td></tr>
-    <tr><td>kernel <code>ld esc = 44</code></td>
-        <td class="n">44</td><td class="n">59.42</td><td class="n">59.43</td>
-        <td class="n">628.4</td><td class="n">685.9</td>
-        <td class="bad">+9.1 %</td><td class="n">−11.2 %</td></tr>
-    <tr><td><code>fusion_1459</code> → <code>fusion_1375</code></td>
-        <td class="n">50</td><td class="n">17.31</td><td class="n">16.67</td>
-        <td class="n">526.7</td><td class="n">494.5</td>
-        <td class="n">−6.1 %</td><td class="n">6.3 %</td></tr>
-    <tr><td><code>loop_reduce_fusion_1</code></td>
-        <td class="n">78</td><td class="n">1.54</td><td class="n">1.53</td>
-        <td class="n">269.2</td><td class="n">234.3</td>
-        <td class="n">−12.9 %</td><td class="n">6.8 %</td></tr>
-    <tr><td><code>input_reduce_fusion</code></td>
-        <td class="n">204</td><td class="n">2.51</td><td class="n">2.51</td>
-        <td class="n">168.6</td><td class="n">146.5</td>
-        <td class="n">−13.1 %</td><td class="n">4.3 %</td></tr>
-    <tr><td><b>TOTAL (43 kernels)</b></td><td class="n">—</td>
-        <td class="n">—</td><td class="n">—</td>
-        <td class="n"><b>9 027.7</b></td><td class="n"><b>8 516.0</b></td>
-        <td class="n"><b>−5.7 %</b></td><td class="n"><b>100 %</b></td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>Un kernel carga el 67.8 % de la brecha.</b></p>
-  <p><code>fusion_1458</code> (en B=65) / <code>fusion_1377</code> (en B=75) es
-  <b>el kernel más caro de los dos programas</b> — 14.3 % y 11.1 % del tiempo de
-  GPU — y el que <b>más cargas emite</b> (<code>ld esc = 69</code>). Aporta
-  <code>−346.9</code> de los <code>−511.7 µs</code> por réplica.</p>
-  <p>El resto del programa se mueve poco: el bloque pareado cambia −6.9 % y el
-  no pareado −3.5 %. <b>La brecha no está repartida, está localizada.</b></p>
-</div>
-
-<h3>La anomalía de la rejilla</h3>
-<p>Y ese mismo kernel es <b>el único de los 43 cuya rejilla no escala con el
-número de réplicas</b>. Todos los demás lanzan un número de bloques por réplica
-constante a tres cifras:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>kernel</th><th>fórmula verificada</th>
-    <th>bloq/rép B=65</th><th>bloq/rép B=75</th><th>¿proporcional?</th></tr></thead>
-  <tbody>
-    <tr><td><code>loop_log_plus_one_maximum</code></td>
-        <td><code>⌈B·L·N²·3 / 128⌉</code></td>
-        <td class="n">178.25</td><td class="n">178.25</td><td class="best">sí</td></tr>
-    <tr><td><code>loop_and_fusion_2/3</code></td>
-        <td><code>⌈B·L·N² / 128⌉</code></td>
-        <td class="n">59.42</td><td class="n">59.43</td><td class="best">sí</td></tr>
-    <tr><td><code>input_concatenate_fusion_12</code></td><td class="dead">—</td>
-        <td class="n">173.68</td><td class="n">173.68</td><td class="best">sí</td></tr>
-    <tr><td><code>input_reduce_fusion</code></td><td class="dead">—</td>
-        <td class="n">2.51</td><td class="n">2.51</td><td class="best">sí</td></tr>
-    <tr class="best"><td><code>fusion_1458</code> / <code>fusion_1377</code></td>
-        <td class="dead">ninguna que cierre</td>
-        <td class="bad">19.615</td><td class="n">19.000</td>
-        <td class="bad">NO (+3.2 %)</td></tr>
-  </tbody>
-</table></div>
-
-<p>En B=75 la rejilla es exactamente <code>19 × 75 = 1425</code> bloques. En
-B=65 son <code>1275</code>, que no es múltiplo de 65: <b>19.615 bloques por
-réplica</b>. B=65 paga un 3.2 % más de bloques por réplica en el kernel más
-caro del programa.</p>
-
-<div class="note warn"><strong>Pero eso no cierra la aritmética, y hay que
-decirlo.</strong> Un 3.2 % más de bloques <b>no puede producir un 26.8 % más de
-tiempo</b>. La asimetría de rejilla es <b>un síntoma y una pista afilada</b> — nos
-dice exactamente qué kernel mirar — <b>no el mecanismo</b>. Lo que pasa dentro de
-ese kernel sigue sin explicación, y sin contadores de hardware
-(<code>ncu</code> no existe en el contenedor) no pudimos leer su ocupación, su
-tasa de acierto en caché ni su ancho de banda efectivo.</div>
-
-<div class="note bad"><strong>Y el límite que lo encuadra todo.</strong> Este
-desglose diseca una brecha de <b>5.7 %</b> que, medida a producción,
-<b>es de 0.6 %</b>. Así que lo que localizamos con tanta precisión es
-<b>dónde vive el artefacto del cronograma corto</b> — un kernel, el más
-caro — y no una ventaja real de B=75 en producción. Es un resultado útil
-justamente por eso: si el dentado de las curvas cortas nace sobre todo en
-<code>fusion_1458</code>, ahí hay que buscar.</div>
-
-<div class="note warn"><strong>Una limitación del método, inevitable.</strong>
-El desglose por operación <b>no se puede medir a producción</b>: un trazado
-sobre 4 000 000 de barridos registraría del orden de 56 millones de lanzamientos
-de kernel y el perfilador no lo sostiene. Así que cada lote se midió dos veces —
-el reloj real a producción, y el desglose en el cronograma corto de 3600
-barridos. Las dos tablas de esta sección vienen de fuentes distintas y está bien
-que se sepa.</div>
-
-<h2>Qué es una fusión, y qué calcula cada una</h2>
-
-<p>Hasta aquí las cajas tenían nombre de compilador (<code>fusion_1458</code>) y
-un tiempo. Faltaba lo importante: <b>qué operación es cada una</b>. Eso vive en
-el HLO, que <code>--xla_dump_to</code> <b>ya estaba escribiendo y nunca
-leímos</b> — el seguimiento anterior solo miró el <code>thunk_sequence</code> y
-el PTX.</p>
-
-<h3>Los cuatro tipos de fusión</h3>
-<p>XLA <b>no documenta oficialmente</b> su estrategia de fusión. La descripción
-autoritativa son los comentarios del enum en el código fuente
-(<code>xla/hlo/ir/hlo_instruction.h</code>, <code>enum class FusionKind</code>):</p>
-
-<div class="tw"><table>
-  <thead><tr><th>tipo</th><th>qué dice el código de XLA</th><th>en nuestro programa</th></tr></thead>
-  <tbody>
-    <tr><td><code>kLoop</code></td>
-        <td>«el nodo primario es la raíz de la computación fundida, pero, a
-        diferencia de la fusión de entrada, prescribimos una implementación
-        específica: emitimos código que <b>genera un elemento de la raíz a la
-        vez</b>»</td>
-        <td>el generador aleatorio, los <code>select</code>, las reducciones de
-        bucle</td></tr>
-    <tr><td><code>kInput</code></td>
-        <td>«el nodo primario es la raíz de la instrucción fundida» — y para
-        <code>reduce</code> «podría emitir algo más sofisticado»</td>
-        <td>los seis desplazamientos de vecinos, la reducción de observables</td></tr>
-    <tr><td><code>kOutput</code></td>
-        <td>el nodo primario <b>no</b> es la raíz; exige que un búfer de operando
-        pueda aliasear el de salida</td>
-        <td class="dead">no aparece</td></tr>
-    <tr><td><code>kCustom</code></td>
-        <td>«categoría personalizada para fusiones específicas del backend que
-        <b>no encajan en los patrones anteriores</b>»</td>
-        <td class="bad">el núcleo del Metropolis — y es el kernel del problema</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key"><p>Ese primer renglón <b>cierra el círculo con nuestra
-regla</b>. «Un elemento de la raíz a la vez» <b>es</b> el bucle que XLA
-vectoriza: es ahí donde decide dar 1, 2 o 4 elementos por hilo. Así que la regla
-<code>v₂(B) + v₂(L) ≥ 2 ⟹ castigo</code> no actuaba sobre «el programa» en
-abstracto — <b>actúa sobre las fusiones <code>kLoop</code></b>, y está anclada
-en un tipo de fusión documentado, no en un detalle accidental.</p></div>
-
-<h2>Dónde residen los tiempos, por fin con nombres</h2>
-<p>Uniendo el HLO (tipo de fusión, operaciones que contiene, raíz, forma de
-salida) con el <code>thunk_sequence</code> (rejilla), el trazado (microsegundos)
-y el campo <code>op_name</code> del HLO — que <b>lleva la ruta del código
-JAX</b> — cada kernel se puede nombrar por lo que hace:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>qué hace</th><th>kernels</th><th>µs/réplica<br>B=65</th>
-    <th>% del total</th><th>µs/réplica<br>B=75</th><th>cambio</th></tr></thead>
-  <tbody>
-    <tr class="best"><td><b>desplazar los vecinos</b> (los seis <i>rolls</i>)</td>
-        <td class="n">6</td><td class="n">2 812.7</td><td class="n"><b>31.5 %</b></td>
-        <td class="n">2 788.0</td><td class="n">−0.9 %</td></tr>
-    <tr><td><b>aceptación Metropolis</b> + renormalizar el espín</td>
-        <td class="n">2</td><td class="n">1 814.7</td><td class="n">20.3 %</td>
-        <td class="n">1 446.6</td><td class="n"><b>−20.3 %</b></td></tr>
-    <tr><td><b>números aleatorios</b> (Threefry) + la exponencial</td>
-        <td class="n">4</td><td class="n">1 525.9</td><td class="n">17.1 %</td>
-        <td class="n">1 617.0</td><td class="bad">+6.0 %</td></tr>
-    <tr><td>resto (elementwise, <i>slices</i>, escalares)</td>
-        <td class="n">23</td><td class="n">1 226.9</td><td class="n">13.7 %</td>
-        <td class="n">1 143.3</td><td class="n">−6.8 %</td></tr>
-    <tr><td>umbral de aceptación (log/max, tensor completo) <sup>†</sup></td>
-        <td class="n">1</td><td class="n">1 024.7</td><td class="n">11.5 %</td>
-        <td class="n">1 009.6</td><td class="n">−1.5 %</td></tr>
-    <tr><td>reducciones de observables</td>
-        <td class="n">4</td><td class="n">463.1</td><td class="n">5.2 %</td>
-        <td class="n">405.5</td><td class="n">−12.4 %</td></tr>
-    <tr><td>copias de memoria</td>
-        <td class="n">3</td><td class="n">63.6</td><td class="n">0.7 %</td>
-        <td class="n">57.2</td><td class="n">−10.0 %</td></tr>
-    <tr><td><b>TOTAL</b></td><td class="n">43</td><td class="n"><b>8 931.5</b></td>
-        <td class="n">100 %</td><td class="n"><b>8 467.2</b></td>
-        <td class="n"><b>−5.2 %</b></td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>Solo una quinta parte del tiempo es la física.</b></p>
-  <p>El <b>31.5 %</b> se va en <b>mover vecinos de sitio</b>: seis kernels
-  <code>kInput</code> cuya ruta JAX es <code>jit(_roll_static)/concatenate</code>
-  y que por dentro son <b>dos <code>slice</code> y un
-  <code>concatenate</code></b>, nada más. Otro <b>17.1 %</b> es el generador de
-  números aleatorios de JAX — <code>xor</code>×23,
-  <code>shift-right-logical</code>×22, <code>or</code>×22,
-  <code>shift-left</code>×20, la firma inconfundible de <b>Threefry</b>, con la
-  <code>exponential</code> de Metropolis fundida dentro. El Monte Carlo en sí
-  —el <code>_where</code> que acepta o rechaza, más la renormalización del espín
-  nuevo— es el <b>20.3 %</b>.</p>
-</div>
-
-<h3>El kernel del problema es <code>kCustom</code>, y eso explica su rejilla</h3>
-<p>El kernel que cargaba el <b>67.8 %</b> de la brecha tiene ruta JAX
-<code>jit(_where)/select_n</code>, raíz <code>select</code>, y contiene
-<b>70 operaciones</b>:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>operación</th><th>B=65</th><th>B=75</th><th>qué es</th></tr></thead>
-  <tbody>
-    <tr><td><code>broadcast</code></td><td class="n">27</td><td class="n">27</td>
-        <td>repartir parámetros por sitio</td></tr>
-    <tr><td><code>select</code></td><td class="n">13</td><td class="n">13</td>
-        <td>el accept/reject y las máscaras</td></tr>
-    <tr><td><code>multiply</code></td><td class="n">12</td><td class="n">12</td>
-        <td>productos de la energía</td></tr>
-    <tr><td><code>add</code></td><td class="n">10</td><td class="n">10</td>
-        <td>sumas de la energía</td></tr>
-    <tr><td><code>sqrt</code> / <code>divide</code> / <code>abs</code></td>
-        <td class="n">2 / 1 / 1</td><td class="n">2 / 1 / 1</td>
-        <td>renormalizar el espín a módulo 1</td></tr>
-    <tr><td><code>compare</code></td><td class="n">2</td><td class="n">2</td>
-        <td>la comparación de Metropolis</td></tr>
-    <tr><td><code>reduce</code></td><td class="n">1</td><td class="n">1</td>
-        <td>sumar sobre los vecinos</td></tr>
-    <tr><td><code>negate</code></td><td class="n">1</td><td class="dead">0</td>
-        <td class="bad">la única diferencia entre los dos</td></tr>
-    <tr><td><b>total</b></td><td class="n"><b>70</b></td><td class="n"><b>69</b></td>
-        <td></td></tr>
-  </tbody>
-</table></div>
-
-<p>Y su tipo es <code><b>kCustom</b></code>: «fusiones específicas del backend
-que no encajan en los patrones anteriores». <b>Eso explica por fin la anomalía
-de la rejilla.</b> Una <code>kLoop</code> emite «un elemento de la raíz a la
-vez», lo que le fija la rejilla en <code>⌈elementos/ancho/128⌉</code> y la hace
-proporcional a <code>B</code>. Una <code>kCustom</code> usa un emisor propio del
-backend que <b>no tiene esa obligación</b> — y por eso es el único de los 43
-cuyos bloques por réplica no son constantes: <b>19.62 contra 19.00</b>.</p>
-
-<div class="note warn"><strong>Y esto afina lo que dije antes.</strong> Llamé a
-los dos lados «las mismas operaciones». Con precisión: <b>firma de PTX idéntica</b>
-(<code>ld esc = 69</code>, <code>ld.global.v4 = 0</code>, <code>st = 16</code>) y
-<b>el mismo recuento de operaciones salvo un <code>negate</code></b>, presente en
-B=65 y ausente en B=75 — 70 contra 69. Es la misma operación <b>salvo un signo
-plegado</b>, no idéntica byte a byte.</div>
-
-<div class="note bad"><strong>Límites, y uno molesta.</strong>
-<sup>†</sup> Dos kernels de fusión <b>no se pudieron emparejar con el HLO</b>:
-el del umbral de aceptación (<b>11.5 % del tiempo</b>) y
-<code>loop_add_slice_fusion_1</code> (1.4 %). El motivo es real: los nombres de
-kernel los construye el emisor a partir de las operaciones de la fusión, así que
-<b>no siempre coinciden con el nombre de la instrucción HLO</b>. Su rol en la
-tabla está <b>inferido del nombre del kernel</b>, no del HLO, y por eso lleva
-marca. Los otros 38 de 40 sí están emparejados (36 exactos, 2 quitando un índice
-final). La <b>agrupación por rol es mía</b>, apoyada en la ruta JAX y en la
-composición de operaciones, no una etiqueta que XLA emita. Y los totales difieren
-~1 % del seguimiento anterior (8 931.5 contra 9 027.7 µs/réplica en B=65): una
-sola corrida cada uno.</div>
-
-<h2>Quién emite esa fusión: es Triton</h2>
-
-<p>El <code>backend_config</code> del HLO lo dice sin ambigüedad. El kernel que
-carga el 68 % de la brecha no lo emite XLA: <b>lo emite Triton</b>.</p>
-
-<pre style="overflow-x:auto;font-size:.82rem;line-height:1.5"><code>"fusion_backend_config": {
-  "kind": "__triton",
-  "block_level_fusion_config": {
-    "num_warps": "4",
-    "output_tiles": [{"sizes": ["4","1","8","16","3"]}],
-    "num_ctas": 1, "num_stages": 1, "is_tma_allowed": false
-  }
-}</code></pre>
-
-<p>Dos cosas se caen de ahí. <code>num_warps: 4</code> <b>son los 128 hilos</b>
-que veíamos en todas las cajas. Y <code>output_tiles</code> da la rejilla
-exacta:</p>
-
-<div class="key"><p style="font-family:var(--mono)">
+<p style="font-family:var(--mono);text-align:center">
 rejilla = Π<sub>dim</sub> ⌈ dimensión / tile ⌉</p>
-<p>Con salida <code>f32[B,5,39,39,3]</code> y tile <code>[4,1,8,16,3]</code> en
-B=65: <code>⌈65/4⌉·⌈5/1⌉·⌈39/8⌉·⌈39/16⌉·⌈3/3⌉ = 17·5·5·3·1 = <b>1275</b></code>
-— la rejilla medida. <b>Acierta en 8 de 8 casos</b> sobre cuatro lotes.</p></div>
+
+<p>Acierta en <b>8 de 8</b> casos. Y <code>num_warps = 4</code> son los 128
+hilos que aparecen en todas las cajas.</p>
+
+<h3>El espacio de tiles, acotado a doce</h3>
+
+<p>Dos restricciones documentadas de XLA reducen la elección de infinita a
+<b>doce candidatos</b>:</p>
 
 <div class="tw"><table>
-  <thead><tr><th>B</th><th>kernel</th><th>tile de Triton</th>
-    <th>rejilla predicha</th><th>medida</th><th>relleno</th></tr></thead>
+  <thead><tr><th>regla</th><th>qué implica</th><th>verificado</th></tr></thead>
   <tbody>
-    <tr><td class="n">65</td><td><code>fusion_1458</code> (pesado)</td>
-        <td><code>[4,1,8,16,3]</code></td><td class="n">1 275</td>
-        <td class="best">1 275</td><td class="n">4.62 %</td></tr>
-    <tr><td class="n">65</td><td><code>fusion_1459</code></td>
-        <td><code>[8,1,8,8,3]</code></td><td class="n">1 125</td>
-        <td class="best">1 125</td><td class="n">10.77 %</td></tr>
-    <tr><td class="n">75</td><td><code>fusion_1377</code> (pesado)</td>
-        <td><code>[4,1,8,16,3]</code></td><td class="n">1 425</td>
-        <td class="best">1 425</td><td class="n">1.33 %</td></tr>
-    <tr><td class="n">75</td><td><code>fusion_1375</code></td>
-        <td><code>[16,1,4,8,3]</code></td><td class="n">1 250</td>
-        <td class="best">1 250</td><td class="n">6.67 %</td></tr>
-    <tr><td class="n">135</td><td><code>fusion_1486</code> y <code>1484</code></td>
-        <td><code>[8,1,8,8,3]</code></td><td class="n">2 125</td>
-        <td class="best">2 125</td><td class="n">0.74 %</td></tr>
-    <tr><td class="n">140</td><td><code>fusion_1405</code></td>
-        <td><code>[4,1,8,16,3]</code></td><td class="n">2 625</td>
-        <td class="best">2 625</td><td class="n">0.00 %</td></tr>
-    <tr><td class="n">140</td><td><code>fusion_1396</code></td>
-        <td><code>[16,1,8,8,3]</code></td><td class="n">1 125</td>
-        <td class="best">1 125</td><td class="n">2.86 %</td></tr>
+    <tr><td>el modelo cuenta memoria en <b>sectores de 32 B</b> y castiga el
+        sector parcial</td>
+        <td><b>derivado</b>: un tile escribe <code>3·tx</code> floats
+        contiguos, luego <code>tx ≡ 0 (mod 8)</code></td>
+        <td class="best">18/18 — <code>tx</code> solo vale 8 o 16</td></tr>
+    <tr><td>cada tamaño debe ser <b>potencia de 2, o igual a la
+        dimensión</b></td>
+        <td>explica los dos regímenes: <code>tb ∈ {4,8,16,32}</code> o
+        <code>tb = B</code></td><td class="n">documentado</td></tr>
+    <tr><td>presupuesto observado de <b>1536 elementos</b> (48 × 128 B)</td>
+        <td><code>tb · ty · tx = 512</code></td>
+        <td class="n">51/56 casos</td></tr>
   </tbody>
 </table></div>
 
-<div class="note bad"><strong>Y esto refuta una regla que yo mismo propuse hace
-un rato.</strong> Planteé que el ancho castiga <code>B</code> divisible entre 4
-mientras el relleno del tile castiga <code>B</code> <b>no</b> divisible entre 4,
-dando un ranking limpio por <code>B mod 4</code>. <b>Es falso</b>, y la medición
-lo mata: <b>el tile a lo largo de B no es siempre 4</b> — es 4 y 8 en B=65, 4 y
-16 en B=75, 8 y 8 en B=135, 4 y 16 en B=140. Por eso B=140, que es múltiplo de
-4, <b>aún desperdicia 2.86 %</b> en uno de sus kernels. La mitad del ancho sigue
-intacta; retiro solo la mitad del tile.</div>
+<div class="note bad"><strong>Qué NO se pudo descifrar.</strong> Cuál de los
+doce elige para cada <code>B</code>. La hipótesis natural —que minimice
+carriles totales— <b>acierta solo el 36 %</b>, y sus fallos son 11–17 % peores.
+Se probaron cinco predictores más (<code>B mod 8</code>, <code>mod 16</code>,
+distancia a la potencia de 2, razón, fracción de presupuesto) y <b>todos se
+solapan o están refutados</b>. <b>El dentado es medible pero no
+predecible.</b></div>
 
-<div class="key"><p><b>Lo que la reemplaza es mejor, y explica por qué
-interpolar nunca funcionó.</b> La causa próxima del dentado es que
-<b>Triton re-teja el kernel para cada tamaño de lote</b>, con su propio modelo
-de costo, y la elección se mueve de forma no monótona. Un dentado que nace de
-una decisión del compilador por forma <b>no es predecible analíticamente</b> — y
-eso es exactamente por qué la curva f(B) es irregular, por qué interpolar B=50
-falló por 7 %, y por qué el barrido tuvo que medirla punto por punto.</p></div>
+<div class="key"><p><b>La consecuencia práctica:</b> como el tile <b>se ve al
+compilar</b>, los buenos lotes se <b>encuentran</b> compilando candidatos
+(~40 s cada uno, sin simular) en vez de predecirse. Elegir la firma barata vale
+<b>−15 % medido a producción real</b> — 21.3 min contra 24.9 en el par
+<code>B=151</code> frente a <code>B=153</code>.</p></div>
 
-<h2>Tabla general: cada proceso, y dónde cae cada castigo</h2>
-<p>Dos ejes medidos por separado, los dos a 3600 barridos, en µs por
-réplica-barrido. <b>Ancho</b>: B=135 (ancho 1) contra B=140 (ancho 4), total
-+43 %. <b>Dentado</b>: B=65 contra B=75, <b>los dos ancho 1</b>, total −5.2 %.</p>
+<h2>3 · Dónde se va el tiempo, en realidad</h2>
 
-<div class="tw"><table style="font-size:.86rem">
-  <thead><tr><th>proceso</th><th>tipo</th>
-    <th colspan="2" style="text-align:center">ANCHO (135→140)</th>
-    <th colspan="2" style="text-align:center">DENTADO (65→75)</th></tr>
-  <tr><th></th><th></th><th>cambio</th><th>% del exceso</th>
-    <th>cambio</th><th>% de la brecha</th></tr></thead>
+<p>Leyendo el HLO —que <code>--xla_dump_to</code> ya escribía y nunca habíamos
+mirado— cada kernel se puede nombrar por lo que hace, porque el campo
+<code>op_name</code> lleva la ruta del código JAX:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>qué hace</th><th>kernels</th><th>% del tiempo</th></tr></thead>
   <tbody>
-    <tr><td><b>Seis desplazamientos de vecinos</b><br>
-        <span style="font-size:.9em;color:var(--muted)">6 × (2 slice + 1 concatenate)</span></td>
-        <td class="n">kInput</td>
-        <td class="best">+0.2 %</td><td class="n">0 %</td>
-        <td class="n">−0.9 %</td><td class="n">5.3 %</td></tr>
-    <tr><td><b>Mega-fusión</b>: Threefry + energía por sitio + exponencial<br>
-        <span style="font-size:.9em;color:var(--muted)">280 operaciones en un kernel</span></td>
-        <td class="n">kLoop</td>
-        <td class="bad"><b>+118 %</b></td><td class="bad"><b>61 %</b></td>
-        <td class="n">+6.0 %</td><td class="n">−19.6 %</td></tr>
-    <tr><td><b>Espín de prueba y renormalización</b> (el <code>_where</code>)<br>
-        <span style="font-size:.9em;color:var(--muted)">70 operaciones, raíz select</span></td>
-        <td class="bad">kCustom<br>Triton</td>
-        <td class="n">+27 %</td><td class="n">10 %</td>
-        <td class="bad"><b>−20.3 %</b></td><td class="bad"><b>79.3 %</b></td></tr>
-    <tr><td><b>Umbral de aceptación</b> y selección final<br>
-        <span style="font-size:.9em;color:var(--muted)">r &lt; exp(−ΔE·β), luego el where</span></td>
-        <td class="n">kLoop</td>
-        <td class="bad"><b>+76 %</b></td><td class="bad"><b>30 %</b></td>
-        <td class="n">−1.5 %</td><td class="n">3.2 %</td></tr>
-    <tr><td><b>Observables</b> (energía, magnetización, carga topológica)</td>
-        <td class="n">kLoop +<br>kInput</td>
-        <td class="best">−1.4 %</td><td class="n">0 %</td>
-        <td class="n">−12.4 %</td><td class="n">12.4 %</td></tr>
-    <tr><td><b>Resto</b> (≈30 kernels chicos, slices, escalares, copias)</td>
-        <td class="n">varios</td>
-        <td class="best">−0.9 %</td><td class="n">0 %</td>
-        <td class="n">−6.8 %</td><td class="n">18.0 %</td></tr>
-    <tr><td><b>TOTAL</b></td><td class="n">—</td>
-        <td class="bad"><b>+43 %</b></td><td class="n">100 %</td>
-        <td class="n"><b>−5.2 %</b></td><td class="n">100 %</td></tr>
+    <tr class="best"><td><b>Desplazar los vecinos</b> — seis
+        <code>jnp.roll</code>, cada uno dos <code>slice</code> y un
+        <code>concatenate</code></td><td class="n">6</td>
+        <td class="bad"><b>31.5 %</b></td></tr>
+    <tr><td><b>Aceptación Metropolis</b> + renormalizar el espín</td>
+        <td class="n">2</td><td class="n">20.3 %</td></tr>
+    <tr><td><b>Números aleatorios</b> (Threefry) + la exponencial</td>
+        <td class="n">4</td><td class="n">17.1 %</td></tr>
+    <tr><td>Resto (elementwise, slices, escalares)</td><td class="n">23</td>
+        <td class="n">13.7 %</td></tr>
+    <tr><td>Umbral de aceptación</td><td class="n">1</td><td class="n">11.5 %</td></tr>
+    <tr><td>Reducciones de observables</td><td class="n">4</td>
+        <td class="n">5.2 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Solo una quinta parte del tiempo es la física.</b> Un
+tercio se va en <b>mover vecinos de sitio</b>, y otro 17 % en el generador de
+números aleatorios de JAX. Si alguna vez se optimiza esto por velocidad,
+<b>el objetivo son los rolls</b>, no el Metropolis.</p></div>
+
+<h2>4 · Cómo medir esto sin engañarse</h2>
+
+<p>Esta sección existe porque <b>casi todos los errores de este trabajo fueron
+de medición, no de razonamiento</b>. Son cuatro trampas, y las cuatro cayeron.</p>
+
+<h3>4.1 · Qué kernel se cronometra</h3>
+
+<p>El proceso real es <code>eng["anneal"]</code>. Un bucle pelado de
+<code>eng["substep"]</code> <b>no es una versión reducida del proceso: es un
+programa que producción nunca ejecuta</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>bucle de <code>substep</code></th>
+    <th><code>anneal</code> — producción</th></tr></thead>
+  <tbody>
+    <tr><td><b>sub-pasos por barrido</b></td><td class="bad">uno</td>
+        <td class="n"><b>dos</b> — subred par y subred impar, el
+        <i>update</i> bipartito</td></tr>
+    <tr><td><b>medición</b></td><td class="bad">ninguna</td>
+        <td class="n">bucle acumulando <code>E</code>, <code>E²</code>,
+        <code>M</code>, <code>M²</code>, <code>M<sub>z</sub></code> y carga
+        topológica</td></tr>
+    <tr><td><b>escalera</b></td><td class="bad">una temperatura</td>
+        <td class="n"><b>200 betas</b> anidadas sobre todo lo anterior</td></tr>
   </tbody>
 </table></div>
 
 <div class="key">
-  <p><b>Los dos castigos viven en tipos de fusión distintos, y casi no se
-  solapan.</b></p>
-  <p><b>El ancho</b> se concentra en las <code>kLoop</code>: 61 % + 30 % =
-  <b>91 % de su exceso</b> está en los dos grupos que XLA emite «un elemento de
-  la raíz a la vez» y por tanto vectoriza. Los rolls y las reducciones son
-  <b>inmunes</b> (±1 %).</p>
-  <p><b>El dentado</b> se concentra en la fusión de <b>Triton</b>: el
-  <b>79.3 %</b> de su brecha. Y ahí la decisión de ancho de XLA no aplica,
-  porque Triton trae sus propios tiles explícitos.</p>
+  <p><b>Y por qué pesa tanto: la fusión es una propiedad del programa entero,
+  no del <code>substep</code>.</b></p>
+  <p>El castigo del ancho <b>no vive «en el substep»</b>. Vive en <b>las
+  fusiones que XLA construye</b>, y XLA fusiona mirando <b>todo el grafo</b>.
+  Con solo un <code>substep</code> en un bucle, el compilador ve otro grafo y
+  emite <b>otras fusiones</b> — sin las <code>kLoop</code> anchas que en el
+  programa completo cuestan +118 % y +76 %.</p>
+  <p><b>El precio de ignorarlo, medido:</b> la misma partición de 400 réplicas
+  en 1 GPU da <b>−1.3 %</b> con el kernel de maqueta y <b>−28.3 %</b> con
+  <code>anneal</code>. Un factor de <b>veinte</b>.</p>
 </div>
 
-<div class="note warn"><strong>Lo que el tile explica y lo que no.</strong>
-Explica <b>la rejilla, exacto, 8 de 8</b>. Explica casi todo el cambio del
-kernel liviano (predicho −4.1 puntos, medido −4.5 %). Pero <b>no explica el
-pesado</b>: conserva el <b>mismo</b> tile en B=65 y B=75, sus bloques por
-réplica solo suben 3.1 % (19.615 → 19.000) y su tiempo cae 26.8 %. Queda un
-residuo de ~23 % sin explicar. Y en el par de ancho va al revés: los bloques por
-réplica del grupo Triton <b>bajan</b> 14.9 % mientras su costo <b>sube</b> 27 %.
-<b>El número de bloques no predice el costo</b>; el tile actúa sobre la
-eficiencia.</div>
+<div class="note"><strong>Aclaración, porque es fácil confundirlo.</strong>
+<code>substep</code> <b>no está mal</b> — es el ladrillo real del Monte Carlo y
+no mide nada, solo avanza el estado. Las mediciones físicas las hace
+<code>anneal</code>. Lo incorrecto fue usar <code>substep</code> <b>suelto como
+sustituto del conjunto</b> para cronometrar.</div>
 
-<h2>Estrategia: qué atacar, con qué palanca y con qué evidencia</h2>
+<h3>4.2 · El sobrecoste de lanzamiento</h3>
 
-<h3>Eje 1 — el ancho. Resuelto, con palanca determinista.</h3>
+<div class="key"><p>Una llamada cuesta <b>~122 µs</b> de latencia de despacho,
+<b>con 1 bloque o con 597</b> — medido barriendo la rejilla de 1 a 597 y viendo
+el tiempo plano. En una medición de <b>un solo paso</b>, eso es <b>la mitad del
+reloj</b>. <b>Nunca cronometrar un paso suelto</b>: siempre un bucle de K pasos
+dentro de una llamada.</p></div>
+
+<p>Esto invalidó un resultado entero. Un kernel de Triton parecía ganarle a la
+ruta JAX por <b>−6.5 %</b> midiendo un paso; con 200 pasos por llamada resultó
+ser <b>+26.3 % más lento</b>. La «victoria» era que JAX lanza ~7 kernels por
+paso y Triton uno — puro despacho.</p>
+
+<h3>4.3 · El piso de resolución</h3>
+
+<p>Las curvas se miden en celdas cortas y se extrapolan. Ese paso tiene
+<b>±2.5 % de ruido por punto, en los dos sentidos</b>. Validado con dos pares
+medidos al cronograma real de producción:</p>
+
 <div class="tw"><table>
-  <thead><tr><th>paso</th><th>qué hacer</th><th>evidencia</th><th>estado</th></tr></thead>
+  <thead><tr><th>par</th><th>celdas cortas</th><th>producción</th>
+    <th>veredicto</th></tr></thead>
   <tbody>
-    <tr><td class="n">1.1</td>
-        <td>Elegir <code>B</code> y <code>L</code> con
-        <code>v₂(B) + v₂(L) &lt; 2</code></td>
-        <td>89/89 rejillas exactas, 5 dispositivos</td>
-        <td class="best">listo, gratis</td></tr>
-    <tr><td class="n">1.2</td>
-        <td>No buscar un flag: no existe</td>
-        <td>79 flags en este build, ninguno toca la vectorización</td>
-        <td class="best">cerrado</td></tr>
-    <tr><td class="n">1.3</td>
-        <td>Si <code>L</code> es múltiplo de 4, la regla <b>no tiene escape</b>
-        vía <code>B</code></td>
-        <td>capa ficticia enmascarada: física exacta pero −20.6 % de media,
-        perdió 6/6 celdas</td>
-        <td class="bad">refutado</td></tr>
-    <tr class="best"><td class="n">1.4</td>
-        <td><b>Ruta nueva</b>: escribir ese kernel en Pallas con tile fijo, que
-        evita el emisor de bucle de XLA</td>
-        <td>ver abajo — el bloqueo de Pallas está resuelto</td>
-        <td class="n">viable, sin probar</td></tr>
+    <tr><td>B = 65 contra 75</td><td class="n">5.7 %</td>
+        <td class="bad">0.6 %</td><td class="bad">murió</td></tr>
+    <tr><td>B = 151 contra 153</td><td class="n">12.2 %</td>
+        <td class="best">15.0 %</td><td class="best">sobrevivió</td></tr>
   </tbody>
 </table></div>
 
-<h3>Eje 2 — el dentado. Mecanismo localizado, palanca identificada.</h3>
+<div class="key"><p><b>Regla:</b> en celdas cortas, lo que está <b>por encima
+de ~5 % es real</b>; lo que está por debajo <b>no es resoluble</b>.</p></div>
+
+<h3>4.4 · Los patrones que no sobrevivieron</h3>
+
+<p>Cinco reglas encontradas <i>a posteriori</i> murieron al contrastarlas.
+Quedan listadas porque el rastro importa más que el resultado:</p>
+
 <div class="tw"><table>
-  <thead><tr><th>paso</th><th>qué hacer</th><th>evidencia</th><th>estado</th></tr></thead>
+  <thead><tr><th>regla propuesta</th><th>ajustaba</th><th>cómo murió</th></tr></thead>
   <tbody>
-    <tr><td class="n">2.1</td>
-        <td>Aceptar que <b>no se puede interpolar</b> la curva f(B)</td>
-        <td>Triton re-teja por forma, no monótono; interpolar B=50 falló 7 %</td>
-        <td class="best">establecido</td></tr>
-    <tr><td class="n">2.2</td>
-        <td>Medir, no predecir: barrido por punto para cada geometría</td>
-        <td>el barrido ganó a la búsqueda bayesiana</td>
-        <td class="best">ya es nuestra práctica</td></tr>
-    <tr class="best"><td class="n">2.3</td>
-        <td><b>Fijar el tile</b> escribiendo el kernel nosotros: si el tile no
-        cambia con <code>B</code>, el dentado de ese kernel desaparece</td>
-        <td>la rejilla es función exacta del tile (8/8)</td>
-        <td class="n">viable, sin probar</td></tr>
-    <tr><td class="n">2.4</td>
-        <td>Antes de optimizar, confirmar a producción</td>
-        <td>el 5.2 % de este par es 0.6 % a 4 000 000 de barridos</td>
-        <td class="bad">el premio puede ser pequeño</td></tr>
+    <tr><td>«dos regímenes: L2 contra canales»</td><td class="n">—</td>
+        <td>refutada por la estructura fina del H100</td></tr>
+    <tr><td>«conjuntos de kernels distintos entre lotes»</td><td class="n">—</td>
+        <td>eran <b>los mismos kernels renombrados</b>; lo leí de los
+        nombres</td></tr>
+    <tr><td>ranking por <code>B mod 4</code></td><td class="n">—</td>
+        <td>asumía tile 4 siempre; es 4, 8 o 16</td></tr>
+    <tr><td><code>B mod 8 ∈ {5,7}</code> → tile barato</td><td class="n">10/10</td>
+        <td><b>pre-registrada</b> y falló: 9/12</td></tr>
+    <tr><td><code>B mod 16 ∈ {11,13,15}</code> → <code>tb = B</code></td>
+        <td class="n">20/22</td>
+        <td>refutada con datos que ya estaban en disco</td></tr>
   </tbody>
 </table></div>
 
-<h3>El desbloqueo de Pallas, que es lo que une los dos ejes</h3>
-<p>La ruta Pallas estaba muerta: <code>mosaic_gpu</code> exige que el bloque
-tenga <b>un número de bytes divisible entre 128</b> y nuestro intento usó la
-losa completa de <code>39·39·3</code>, <b>18 252 B = 142.59 × 128</b> → ilegal.
-Pero ahora <b>conocemos los tiles que Triton usa de verdad</b>, y todos son
-legales:</p>
+<div class="note"><strong>La única mejora de método que valió.</strong> La
+cuarta se pre-registró —las predicciones firmadas en git antes de medir— y la
+quinta se cazó <b>sin gastar una corrida</b>, contrastándola contra datos
+previos. Ese es el cambio que hay que mantener.</div>
 
-<div class="tw"><table>
-  <thead><tr><th>tile</th><th>elementos</th><th>bytes</th><th>÷ 128</th><th></th></tr></thead>
-  <tbody>
-    <tr><td><code>[4,1,8,16,3]</code></td><td class="n">1 536</td>
-        <td class="n">6 144</td><td class="n">48.0</td><td class="best">legal</td></tr>
-    <tr><td><code>[8,1,8,8,3]</code></td><td class="n">1 536</td>
-        <td class="n">6 144</td><td class="n">48.0</td><td class="best">legal</td></tr>
-    <tr><td><code>[16,1,4,8,3]</code></td><td class="n">1 536</td>
-        <td class="n">6 144</td><td class="n">48.0</td><td class="best">legal</td></tr>
-    <tr><td><code>[16,1,8,8,3]</code></td><td class="n">3 072</td>
-        <td class="n">12 288</td><td class="n">96.0</td><td class="best">legal</td></tr>
-    <tr><td>nuestro intento fallido</td><td class="dead">—</td>
-        <td class="n">18 252</td><td class="bad">142.59</td><td class="bad">ilegal</td></tr>
-  </tbody>
-</table></div>
+<h2>5 · La solución: partir el lote</h2>
 
-<div class="key"><p><b>Copiar la forma de tile de Triton vuelve legal la ruta
-Pallas.</b> Y un kernel propio con tile fijo ataca <b>los dos ejes a la vez</b>:
-no pasa por la decisión de ancho de XLA (eje 1) y no se re-teja con
-<code>B</code> (eje 2). Es la única palanca que toca los dos, y la evidencia
-para intentarla la acabamos de obtener.</p></div>
-
-<div class="note warn"><strong>Orden honesto de prioridades.</strong> Antes de
-nada, hay que recordar que <b>el 31.5 % del tiempo son los rolls</b> y son
-<b>inmunes a los dos efectos</b>. Son el mayor costo absoluto del programa y no
-tienen nada que ver con la estandarización. Si el objetivo fuera
-<b>ir más rápido</b>, el blanco son los rolls, no el ancho ni el dentado (ojo:
-<code>roll_free</code> ya probó pad+slice y salió 7 % más lento). Si el objetivo
-es <b>que el tiempo sea predecible</b>, entonces sí, el orden es 1.1 (gratis,
-hoy) y luego 2.3/1.4 (un kernel propio).</div>
-
-<h2>El protocolo de partición: 200 → 101 + 99</h2>
-
-<p>Si el lote que necesitas es múltiplo de cuatro, pagas ancho 4. La propuesta
-es <b>partirlo en dos lotes impares</b>: <code>B/2+1</code> y
-<code>B/2−1</code>. Los dos impares, los dos ancho 1 (con <code>L</code>
-impar), y su suma es <b>exactamente</b> <code>B</code>.</p>
+<p>Si el número de réplicas que necesitas es múltiplo de cuatro, pagas ancho 4.
+La salida es <b>partirlo en dos lotes impares</b>: <code>B/2+1</code> y
+<code>B/2−1</code>. Los dos ancho 1, y su suma es <b>exactamente</b>
+<code>B</code>.</p>
 
 <div class="key"><p><b>Y es exacto, no una aproximación.</b> Las réplicas son
 cadenas independientes, así que da igual en qué lote caiga cada una: 4 estados ×
-50 réplicas siguen siendo 50 por estado. Lo único que cambia son las claves del
-generador aleatorio, así que es <b>estadísticamente exacto, no bit-idéntico</b>
-— lo correcto para Monte Carlo.</p></div>
-
-<p>Medido en un solo H100, <b>siete repeticiones intercaladas</b> para que la
-deriva térmica afecte igual a todas, con compilación fuera del cronómetro:</p>
+50 réplicas siguen siendo 50 por estado. Solo cambian las claves del generador
+aleatorio, así que es <b>estadísticamente exacto, no bit-idéntico</b> — lo
+correcto para Monte Carlo.</p></div>
 
 <div class="tw"><table>
-  <thead><tr><th>configuración</th><th>lanz.</th><th>réplicas</th><th>ancho</th>
-    <th>s/réplica</th><th>vs 200</th><th>dispersión</th></tr></thead>
+  <thead><tr><th>configuración</th><th>lanz.</th><th>ancho</th>
+    <th>s/réplica</th><th>vs 200</th></tr></thead>
   <tbody>
     <tr><td><b>200 de una</b> — el problema</td><td class="n">1</td>
-        <td class="n">200</td><td class="bad">4</td>
-        <td class="n">0.01045</td><td class="n">—</td><td class="n">0.0 %</td></tr>
+        <td class="bad">4</td><td class="n">0.01045</td><td class="n">—</td></tr>
     <tr class="best"><td><b>101 + 99</b> — el protocolo</td><td class="n">2</td>
-        <td class="n">200</td><td class="n">1, 1</td>
-        <td class="n"><b>0.00804</b></td><td class="best"><b>−23.1 %</b></td>
-        <td class="n">0.2 %</td></tr>
-    <tr><td>201 de una — una réplica más</td><td class="n">1</td>
-        <td class="n">201</td><td class="n">1</td>
-        <td class="n">0.00802</td><td class="n">−23.2 %</td><td class="n">0.0 %</td></tr>
-    <tr><td>199 de una — una réplica menos</td><td class="n">1</td>
-        <td class="n">199</td><td class="n">1</td>
-        <td class="n">0.00767</td><td class="n">−26.6 %</td><td class="n">0.1 %</td></tr>
-    <tr><td>100 de una</td><td class="n">1</td><td class="n">100</td>
-        <td class="bad">4</td><td class="n">0.01150</td>
-        <td class="n">+10.0 %</td><td class="n">0.1 %</td></tr>
-    <tr class="best"><td><b>51 + 49</b> — el protocolo, chico</td><td class="n">2</td>
-        <td class="n">100</td><td class="n">1, 1</td>
-        <td class="n"><b>0.00886</b></td><td class="best"><b>−23.0 %</b></td>
-        <td class="n">2.1 %</td></tr>
+        <td class="best">1, 1</td><td class="n"><b>0.00804</b></td>
+        <td class="best"><b>−23.1 %</b></td></tr>
+    <tr><td>100 de una</td><td class="n">1</td><td class="bad">4</td>
+        <td class="n">0.01150</td><td class="n">+10.0 %</td></tr>
+    <tr class="best"><td><b>51 + 49</b></td><td class="n">2</td>
+        <td class="best">1, 1</td><td class="n"><b>0.00886</b></td>
+        <td class="best"><b>−23.0 %</b></td></tr>
   </tbody>
 </table></div>
 
-<div class="key"><p><b>El protocolo funciona: −23.1 %</b> contra el lote de ancho
-4 que reemplaza, con <b>0.0 a 0.2 % de dispersión</b> sobre siete repeticiones.
-Es la medición más limpia de todo este trabajo. Y el caso chico gana igual:
-<b>51 + 49 le saca 23.0 %</b> a un solo lote de 100.</p></div>
+<h3>Tres detalles que hay que respetar</h3>
 
-<h3>Qué cuesta partir, exactamente</h3>
-<p>Partir no es gratis: el <b>costo fijo por lanzamiento se paga dos veces</b>.
-Con <code>W(B) = a + b·B</code> para el reloj de pared de un lanzamiento,
-un lote de <code>B</code> cuesta <code>a + b·B</code> mientras dos de
-<code>B/2</code> cuestan <code>2a + b·B</code>. La diferencia es exactamente
-<code>a</code>, o <code><b>a/B</b></code> por réplica.</p>
-
-<p>Ajustando con las dos configuraciones del protocolo:</p>
-
-<div class="key"><p style="font-family:var(--mono)">
-a = 0.0820 s &nbsp;&nbsp; b = 0.007215 s por réplica</p>
-<p>El modelo predice <code>B=199</code> en <b>0.00763</b> contra
-<b>0.00767</b> medido — <b>0.6 % de error</b>, sin haberlo usado para
-ajustar. Eso valida el modelo.</p></div>
-
-<p>Así que el costo intrínseco de partir 200 es
-<code>0.0820/200 = 0.00041 s</code> por réplica, <b>+5.4 %</b> sobre un lote
-impar ideal de exactamente 200 — que <b>no existe</b>, porque 200 es múltiplo
-de cuatro. Ese es el precio real del protocolo, y es pequeño frente al 23 % que
-ahorra.</p>
-
-<h3>Me equivoqué al predecir que 201 le ganaría</h3>
-<div class="note bad"><strong>Predije que el protocolo perdería ~2.7 % contra un
-solo lote de 201. El resultado es un empate: +0.14 %.</strong>
-Dos errores. Ajusté <code>a</code> sobre segundos-por-réplica extrapolados a
-producción entre B=125 y 195, que <b>mezcla el dentado con el término a/B</b> y
-me dio un <code>a</code> casi seis veces más grande en esas unidades. Y además
-<b>B=201 cae 5.3 % por ENCIMA del modelo</b> por su propio dentado, lo que
-cancela el 5.4 % que cuesta partir. <b>El empate es en parte suerte de la curva
-irregular, no una ley.</b> Lo que sí sobrevive es el mecanismo: partir cuesta
-<code>a/B</code>, y aquí son 5.4 %.</div>
-
-<h3>Cuándo el protocolo empieza a doler</h3>
-<p>El término <code>a/B</code> crece al partir chico. <b>51 + 49 cuesta 10.2 %
-más por réplica que 101 + 99</b>, puro costo de lanzamiento repartido entre
-menos réplicas.</p>
-
-<div class="key"><p><b>Regla práctica:</b> el protocolo es casi gratis mientras
-<code>B/2</code> se quede en la parte plana de la curva (del orden de 100 o
-más), y empieza a cobrar por debajo de eso. Aun así, a <code>B/2 ≈ 50</code>
-sigue ganando 23 %.</p></div>
-
-<div class="note warn"><strong>Alcance, y es el límite importante.</strong> Esto
-resuelve <b>el eje del ancho, y solo cuando <code>L</code> es impar</b> — que es
-nuestra geometría de producción, <code>L = 5</code>. Si <code>L</code> es
-múltiplo de cuatro, <code>v₂(L) ≥ 2</code> fuerza ancho 4 <b>para cualquier
-<code>B</code></b>, impar o no, y <b>ninguna partición ayuda</b>: la suma ya
-pasa el umbral por el lado de <code>L</code>. Para ese caso la única palanca
-viva sigue siendo un kernel propio en Pallas con tile fijo. Y el dentado queda
-intacto: el protocolo no lo toca, y los 4.6 % que separan a B=199 de B=201 son
-justamente eso.</div>
-
-<h2>51 + 49 contra 2 de 50: lo que de verdad manda</h2>
-
-<p><code>v₂(50) = 1</code>, así que un lote de 50 con <code>L=5</code> es
-<b>ancho 2</b>. Y «2 de 50» <b>es la convención de producción actual</b>: 50
-réplicas por estado. La comparación es la más limpia posible, porque las dos
-opciones son <b>dos lanzamientos y 100 réplicas</b> — el costo fijo se paga dos
-veces en ambas y <b>lo único que cambia es el ancho</b>.</p>
-
-<p>Nueve repeticiones intercaladas, dispersión 0.1 a 0.2 %:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>configuración</th><th>lanz.</th><th>repl.</th><th>ancho</th>
-    <th>s/réplica</th><th>modelo</th><th>error</th></tr></thead>
-  <tbody>
-    <tr><td>100 de una</td><td class="n">1</td><td class="n">100</td>
-        <td class="bad">4</td><td class="n">0.011608</td>
-        <td class="n">0.008035</td><td class="bad">+44.5 %</td></tr>
-    <tr class="best"><td><b>50 + 50</b> — la convención actual</td>
-        <td class="n">2</td><td class="n">100</td><td class="n">2, 2</td>
-        <td class="n"><b>0.008729</b></td><td class="n">0.008855</td>
-        <td class="n">−1.4 %</td></tr>
-    <tr class="best"><td><b>51 + 49</b> — el protocolo</td>
-        <td class="n">2</td><td class="n">100</td><td class="n">1, 1</td>
-        <td class="n"><b>0.008796</b></td><td class="n">0.008855</td>
-        <td class="n">−0.7 %</td></tr>
-    <tr><td>99 de una</td><td class="n">1</td><td class="n">99</td>
-        <td class="n">1</td><td class="n">0.008094</td>
-        <td class="n">0.008043</td><td class="n">+0.6 %</td></tr>
-    <tr><td>101 de una</td><td class="n">1</td><td class="n">101</td>
-        <td class="n">1</td><td class="n">0.007904</td>
-        <td class="n">0.008027</td><td class="n">−1.5 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key"><p><b>Empate: +0.76 %</b>, dentro de la resolución de la propia
-medida. <b>El ancho 2 es gratis</b>, ahora confirmado con el número de
-lanzamientos fijo. <b>El protocolo no gana nada</b> sobre la convención actual a
-este tamaño.</p></div>
-
-<div class="note bad"><strong>Y mi predicción era incorrecta.</strong> Predije
-que <code>51+49</code> ganaría por 5 a 7 %, porque el barrido de 52 puntos ponía
-<code>B=50</code> en 9.788 contra 9.130 en <code>B=45</code> y 9.162 en
-<code>B=55</code> — un 7 % alto que atribuí al dentado. <b>Ese 7 % no se
-reprodujo.</b> El barrido usó celdas cortas, donde después medimos ±2.5 % de
-ruido en los dos sentidos, y era una sola corrida. La anomalía que hizo fallar
-mi interpolación de B=50 por 7 % era <b>muy probablemente ese ruido</b>, no un
-rasgo real de la curva. <b>Lección: un punto suelto de celda corta no es
-evidencia de un rasgo del dentado por debajo de ~5 %.</b></div>
-
-<div class="key"><p><b>El modelo se validó fuera de muestra.</b>
-<code>W(B) = a + b·B</code> con <code>a = 0.0820 s</code> y
-<code>b = 0.007215</code>, ajustado en la corrida <b>anterior</b>, predice las
-cuatro configuraciones de ancho 1 y 2 <b>con menos de 1.5 % de error</b>. Y de
-paso aísla el castigo del ancho 4 en un solo número: <b>+44.5 %</b>.</p></div>
-
-<h3>Lo que de verdad domina aquí: el número de lanzamientos</h3>
-
-<div class="tw"><table>
-  <thead><tr><th>comparación</th><th>diferencia</th></tr></thead>
-  <tbody>
-    <tr class="best"><td>101 de una contra 51 + 49</td><td class="best">−10.14 %</td></tr>
-    <tr class="best"><td>101 de una contra 50 + 50</td><td class="best">−9.46 %</td></tr>
-    <tr><td>99 de una contra 51 + 49</td><td class="n">−7.99 %</td></tr>
-    <tr><td>99 de una contra 50 + 50</td><td class="n">−7.28 %</td></tr>
-  </tbody>
-</table></div>
-
-<p>Un lanzamiento extra sobre 100 réplicas cuesta <code>a/100 = 0.00082 s</code>,
-que es el <b>10.4 %</b> de lo que cuesta una réplica. Por eso <b>un solo lote
-impar de 99 o 101 le gana de 8 a 10 % a cualquiera de las dos opciones de dos
-lanzamientos</b>.</p>
-
-<h3>Y aquí está la consecuencia práctica para tus 200 réplicas</h3>
-
-<div class="tw"><table>
-  <thead><tr><th>cómo correr 200 réplicas</th><th>lanz.</th><th>s/réplica</th></tr></thead>
-  <tbody>
-    <tr><td><b>4 lanzamientos de 50</b> (ancho 2) — si hoy lanzas por estado</td>
-        <td class="n">4</td><td class="n">0.00886</td></tr>
-    <tr class="best"><td><b>101 + 99</b> — el protocolo</td>
-        <td class="n">2</td><td class="n"><b>0.00804</b></td></tr>
-    <tr><td>200 de una (ancho 4)</td><td class="n">1</td>
-        <td class="bad">0.01045</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key"><p><b>El protocolo le gana a 4 × 50 por 9.3 %</b> — y
-<b>no por el ancho, sino por los lanzamientos</b>. Su valor real no es llegar a
-ancho 1: es <b>llegar a 200 réplicas en dos lanzamientos en vez de cuatro</b>,
-esquivando al mismo tiempo el lote de ancho 4. Esa es la razón correcta para
-adoptarlo, y es distinta de la que yo te había dado.</p></div>
-
-<div class="note warn"><strong>Dos límites.</strong> La fila de 200 réplicas está
-<b>modelada, no medida</b> — solo las de 100 son medición directa, aunque el
-modelo acaba de validarse con menos de 1.5 % de error. Y todo esto es el
-<b>eje del ancho</b>: el dentado sigue intacto, y <code>B=99</code> contra
-<code>B=101</code> difieren <b>2.3 %</b> siendo los dos ancho 1.</div>
-
-<h2>Atacando el dentado</h2>
-
-<p>Con el ancho resuelto, el dentado era lo único que quedaba. El experimento:
-<b>25 lotes, todos impares</b> — todos ancho 1, así que ese eje queda congelado
-y solo el dentado puede moverse — en <b>dos corridas independientes</b> de 13 y
-12 puntos, nueve repeticiones intercaladas cada una, registrando <b>el tile que
-Triton eligió</b> junto al tiempo.</p>
-
-<h3>Primero: el mecanismo se confirma</h3>
-<p>La prueba de atribución es directa — ¿los saltos de costo caen donde cambia
-el tile?</p>
-
-<div class="tw"><table>
-  <thead><tr><th>corrida</th><th>salto medio con <b>mismo</b> tile</th>
-    <th>con tile <b>distinto</b></th><th>razón</th></tr></thead>
-  <tbody>
-    <tr><td>mapa 1 (13 lotes)</td><td class="best">0.85 % <span
-        style="color:var(--muted)">(n=2)</span></td>
-        <td class="bad">2.90 % <span style="color:var(--muted)">(n=10)</span></td>
-        <td class="n">3.4×</td></tr>
-    <tr><td>mapa 2 (12 lotes)</td><td class="best">0.97 % <span
-        style="color:var(--muted)">(n=3)</span></td>
-        <td class="bad">4.46 % <span style="color:var(--muted)">(n=8)</span></td>
-        <td class="n">4.6×</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key"><p><b>Replicado en las dos corridas.</b> Cuando el tile no
-cambia, dos lotes vecinos difieren ~1 %. Cuando cambia, 3 a 4.5 %, con máximos
-de 12.2 %. <b>El dentado es la re-tejada de Triton</b>, confirmado.</p></div>
-
-<h3>Y una regla que propuse, y que la medición mató</h3>
-<p>Buscando residuos en el primer mapa encontré que <code>B mod 8 ∈ {5,7}</code>
-daba <code>tile_B = 8</code> (barato) y <code>{1,3}</code> daba
-<code>tile_B = 4</code> (caro), <b>acertando 10 de 10</b>. Pero la encontré
-<b>a posteriori</b>, así que dejé <b>12 predicciones firmadas en git</b> antes
-de lanzar la segunda corrida, con un falsador explícito: cualquier desacuerdo la
-mata.</p>
-
-<div class="note bad"><strong>Resultado: 9 de 12. La regla está muerta.</strong>
-<code>B=141</code> y <code>B=143</code> tomaron <code>tile_B = 16</code> y
-<code>B=153</code> tomó <code>tile_B = 32</code> — valores que la regla no
-contempla. Sobre los 25 lotes, Triton usó <code>tile_B ∈ {4, 8, 16, 32, 123,
-127}</code>: <b>seis valores distintos</b>, incluyendo «el lote entero en un
-tile». <b>Ningún residuo de <code>B</code> puede seleccionar eso.</b> Es el
-cuarto patrón post-hoc que se me cae en este trabajo, y por eso el pre-registro
-valió la pena.</div>
-
-<h3>Pero salió algo más útil que una regla</h3>
-<p>Agrupando por la <b>firma completa de tiles</b> (los dos kernels de Triton, no
-solo el pesado), el costo se ordena de forma muy estrecha:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>firma de tiles</th><th>n</th><th>media s/réplica</th>
-    <th>rango</th><th>B</th></tr></thead>
-  <tbody>
-    <tr class="best"><td><code>8,1,8,8,3 | 8,1,8,8,3</code></td>
-        <td class="n">6</td><td class="n"><b>0.007801</b></td>
-        <td class="n">0.007702–0.007950</td>
-        <td class="n">101, 103, 135, 149, 151, 167</td></tr>
-    <tr><td><code>4,1,8,16,3 | 8,1,8,8,3</code></td>
-        <td class="n">6</td><td class="n">0.008069</td>
-        <td class="n">0.007977–0.008205</td>
-        <td class="n">97, 99, 131, 145, 147, 163</td></tr>
-    <tr><td><code>4,1,8,16,3 | 16,1,8,8,3</code></td>
-        <td class="n">2</td><td class="n">0.008150</td>
-        <td class="n">0.008098–0.008203</td><td class="n">139, 169</td></tr>
-    <tr><td><code>16,1,8,8,3 | 16,1,8,8,3</code></td>
-        <td class="n">2</td><td class="n">0.008221</td>
-        <td class="n">0.008132–0.008309</td><td class="n">141, 143</td></tr>
-    <tr><td><code>32,1,1,16,3 | 32,1,4,8,3</code></td>
-        <td class="n">1</td><td class="bad">0.008643</td>
-        <td class="n">—</td><td class="n">153</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>La firma barata es separable.</b> Sobre las dos corridas,
-  <code>8,1,8,8,3|8,1,8,8,3</code> tiene n=6 y <b>máximo 0.007950</b>; la
-  siguiente firma tiene n=6 y <b>mínimo 0.007977</b>. <b>No se solapan.</b> Y
-  entre la barata y la más cara hay <b>12.2 %</b>.</p>
-  <p><b>El procedimiento que sale de ahí:</b> el tile no se puede predecir, pero
-  <b>se ve al compilar</b>. Así que para elegir el lote se <b>compilan</b> los
-  candidatos y se lee la firma del <code>backend_config</code> del HLO,
-  quedándose con la barata. Un compilado son <b>~40 segundos y no simula
-  nada</b>, contra 10–12 minutos de corrida de producción por candidato.</p>
-</div>
-
-<div class="note warn"><strong>Cuatro límites, y el tercero es el que importa.</strong>
-El margen de no-solape es de apenas <b>0.3 %</b> con n=6 por lado: es un
-selector usable, <b>no una ley probada</b>. Dentro de la firma barata queda
-<b>3.2 % de dispersión</b> sin explicar. Todo esto es a <b>3600 barridos</b>, y
-el único par que medimos al cronograma real vio su brecha pasar de 5.7 % a
-<b>0.6 %</b> — así que <b>está sin verificar si estos 3 % sobreviven a
-4 000 000 de barridos</b>. Y la familia de firmas es una propiedad de <b>este</b>
-build de XLA, que puede moverse con una versión.</div>
-
-<h3>Y sobrevive a producción: 15.0 %</h3>
-<p>Para zanjar el tercer límite medimos el par <code>B=151</code> (firma barata)
-contra <code>B=153</code> (el más caro) al <b>cronograma completo de
-producción</b>: 200 temperaturas × 20 000 barridos, 4 000 000 de barridos,
-reloj de pared real.</p>
-
-<div class="tw"><table>
-  <thead><tr><th>B</th><th>firma</th><th>reloj real</th><th>s/réplica</th></tr></thead>
-  <tbody>
-    <tr class="best"><td class="n">151</td>
-        <td><code>8,1,8,8,3 | 8,1,8,8,3</code></td>
-        <td class="n">1 280.1 s = <b>21.3 min</b></td>
-        <td class="n"><b>8.478</b></td></tr>
-    <tr><td class="n">153</td><td><code>32,1,1,16,3 | 32,1,4,8,3</code></td>
-        <td class="n">1 491.1 s = <b>24.9 min</b></td>
-        <td class="n">9.746</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>El selector funciona, y la brecha CRECIÓ.</b></p>
-  <p style="font-family:var(--mono);font-size:.95rem">
-  celdas cortas &nbsp;12.2 %<br>
-  producción &nbsp;&nbsp;&nbsp;&nbsp;<b>15.0 %</b></p>
-  <p>Elegir la firma barata ahorra <b>1.268 s por réplica</b>, el <b>13.0 %</b>
-  de lo que cuesta la cara. Y encontrarlo cuesta <b>~40 s de compilación por
-  candidato, sin simular nada</b>.</p>
-</div>
-
-<div class="key"><p><b>Esto cierra el patrón de la resolución.</b> El par 65/75
-era 5.7 % en celdas cortas y <b>0.6 %</b> a producción: <b>murió</b>, porque
-5.7 % cae dentro de la banda de ruido de ±2.5 % por punto. Este par era 12.2 %
-y pasó a <b>15.0 %</b>: <b>sobrevivió</b>, porque está muy fuera. La regla de
-trabajo queda: <b>en celdas cortas, lo que está por encima de ~5 % es real; lo
-que está por debajo no es resoluble.</b></p></div>
-
-<div class="note warn"><strong>Dos cosas que NO afirmo.</strong> El desglose por
-kernel muestra que los comunes (los rolls, las reducciones) se mueven solo 1 a
-3 %, y la diferencia está en las fusiones de Triton — pero aparecen con nombres
-generados distintos en cada build (<code>fusion_1364/1362</code> en B=151,
-<code>fusion_1474/1473</code> en B=153), y <b>no reclamo atribución fina por
-kernel</b>, porque comparar por nombre ya me engañó una vez en este trabajo. Y
-la validación es <b>un solo par, una corrida cada uno</b>: establece que una
-brecha del 12 % sobrevive, <b>no</b> que sobreviva el margen de 0.3 % entre
-firmas vecinas.</div>
-
-<h2>La curva rehecha: antes contra después</h2>
-
-<p>La pregunta que importa no es qué cuesta un lote, es <b>qué cuesta el número
-de réplicas que necesitas</b>. Para seis objetivos múltiplos de cuatro, tres
-caminos: <b>naive</b> (un lanzamiento de <code>B = R</code>), el
-<b>protocolo</b> (partir en <code>R/2+1</code> y <code>R/2−1</code>) y el
-<b>selector</b> de firma de tiles. Siete repeticiones intercaladas, y todos los
-candidatos medidos para poder puntuar al selector contra el que de hecho
-ganó.</p>
-
-<div class="tw"><table>
-  <thead><tr><th>R</th><th>naive<br>s/réplica</th><th>protocolo<br>s/réplica</th>
-    <th>protocolo<br>vs naive</th><th>selector<br>vs protocolo</th>
-    <th>¿halló el mejor?</th></tr></thead>
-  <tbody>
-    <tr><td class="n">100</td><td class="bad">0.011562</td><td class="n">0.008846</td>
-        <td class="best">−23.5 %</td><td class="best">−6.1 %</td>
-        <td class="best">sí</td></tr>
-    <tr><td class="n">120</td><td class="bad">0.010826</td><td class="n">0.007985</td>
-        <td class="best">−26.2 %</td><td class="n">+0.0 %</td>
-        <td class="best">sí</td></tr>
-    <tr><td class="n">140</td><td class="bad">0.011417</td><td class="n">0.007958</td>
-        <td class="best">−30.3 %</td><td class="n">+0.0 %</td>
-        <td class="best">sí</td></tr>
-    <tr><td class="n">160</td><td class="bad">0.011479</td><td class="n">0.008101</td>
-        <td class="best">−29.4 %</td><td class="n">+0.0 %</td>
-        <td class="bad">NO</td></tr>
-    <tr><td class="n">180</td><td class="bad">0.011170</td><td class="n">0.008214</td>
-        <td class="best">−26.5 %</td><td class="bad">+0.4 %</td>
-        <td class="bad">NO</td></tr>
-    <tr><td class="n">200</td><td class="bad">0.010443</td><td class="n">0.008077</td>
-        <td class="best">−22.7 %</td><td class="n">+0.0 %</td>
-        <td class="best">sí</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>El protocolo gana 6 de 6: entre −22.7 % y −30.3 %, media −26.4 %.</b></p>
-  <p>Extrapolado al cronograma real de producción, por cada lote de réplicas:</p>
-  <p style="font-family:var(--mono);font-size:.92rem">
-  R=100 &nbsp;21.4 → 16.4 min &nbsp;(−5.0)<br>
-  R=140 &nbsp;29.6 → 20.6 min &nbsp;(−9.0)<br>
-  R=160 &nbsp;34.0 → 24.0 min &nbsp;(−10.0)<br>
-  R=200 &nbsp;38.7 → 29.9 min &nbsp;(−8.8)</p>
-</div>
-
-<div class="note bad"><strong>Y retiro lo que dije con dos puntos: el selector
-no generaliza.</strong> Con los dos primeros objetivos afirmé que añadía 5.7 %
-sobre el protocolo. Con seis, la media es <b>−1.0 %</b>: ayudó una vez (−6.1 %
-en R=100), <b>no hizo nada cuatro veces</b> y <b>fue 0.4 % peor</b> una vez. Y
-<b>halló el mejor solo 4 de 6</b>: en R=160 eligió <code>81+79</code> cuando el
-mejor era <code>83+77</code> (1.9 % peor) y en R=180 eligió <code>93+87</code>
-cuando ganaba <code>91+89</code>. En los dos fallos <b>ganó la partición sin
-ninguna mitad barata</b>. Los dos puntos iniciales eran la mitad favorable de
-los datos.</div>
-
-<div class="key"><p><b>Por qué no generaliza, y es coherente con lo demás.</b>
-Cuando <code>B</code> es libre puedes mudarte a un lote cuya firma completa es
-barata, y eso valía <b>+15 % a producción</b>. Cuando <code>R</code> está fijo
-solo puedes elegir el corte, <b>casi nunca caen las dos mitades en la firma
-barata</b>, y la dispersión que queda entre particiones (2 a 4 %) es del mismo
-tamaño que el dentado residual <b>dentro</b> de una firma — que la firma no
-captura.</p></div>
-
-<h3>Y un hallazgo que corrige el orden de las operaciones</h3>
-<div class="note warn"><strong><code>B = 200</code> tiene la firma BARATA
-<code>8,1,8,8,3 | 8,1,8,8,3</code> y es el plan más caro de su objetivo.</strong>
-Porque paga <b>ancho 4</b>. La firma <b>no protege del ancho</b>: los dos ejes
-son independientes, uno vive en las fusiones <code>kLoop</code> y el otro en la
-de Triton. Así que el orden importa: <b>primero filtrar por
-<code>v₂(B)+v₂(L)</code>, después ordenar por firma</b>. Al revés te lleva
-directo al peor lote. (<code>B=100</code> es malo por los dos lados a la vez:
-firma cara y ancho 4.)</div>
-
-<div class="key">
-  <p><b>Qué hacer, en orden.</b></p>
-  <p><b>1.</b> Elegir el lote con <code>v₂(B)+v₂(L) &lt; 2</code>. Si el número
-  que necesitas es múltiplo de cuatro, <b>pártelo en <code>R/2+1</code> y
-  <code>R/2−1</code></b>. Vale <b>−22.7 % a −30.3 %</b>.</p>
-  <p><b>2.</b> <b>No usar la firma de tiles cuando <code>R</code> está
-  fijo</b>: vale −1.0 % de media y elige peor un tercio de las veces. Úsala solo
-  cuando <code>B</code> es genuinamente libre, donde sí está validada
-  en +15 % a producción.</p>
-  <p><b>3.</b> Si a <code>R</code> fijo importan los últimos puntos
-  porcentuales, <b>no hay atajo</b>: hay que medir las particiones. Entre ellas
-  hay 2 a 4 % y <b>ninguna regla que tengamos lo predice</b>.</p>
-</div>
-
-<div class="note warn"><strong>Límites.</strong> Seis objetivos, una GPU, 3600
-barridos con 7 repeticiones intercaladas; <b>la columna de producción está
-escalada, no medida</b>. El 22–30 % del protocolo está muy por encima del piso
-de resolución de ~5 %, así que se traslada; los fallos del selector (0.4 y
-1.9 %) están cerca de ese piso y podrían ser ruido — lo que no lo rescata,
-porque entonces valdría <b>cero</b> en vez de poco. La ventana de partición fue
-de ±4 alrededor de <code>R/2</code>, así que no se probaron cortes más
-desiguales.</div>
-
-<h2>El kernel de Pallas con tile fijo: existe, es exacto, y es más lento</h2>
-
-<p>Lo escribimos. <b>Compila, y calcula exactamente la misma función</b> que la
-referencia de seis rolls — error relativo máximo <code>1.788e−07</code>, que es
-redondeo de <code>f32</code>, no una aproximación. <b>Y es más lento que lo que
-reemplaza.</b></p>
-
-<div class="tw"><table>
-  <thead><tr><th>B</th><th>JAX, seis rolls</th><th>Pallas, ya en 4 comp.</th>
-    <th>cambio</th></tr></thead>
-  <tbody>
-    <tr><td class="n">32</td><td class="n">0.206 ms</td><td class="n">0.244 ms</td>
-        <td class="bad">+18.1 %</td></tr>
-    <tr><td class="n">64</td><td class="n">0.176 ms</td><td class="n">0.201 ms</td>
-        <td class="bad">+14.7 %</td></tr>
-    <tr><td class="n">96</td><td class="n">0.171 ms</td><td class="n">0.225 ms</td>
-        <td class="bad">+31.3 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="note bad"><strong>Por qué es más lento, y era predecible una vez
-visto el único tile admisible.</strong> El único que <code>mosaic_gpu</code>
-acepta es <b>degenerado</b>: un sitio en <code>x</code> y uno en <code>y</code>.
-Con un tile de 1×1 <b>los seis vecinos no se reutilizan desde SRAM</b>, así que
-cada sitio se trae <b>siete veces</b> de memoria global — tráfico estrictamente
-peor que seis rolls materializados, que leen cada sitio una vez por roll. Por eso
-la brecha <b>crece con <code>B</code></b>.</div>
-
-<h3>Los ocho rechazos, en orden</h3>
-<p>El camino no fue un fallo sino ocho, y cada uno enseñó algo distinto:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>#</th><th>dónde</th><th>qué dijo</th><th>causa</th></tr></thead>
-  <tbody>
-    <tr><td class="n">1</td><td>tamaño de copia</td>
-        <td><code>bytes=18252</code> no múltiplo de 128</td>
-        <td>el plano entero son <b>4563 elementos, impar para toda
-        geometría</b></td></tr>
-    <tr><td class="n">2</td><td>SRAM</td><td class="dead">aritmética</td>
-        <td>conservar el plano exige lote múltiplo de 32 → <b>570 KB</b> contra
-        228 disponibles</td></tr>
-    <tr class="best"><td class="n">3</td><td>strides GMEM</td>
-        <td>deben ser múltiplos de <b>16 B</b></td>
-        <td><b>EL BLOQUEO REAL</b>: 3 componentes × 4 B = <b>12 B</b> envenena
-        los cuatro strides. Se arregla <b>padeando a 4 componentes</b></td></tr>
-    <tr><td class="n">4</td><td>bloque SRAM</td>
-        <td>múltiplo de 128 <b>elementos</b></td>
-        <td>yo tenía la regla en bytes; era en elementos</td></tr>
-    <tr><td class="n">5</td><td>cuerpo</td><td>no infiere el layout del
-        <code>iota</code></td>
-        <td>seleccionar el borde del halo. <b>El <code>layout_cast</code> que el
-        propio error recomienda NO lo arregla</b> — probé
-        <code>WG_STRIDED</code> con vec 1, 2 y 4</td></tr>
-    <tr><td class="n">6</td><td>cuerpo</td><td>solo se rebanan arreglos con
-        layout tejado</td><td>desplazar dentro del tile</td></tr>
-    <tr><td class="n">7</td><td>cuerpo</td>
-        <td><code>concatenate</code> <b>no implementado</b></td>
-        <td>ensamblar el desplazado desde rebanadas de la referencia</td></tr>
-    <tr><td class="n">8</td><td>cuerpo</td><td><code>No support for axes
-        yet</code></td>
-        <td><code>jnp.sum</code> sobre el eje de componentes. Se saca la
-        normalización del kernel</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>La conclusión es sobre la madurez del backend, no sobre nuestro
-  diseño.</b></p>
-  <p><b>Toda</b> forma de desplazar datos dentro del kernel está sin soportar en
-  el <code>mosaic_gpu</code> de jax 0.10.2 — <code>iota</code>+<code>where</code>,
-  rebanar un arreglo cargado, rebanar una referencia, <code>concatenate</code> —
-  y las reducciones por eje también. <b>Un tile no degenerado EXIGE desplazar
-  dentro del kernel</b>, así que el único tile que compila es justamente el que
-  destruye la ventaja de tráfico.</p>
-  <p>Y la lista de layouts que sí ofrece delata para qué está hecho:
-  <code>WGMMA</code>, <code>TCGEN05</code>, <code>WGMMA_UPCAST</code> — formas de
-  <i>matmul</i> sobre tensor cores, <b>no stencils generales</b>.</p>
-</div>
-
-<div class="note warn"><strong>Lo que sí quedó demostrado, y lo que no.</strong>
-<b>El tile es fijo de verdad</b>: no cambia con <code>B</code>, así que el
-dentado de ese kernel desaparece por construcción. Pero cuesta 15–31 % y el
-dentado que elimina es como mucho 15 %, <b>así que tampoco vale para eso</b>. Y
-el premio grande —el 31.5 % de los rolls— <b>no se materializa</b> con el único
-tile admisible.</div>
-
-<div class="key">
-  <p><b>Qué lo cambiaría.</b></p>
-  <p><b>1.</b> Un <code>jaxlib</code> donde <code>mosaic_gpu</code> baje
-  <code>concatenate</code>, <b>o</b> el rebanado de arreglos, <b>o</b> las
-  reducciones por eje. <b>Cualquiera de las tres</b> permitiría un tile real.</p>
-  <p><b>2.</b> Escribir el kernel en <b>Triton directamente</b>, que no tiene
-  ninguna de estas restricciones — y es especialmente razonable porque
-  <b>XLA ya emite Triton para esta misma fusión</b>.</p>
-  <p><b>3.</b> CUDA C++ por <i>custom call</i>: sin restricciones, pero fuera
-  del ecosistema JAX.</p>
-</div>
-
-<h2>Triton sí: el kernel funciona, es exacto y es más rápido</h2>
-
-<div class="key"><p><b>Primera cosa en todo este trabajo que le gana a la ruta
-JAX.</b> Equivalencia <code>1.788e−07</code> relativo — redondeo de
-<code>f32</code>, la misma función.</p></div>
-
-<div class="tw"><table>
-  <thead><tr><th>B</th><th>JAX, seis rolls</th><th>Triton</th><th>cambio</th></tr></thead>
-  <tbody>
-    <tr><td class="n">32</td><td class="n">0.355 ms</td><td class="n">0.333 ms</td>
-        <td class="best">−6.3 %</td></tr>
-    <tr class="best"><td class="n">64</td><td class="n">0.323 ms</td>
-        <td class="n">0.268 ms</td><td class="best"><b>−16.9 %</b></td></tr>
-    <tr><td class="n">96</td><td class="n">0.250 ms</td><td class="n">0.264 ms</td>
-        <td class="bad">+5.4 %</td></tr>
-    <tr><td class="n">128</td><td class="n">0.320 ms</td><td class="n">0.283 ms</td>
-        <td class="best">−11.6 %</td></tr>
-  </tbody>
-</table></div>
-
-<p>Gana en <b>3 de 4</b> tamaños, media <b>−7.3 %</b>, mejor caso
-<b>−16.9 %</b>.</p>
-
-<h3>La primitiva que lo desbloqueó</h3>
-<p>Todos los intentos anteriores murieron por lo mismo: <b>no había forma de
-desplazar datos dentro del kernel</b>. Mosaic GPU rechazó los layouts del
-<code>iota</code>, rebanar arreglos, rebanar referencias,
-<code>concatenate</code> y las reducciones por eje. El lowering de Triton de
-Pallas rechazó las formas que no son potencia de 2 y <code>slice</code> — que es
-en lo que se convierte <code>jnp.roll</code>.</p>
-
-<div class="key"><p style="font-family:var(--mono);font-size:.92rem">
-pl.BlockSpec(memory_space=pl.ANY)<br>
-pltriton.load(ref.at[arrays_de_indices], mask=m)<br>
-compiler_params=pltriton.CompilerParams()</p>
-<p>La <b>carga indexada con máscara</b> es cómo se escribe un stencil en Triton
-<b>de entrada</b>, y esquiva todo lo anterior de golpe.</p></div>
-
-<p>Con <code>memory_space=pl.ANY</code> la referencia <b>se queda en memoria
-global y el direccionamiento lo hacemos nosotros</b>. Eso borra tres problemas
-a la vez:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>problema</th><th>por qué desaparece</th></tr></thead>
-  <tbody>
-    <tr><td>el tejado de <code>BlockSpec</code></td>
-        <td>no hay forma de bloque que legalizar: no hay bloque</td></tr>
-    <tr><td><code>N = 39</code> no es potencia de 2</td>
-        <td>los índices llevan <b>máscara</b>, así que una rejilla de 64×64
-        simplemente sobresale y los carriles enmascarados se descartan</td></tr>
-    <tr><td>las 3 componentes del espín</td>
-        <td>se cargan <b>de a una</b> con índice escalar, lo que además
-        <b>elimina la reducción por eje</b> que pedía la normalización</td></tr>
-  </tbody>
-</table></div>
-
-<h3>Tres detalles de API que costaron una corrida cada uno</h3>
 <div class="tw"><table>
   <tbody>
-    <tr><td>el backend se pide con
-        <code>compiler_params=pltriton.CompilerParams()</code></td>
-        <td>el argumento <code>backend</code> se quitó en jax <b>0.9.1</b></td></tr>
-    <tr><td><code>load</code> toma <b>solo</b> la referencia</td>
-        <td>el índice va en <code>ref.at[...]</code>, no como posicional</td></tr>
-    <tr><td><code>other</code> exige <code>mask</code></td>
-        <td>con índices ya envueltos no hace falta ninguno de los dos salvo
-        la máscara del sobresalir</td></tr>
+    <tr><td><b>Partir cuesta <code>a/B</code></b></td>
+        <td>el costo fijo por lanzamiento se paga dos veces. Ajustando
+        <code>W(B) = a + b·B</code> sale <code>a = 0.082 s</code> y
+        <code>b = 0.007215</code> — el modelo predice <code>B=199</code> con
+        <b>0.6 % de error</b> sin haberlo usado para ajustar. Partir 200 cuesta
+        <b>+5.4 %</b>, muy por debajo del 23 % que ahorra.</td></tr>
+    <tr><td><b>Es el lote POR DISPOSITIVO</b></td>
+        <td>no el total. 100 cadenas sobre 2 GPU dan 50 por dispositivo, que ya
+        es ancho 2 y <b>no tiene castigo que quitar</b>. Sobre 4 dan 25,
+        ancho 1. El filtro se aplica a lo que ve cada GPU.</td></tr>
+    <tr><td><b>No partir de más</b></td>
+        <td>más olas significa lotes más chicos, y por debajo de ~50 por
+        dispositivo el término <code>a/B</code> se come la ganancia. Cuatro olas
+        de 25 sobre 4 GPU salen <b>+14 %</b> peor que una sola.</td></tr>
   </tbody>
 </table></div>
 
-<div class="key"><p><b>Y el tile es fijo.</b> <code>T = 64</code> es una
-constante independiente de <code>B</code>, y la rejilla es
-<code>(B, Lz)</code> — el trabajo por programa <b>no cambia con el tamaño del
-lote</b>. Esa es justo la propiedad que el argumento del dentado necesitaba.</p></div>
+<div class="note bad"><strong>Y un atajo que no funciona.</strong> Repartir
+desigual entre GPUs —101 a dos y 99 a otras dos, en una sola ola— es una idea
+correcta que <b>el runtime no sostiene</b>: dos <code>pmap</code> sobre
+subconjuntos disjuntos <b>se serializan</b> en vez de solaparse, y el esquema
+sale <b>+83.8 %</b> peor. Cada llamada usa la mitad del hardware durante el
+doble de tiempo.</div>
 
-<div class="note warn"><strong>Cuatro límites, y hay que leerlos.</strong>
-Esto es <b>el stencil solo</b> — la suma de vecinos más la normalización — <b>no
-el paso de Metropolis completo</b>; pero el stencil es exactamente lo que hacen
-los seis rolls, que es el 31.5 % al que apuntábamos. Son <b>cuatro tamaños,
-nueve repeticiones, UNA corrida</b>, y la ganancia <b>no es uniforme</b>:
-+5.4 % en B=96. Los tiempos absolutos <b>no comparan con corridas anteriores</b>
-— la referencia JAX midió 0.355/0.323/0.250 ms aquí contra 0.206/0.176/0.171 ms
-en la corrida de Mosaic GPU, así que aquel contenedor estaba en otro estado;
-solo la razón dentro de una misma corrida significa algo. Y para desplegarlo
-habría que <b>portar la física de Metropolis al kernel</b>, o devolver el
-resultado del stencil al código JAX, lo que reintroduciría una
-materialización.</div>
+<h2>6 · El reparto de réplicas</h2>
 
-<div class="note bad"><strong>Y una fecha de caducidad.</strong> El backend de
-Triton de Pallas <b>se deprecó en jax 0.11.0</b> y esto corre en <b>0.10.2</b>.
-La ruta funciona hoy; no es una apuesta a largo plazo sin plan de migración a
-Triton directo o a un <i>custom call</i>.</div>
+<h3>6.1 · El «eje de estados» no existe</h3>
 
-<h2>La prueba: ¿el tile fijo mata el dentado?</h2>
-
-<p>Once lotes, nueve repeticiones intercaladas, y tres rutas en la misma
-corrida: JAX con seis rolls, Triton con tile fijo, y Triton sobre un
-<b>arreglo padeado</b> a 64 — que es la pregunta de si conviene llenar de ceros
-hasta una potencia de 2.</p>
+<p>Antes de comparar repartos hay que deshacer una idea equivocada. En la
+agrupación que batía réplicas <i>y</i> estados, el código ordena los parámetros
+con <code>np.repeat</code> —en bloques— y luego reparte con
+<code>reshape</code>. El resultado sobre 4 GPUs:</p>
 
 <div class="tw"><table>
-  <thead><tr><th>B</th><th>JAX µs/rép</th><th>Triton µs/rép</th><th>cambio</th>
-    <th>padeado µs/rép</th><th>vs Triton</th></tr></thead>
-  <tbody>
-    <tr><td class="n">63</td><td class="n">3.87</td><td class="n">3.61</td>
-        <td class="best">−6.6 %</td><td class="n">3.50</td><td class="best">−2.9 %</td></tr>
-    <tr><td class="n">64</td><td class="n">3.32</td><td class="n">3.06</td>
-        <td class="best">−7.8 %</td><td class="n">3.22</td><td class="bad">+5.3 %</td></tr>
-    <tr><td class="n">65</td><td class="n">2.92</td><td class="n">2.97</td>
-        <td class="bad">+1.5 %</td><td class="n">2.89</td><td class="best">−2.5 %</td></tr>
-    <tr class="best"><td class="n">66</td><td class="n">3.90</td><td class="n">3.19</td>
-        <td class="best"><b>−18.4 %</b></td><td class="n">3.25</td><td class="bad">+2.1 %</td></tr>
-    <tr><td class="n">68</td><td class="n">2.43</td><td class="n">2.46</td>
-        <td class="bad">+1.5 %</td><td class="n">2.69</td><td class="bad">+9.1 %</td></tr>
-    <tr><td class="n">96</td><td class="n">2.11</td><td class="n">1.79</td>
-        <td class="best">−15.3 %</td><td class="n">2.03</td><td class="bad">+13.7 %</td></tr>
-    <tr><td class="n">97</td><td class="n">1.87</td><td class="n">1.80</td>
-        <td class="best">−3.8 %</td><td class="n">1.74</td><td class="best">−3.3 %</td></tr>
-    <tr><td class="n">99</td><td class="n">2.07</td><td class="n">1.85</td>
-        <td class="best">−10.3 %</td><td class="n">1.81</td><td class="best">−2.6 %</td></tr>
-    <tr><td class="n">100</td><td class="n">2.18</td><td class="n">2.24</td>
-        <td class="bad">+2.5 %</td><td class="n">2.02</td><td class="best">−9.8 %</td></tr>
-    <tr><td class="n">128</td><td class="n">1.78</td><td class="n">1.56</td>
-        <td class="best">−12.4 %</td><td class="n">1.71</td><td class="bad">+10.0 %</td></tr>
-    <tr><td class="n">129</td><td class="n">1.56</td><td class="n">1.52</td>
-        <td class="best">−2.3 %</td><td class="n">1.94</td><td class="bad">+27.4 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key"><p><b>Triton le gana en 8 de 11, media −6.5 %, mejor
-−18.4 %.</b> Confirma el resultado anterior con más datos.</p></div>
-
-<h3>Y una corrección de método, mía</h3>
-<div class="note bad"><strong>Mi primera métrica del dentado estaba mal.</strong>
-Reporté la dispersión de µs/réplica cruda: 150 % en JAX, 137 % en Triton. Pero
-eso <b>es el término <code>a/B</code>, no el dentado</b> — el costo por réplica
-cae de 3.87 µs en B=63 a 1.56 en B=129 solo porque el costo fijo se reparte
-entre más réplicas. Hay que <b>quitar la tendencia primero</b>, ajustando
-<code>u(B) = a/B + b</code> y midiendo el residuo.</div>
-
-<div class="tw"><table>
-  <thead><tr><th>ruta</th><th>a</th><th>b</th><th>residuo máx−mín</th>
-    <th>residuo σ</th></tr></thead>
-  <tbody>
-    <tr><td>JAX, seis rolls</td><td class="n">228.0</td><td class="n">−0.21</td>
-        <td class="n">43.2 %</td><td class="bad">12.7 %</td></tr>
-    <tr class="best"><td>Triton, tile fijo</td><td class="n">211.4</td>
-        <td class="n">−0.19</td><td class="n">31.9 %</td>
-        <td class="best"><b>10.3 %</b></td></tr>
-    <tr><td>Triton, arreglo padeado</td><td class="n">197.0</td>
-        <td class="n">0.05</td><td class="n">39.4 %</td><td class="n">11.3 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>El tile fijo reduce el dentado un 19 %, pero NO lo elimina.</b></p>
-  <p>La σ del residuo baja de 12.7 % a 10.3 %. Es real y es modesto — queda
-  ±10 % de irregularidad.</p>
-  <p><b>Y se entiende por qué</b>: el <b>tile</b> es fijo, pero la
-  <b>rejilla no</b>. Son <code>B × L<sub>z</sub></code> programas, así que
-  cuántos bloques caen por SM y cómo queda la última oleada <b>sigue dependiendo
-  de B</b>. Fijar el tile quita la componente de <b>re-tejado de Triton</b>; no
-  quita la de <b>cuantización de oleadas</b>.</p>
-</div>
-
-<h2>¿Y si llenamos de ceros hasta una potencia de 2?</h2>
-<p>La pregunta tiene dos respuestas, y las dos son no.</p>
-
-<div class="note bad"><strong>Primero, medido: el arreglo padeado es peor.</strong>
-Media <b>+4.2 %</b> contra la versión con máscara, y gana solo en <b>5 de
-11</b>. Consistente con el tráfico: <code>64²/39² = 2.69×</code> más elementos
-por plano.</div>
-
-<div class="note bad"><strong>Y segundo, peor aún: rompería la palanca del
-ancho.</strong> El ancho de XLA depende de
-<code>v₂(B·L·N²·3)</code>. Con <code>N = 39</code> impar,
-<code>v₂(L·N²·3) = 0</code> y el ancho lo decide <code>B</code>. Con
-<code>N = 64</code>:
-<p style="font-family:var(--mono);font-size:.92rem;margin:.6rem 0">
-L·N²·3 = 61 440 &nbsp;→&nbsp; v₂ = <b>12</b><br>
-v₂(elementos) ≥ 12 ≥ 2 &nbsp;→&nbsp; <b>ancho 4 para CUALQUIER B</b></p>
-Padear el arreglo meter&iacute;a ancho 4 permanente en la parte de XLA y
-<b>mataría la única palanca que ya teníamos medida</b> — tu protocolo de
-partición dejaría de servir.</div>
-
-<div class="key"><p><b>Lo que sí hacemos es padear la rejilla de índices, no el
-arreglo.</b> Es virtual, no cuesta memoria ni tráfico, lleva máscara, y deja
-<code>N = 39</code> intacto en el producto del ancho. Esa es la razón por la que
-el kernel de Triton funciona sin tocar el layout.</p></div>
-
-<div class="note warn"><strong>Un test que montré y que no sirve.</strong> Puse
-una comparación del efecto del ancho entre las dos rutas y dio −3.9 % en JAX y
-−5.6 % en Triton, o sea <b>nada</b>. <b>No es un hallazgo: el test es
-inválido por construcción.</b> El castigo del ancho vive en las fusiones
-<code>kLoop</code> del programa completo — la mega-fusión de Threefry a +118 %
-y la aceptación a +76 % — mientras que <b>el stencil pelado siempre fue
-inmune</b> (+0.2 % los rolls, −1.4 % las reducciones). Medir el stencil solo es
-medir justamente la parte que nunca tuvo el problema.</div>
-
-<h2>La cuantización de oleadas, y la retractación que trajo</h2>
-
-<p>La idea a investigar era: el H100 tiene 132 SMs, nuestra rejilla es
-<code>B × L<sub>z</sub></code> bloques, así que si caben <code>W</code>
-concurrentes el costo va como <code>⌈G/W⌉</code> y la última oleada va a
-medias. Para no ajustar <code>W</code> a posteriori —el error que ya había
-cometido cuatro veces— lo medí directo: el mismo kernel con rejilla de
-<code>G</code> bloques, <code>G</code> de 1 a 597, todos haciendo trabajo
-idéntico. Eso debería dar una <b>escalera</b> cuyo escalón <i>es</i>
-<code>W</code>.</p>
-
-<div class="note bad"><strong>No hay escalera. Y lo que sí midió fue otra
-cosa.</strong> De <code>G=1</code> a <code>G=597</code> el tiempo se queda
-<b>plano en ~122 µs</b>. La pendiente lineal sale <b>negativa</b>
-(−0.0102 µs/bloque), el modelo de oleadas da <b>R² = 0.085</b> y el lineal
-<b>R² = 0.045</b> — <b>los dos explican casi nada</b>. La periodicidad máxima
-del residuo es <code>|r| = 0.296</code>, por debajo de mi propio umbral. El
-<code>W = 182</code> que salió del ajuste <b>es ruido</b>.</div>
-
-<div class="key"><p><b>Lo que la sonda midió es sobrecoste de lanzamiento:
-~122 µs por llamada, con 1 bloque o con 597.</b> El cálculo de 597 bloques de
-un stencil son microsegundos; el resto es latencia de despacho. La sonda no
-podía ver al planificador.</p></div>
-
-<h3>Y eso reinterpretó toda la medición anterior</h3>
-<p>Los ajustes <code>u(B) = a/B + b</code> habían dado <code>a = 228</code>
-(JAX) y <code>a = 211</code> (Triton). El sobrecoste medido es ~122 µs —
-<b>el mismo orden</b>. Así que <b>el término <code>a/B</code> era el sobrecoste
-de lanzamiento</b>, no física. Con un paso por llamada, <b>la mitad de lo que
-cronometrábamos era despacho</b>.</p>
-
-<p>La prueba correcta: <b>200 pasos dentro de una sola llamada</b>, que es el
-régimen en el que corre la simulación real con sus 3600 barridos.</p>
-
-<div class="tw"><table>
-  <thead><tr><th>B</th><th>JAX µs/rép</th><th>Triton µs/rép</th><th>cambio</th>
-    <th>padeado µs/rép</th></tr></thead>
-  <tbody>
-    <tr><td class="n">63</td><td class="n">0.22</td><td class="n">0.31</td>
-        <td class="bad">+39.2 %</td><td class="n">0.57</td></tr>
-    <tr><td class="n">66</td><td class="n">0.24</td><td class="n">0.30</td>
-        <td class="bad">+26.2 %</td><td class="n">0.56</td></tr>
-    <tr><td class="n">99</td><td class="n">0.20</td><td class="n">0.25</td>
-        <td class="bad">+22.7 %</td><td class="n">0.58</td></tr>
-    <tr><td class="n">129</td><td class="n">0.19</td><td class="n">0.23</td>
-        <td class="bad">+19.0 %</td><td class="n">0.56</td></tr>
-  </tbody>
-</table></div>
-
-<div class="note bad"><strong>Retiro el resultado de Triton.</strong> Dije que
-era «lo primero en todo este trabajo que le gana a la ruta JAX», media
-−6.5 %, ganando 8 de 11. <b>Con el sobrecoste amortizado es +26.3 % de media y
-gana 0 de 11</b>, entre +19.0 % y +39.2 %. El «triunfo» era despacho: <b>la
-ruta JAX lanza ~7 kernels por paso</b> (seis rolls más el elementwise) contra
-<b>uno</b> de Triton, y con una sola llamada eso domina. Con 200 pasos domina
-el cálculo, y ahí Triton pierde.</div>
-
-<h3>Por qué el cálculo de Triton es más lento</h3>
-<div class="key"><p>La rejilla 64×64 cubre <b>4096 carriles para 1521 sitios
-activos</b>: el <b>62.9 % de los carriles van enmascarados pero SE EJECUTAN</b>,
-o sea <b>2.69× el trabajo de carril</b>. Y hace <b>21 cargas dispersas</b>
-(siete vecinos × tres componentes) contra las lecturas contiguas y coalescidas
-que produce <code>jnp.roll</code>. Infravaloré las dos cosas.</p></div>
-
-<h3>El hallazgo que sí vale, y es el más importante</h3>
-<div class="tw"><table>
-  <thead><tr><th>ruta</th><th>residuo σ (amortizado)</th>
-    <th>antes (un paso)</th></tr></thead>
-  <tbody>
-    <tr><td>JAX, seis rolls</td><td class="best">1.9 %</td><td class="bad">12.7 %</td></tr>
-    <tr><td>Triton, tile fijo</td><td class="best">1.1 %</td><td class="bad">10.3 %</td></tr>
-    <tr><td>Triton, padeado</td><td class="best">1.3 %</td><td class="bad">11.3 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>Con el sobrecoste amortizado, el stencil no tiene dentado: σ de 1 a
-  2 %.</b></p>
-  <p>El ±10 % que atribuí a cuantización de oleadas <b>era jitter del
-  sobrecoste de lanzamiento</b>. Y encaja con lo que ya sabíamos: el dentado
-  del programa completo estaba <b>79 % en la fusión de Triton del
-  <code>_where</code></b>, el núcleo del Metropolis — <b>no en los rolls</b>.
-  El stencil siempre fue la parte lisa.</p>
-</div>
-
-<div class="note"><strong>Un dato inesperado y una idea sin probar.</strong> El
-<b>arreglo padeado es el más plano de los tres</b> — rango de 4.0 % contra
-23.1 % de JAX, porque todos los carriles hacen trabajo idéntico sin máscara —
-pero cuesta <b>2.69×</b>. Es el intercambio predictibilidad-por-velocidad en su
-forma más pura, y a ese precio no vale. Y la mejora obvia que queda: <b>aplanar
-en vez de tejar en 2-D</b> — los 1521 sitios activos padeados a <b>2048</b>
-desperdician <b>25.7 %</b> de carriles en vez de 62.9 %, la mitad del
-desperdicio actual. Sin probar.</div>
-
-<h2>Aplanar a 2048: funciona, y refuta mi diagnóstico</h2>
-
-<p>La idea era quitarle desperdicio de carriles al kernel de Triton. En vez de
-una rejilla 64×64 sobre un plano de 39×39, aplanar los <b>1521 sitios</b> a un
-índice de <b>2048</b>, la siguiente potencia de 2.</p>
-
-<div class="tw"><table>
-  <thead><tr><th>variante</th><th>carriles</th><th>desperdicio</th></tr></thead>
-  <tbody>
-    <tr><td>rejilla 2-D 64×64</td><td class="n">4096</td><td class="bad">62.9 %</td></tr>
-    <tr class="best"><td><b>aplanado a 2048</b></td><td class="n">2048</td>
-        <td class="n">25.7 %</td></tr>
-  </tbody>
-</table></div>
-
-<p>Compila, es exacto (<code>1.788e−07</code> relativo) y <b>sí ayuda</b>. Pero
-mucho menos de lo que la aritmética predecía:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>B</th><th>JAX µs/rép</th><th>aplanado</th><th>vs JAX</th>
-    <th>rejilla 2-D</th><th>aplan. vs 2-D</th></tr></thead>
-  <tbody>
-    <tr><td class="n">63</td><td class="n">0.230</td><td class="n">0.301</td>
-        <td class="bad">+30.9 %</td><td class="n">0.319</td>
-        <td class="best">−5.5 %</td></tr>
-    <tr><td class="n">99</td><td class="n">0.202</td><td class="n">0.243</td>
-        <td class="bad">+20.1 %</td><td class="n">0.248</td>
-        <td class="best">−1.9 %</td></tr>
-    <tr><td class="n">129</td><td class="n">0.190</td><td class="n">0.224</td>
-        <td class="bad">+17.9 %</td><td class="n">0.228</td>
-        <td class="best">−1.4 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="note bad"><strong>Y aquí se cae mi explicación.</strong> Yo había
-dicho que el <b>62.9 % de carriles enmascarados pero ejecutados</b> era
-<b>2.69× el trabajo de carril</b> y la razón principal de que el kernel 2-D
-perdiera por 26 %. Si eso fuera cierto, <b>partir los carriles a la mitad
-debería dar −50 %</b>. <b>Medido: −2.9 %</b> (entre −1.4 % y −5.5 %).</div>
-
-<div class="key">
-  <p><b>El tiempo es casi independiente de los carriles totales.</b></p>
-  <p>Los carriles enmascarados cuestan <b>~3 %</b>, no el 169 % que yo afirmé.
-  La máscara <b>sí suprime el acceso a memoria</b>, así que salen casi gratis.
-  Era una hipótesis razonable y la medición la mató.</p>
-</div>
-
-<h3>Entonces el costo está en las cargas dispersas</h3>
-<div class="key"><p>Quedan <b>1521 sitios útiles × 7 vecinos × 3 componentes =
-31 941 direcciones calculadas por carril</b>, contra <b>siete lecturas de
-arreglo contiguas y coalescidas</b> en la ruta JAX. Y un <i>gather</i> escala
-con los carriles <b>útiles</b>, que son los mismos 1521 en las dos variantes —
-<b>por eso aplanar no ayuda</b>.</p></div>
-
-<h3>Veredicto de la ruta Triton</h3>
-<div class="note bad"><strong>El aplanado sigue siendo +21.0 % más lento que
-JAX y gana 0 de 8.</strong> La ruta Triton <b>por gathers no puede ganarle a
-rolls contiguos</b> en este stencil. Para ganar harían falta <b>cargas
-coalescidas</b>, o sea el halo residente en SRAM — que es exactamente el diseño
-que <code>mosaic_gpu</code> rechazó de ocho formas y que
-<b>Pallas-Triton tampoco puede expresar</b>, porque no tiene
-<code>slice</code> ni <code>concatenate</code>. <b>Las dos puertas dan al mismo
-sitio.</b></div>
-
-<div class="note"><strong>Y una nota sobre el dentado, por completitud.</strong>
-Con el sobrecoste amortizado el residuo σ es <b>1.7 % (JAX), 0.9 % (aplanado),
-1.5 % (rejilla 2-D)</b>. La dispersión cruda de 23–34 % que imprimí es la
-tendencia <code>a/B</code>, no dentado. <b>Ninguna de las tres variantes del
-stencil tiene dentado</b> — consistente con que el del programa completo viva
-en la fusión del <code>_where</code>, el núcleo del Metropolis.</div>
-
-<h2>Ingeniería inversa del tile: el dentado tiene estructura</h2>
-
-<p>El dentado es una decisión de compilador, así que es código, así que tiene
-una regla. Esto es lo que se pudo <b>derivar</b>, no ajustar.</p>
-
-<h3>Tres restricciones documentadas</h3>
-<div class="tw"><table>
-  <thead><tr><th>regla de XLA</th><th>qué implica para nosotros</th>
-    <th>verificado</th></tr></thead>
-  <tbody>
-    <tr class="best"><td>el modelo de costo cuenta memoria en <b>sectores de
-        32 bytes</b> y penaliza los almacenamientos de <b>sector parcial</b></td>
-        <td><b>DERIVADO</b>: un tile <code>[tb,1,ty,tx,3]</code> escribe una
-        tirada contigua de <code>3·tx</code> floats, así que llenar sectores
-        enteros exige <code>3·tx ≡ 0 (mod 8)</code>, y como 3 es impar →
-        <b><code>tx ≡ 0 (mod 8)</code></b></td>
-        <td class="best"><b>18/18</b><br>tx ∈ {8,16}<br>nunca 1, 2 ni 4</td></tr>
-    <tr class="best"><td>cada tamaño de tile debe ser <b>potencia de 2, o igual
-        al tamaño de la dimensión</b></td>
-        <td><b>explica los dos regímenes</b> sin ajustar nada: <code>tb ∈
-        {4,8,16,32}</code> es la rama de potencias, y <code>tb = B</code>
-        (visto en B = 59, 61, 63, 123, 127) es la rama «igual a la
-        dimensión»</td>
-        <td class="best">documentado</td></tr>
-    <tr><td>un tile se rechaza si su carga pasa de <b>1 048 576
-        elementos</b></td>
-        <td>techo durísimo, lejísimos de lo que vemos → <b>el 1536 que
-        observamos es una PREFERENCIA del modelo, no una restricción</b></td>
-        <td class="n">documentado</td></tr>
-  </tbody>
-</table></div>
-
-<h3>Y el presupuesto observado</h3>
-<div class="key">
-  <p><b>El tile mide exactamente 1536 elementos = 6144 B = 48 × 128 en 51 de
-  56 casos registrados.</b></p>
-  <p>O sea <code><b>tb · ty · tx = 512 = 2⁹</b></code>. Las excepciones son los
-  cinco casos <code>tb = B</code> y tres en B = 140, 141, 143 que toman 3072,
-  exactamente el doble.</p>
-</div>
-
-<div class="key">
-  <p><b>Juntando la regla de sectores con el presupuesto, la elección baja de
-  infinita a DOCE candidatos:</b></p>
-  <p style="font-family:var(--mono);font-size:.9rem">
-  (1,32,16) (2,16,16) (2,32,8) (4,8,16) (4,16,8) (8,4,16)<br>
-  (8,8,8) (16,2,16) (16,4,8) (32,1,16) (32,2,8) (64,1,8)</p>
-  <p>Ese es el resultado principal: <b>el dentado es un pick entre doce, no un
-  continuo.</b> Y eso acota su amplitud, porque los doce candidatos abarcan
-  ~17 % en carriles totales.</p>
-</div>
-
-<h3>Lo que NO pude descifrar</h3>
-<div class="note bad"><strong>Cuál de los doce elige para cada B.</strong>
-Probé la hipótesis natural —que minimice carriles totales,
-<code>⌈B/tb⌉·tb × ⌈39/ty⌉·ty × ⌈39/tx⌉·tx × 3</code>— y <b>acierta 36 %
-(17 de 47)</b>, con fallos que son <b>11 a 17 % PEORES</b> en carriles. Así que
-<b>minimizar carriles no es el objetivo</b>.</div>
-
-<div class="note warn"><strong>Hay un patrón parcial, y NO lo ofrezco como
-regla.</strong> <code>(8,8,8)</code> aparece cuando <code>B mod 8 ∈ {5,7,0}</code>
-y <code>(4,8,16)</code> cuando <code>B mod 8 ∈ {1,3,4}</code> — cubre las dos
-elecciones dominantes pero <b>rompe en 8 de 56</b> (B = 45, 47, 75, 77, 93, 95,
-153, 160). Y hay un <b>confound mío</b>: mi extracción toma el <b>primer</b>
-tile de cada firma, y los dos kernels de Triton no vienen ordenados igual en
-todas las corridas, así que parte de esos 8 pueden ser el segundo kernel y no el
-pesado. No lo desenredé. <b>En esta investigación ya se me cayeron cuatro
-patrones post-hoc; este no va a ser el quinto.</b></div>
-
-<h2>Los cuatro puntos de ataque que salen de esto</h2>
-
-<div class="tw"><table>
-  <thead><tr><th>#</th><th>objetivo</th><th>mecanismo</th><th>ataque</th>
-    <th>estado</th></tr></thead>
-  <tbody>
-    <tr><td class="n">1</td><td>la regla de sectores <b>pincha tx</b></td>
-        <td><code>tx</code> debe ser múltiplo de 8 <b>solo porque</b> la tirada
-        contigua son 3 floats = 12 B, que nunca llena un sector de 32</td>
-        <td>hacer la tirada múltiplo de 8 floats y <code>tx</code> queda
-        libre</td>
-        <td class="bad">envenenado: padear a 4 componentes mete
-        <code>v₂ = 2</code> y fuerza ancho 4 para todo B, matando el protocolo
-        de partición</td></tr>
-    <tr><td class="n">2</td><td>el <b>presupuesto de 1536</b></td>
-        <td>el techo duro es 1 048 576, así que 1536 lo <b>calcula</b> el
-        modelo, no es un muro</td>
-        <td>hallar el flag o la entrada que lo fija; otro presupuesto cambia
-        todo el conjunto de candidatos</td>
-        <td class="n">no está en los 79 flags de este build ni en la
-        documentación; haría falta la fuente de XLA</td></tr>
-    <tr class="best"><td class="n">3</td>
-        <td><b>la escapatoria «igual a la dimensión»</b></td>
-        <td><code>tb = B</code> es legal y se tomó en B = 59, 61, 63, 123, 127.
-        En ese régimen el tile es una <b>función determinista de B</b>, así que
-        <b>la aleatoriedad del re-tejado desaparece</b></td>
-        <td>averiguar qué hace que XLA tome esa rama y forzarlo: un tile que
-        siempre iguala la dimensión <b>no tiene dentado de selección</b></td>
-        <td class="best"><b>EL MÁS PROMETEDOR</b> y sin probar. No sabemos el
-        disparador: esos cinco B son impares, pero muchos impares tomaron
-        potencia de 2</td></tr>
-    <tr><td class="n">4</td><td>la <b>amplitud está acotada</b></td>
-        <td>la elección es entre doce candidatos cuyos carriles totales abarcan
-        ~17 %</td>
-        <td>no es un ataque sino una cota: el dentado de selección <b>no puede
-        exceder</b> ese abanico</td>
-        <td class="n">establecido</td></tr>
-  </tbody>
-</table></div>
-
-<div class="note warn"><strong>Alcance honesto.</strong> La regla de sectores
-(<code>tx ≡ 0 mod 8</code>) está <b>derivada</b> de comportamiento documentado y
-se cumple 18/18. El presupuesto de 1536 está <b>observado</b> (51/56),
-<b>no derivado</b>. La selección entre los doce <b>no está resuelta</b>, y la
-minimización de carriles queda refutada al 36 %. Todo es para
-<code>Rd = 18.30</code>, <code>L = 5</code>, <code>N = 39</code> en un build de
-XLA: la regla de sectores debería generalizar porque se sigue del layout, el
-presupuesto puede que no.</div>
-
-<h2>Atacando el punto 3: la escapatoria <code>tb = B</code></h2>
-
-<p>22 lotes <b>impares consecutivos</b> en <b>una sola corrida</b> — así el
-ancho es 1 en todos y el orden de los tiles es consistente, lo que además
-<b>arregla el confound de extracción</b> que había marcado al mezclar corridas.
-Dispersión 0.2–0.5 %.</p>
-
-<div class="key"><p><b><code>tb = B</code> no son puntos dispersos: son dos
-bandas contiguas y nítidas.</b></p>
-<p style="font-family:var(--mono)">tb = B &nbsp;&nbsp;[59, 61, 63] &nbsp;y&nbsp;
-[121, 123, 125, 127]<br>
-pot. de 2 &nbsp;51, 53, 55, 57, 65, 67, 69, 71, 113, 115, 117, 119, 129, 131,
-133</p></div>
-
-<h3>El corte superior: limpio y exacto</h3>
-<div class="key">
-  <p><code>tb = B</code> obliga a <code>ty = 1</code> y <code>tx = 8</code>, así
-  que el tile mide <code><b>24·B</b></code> elementos y <b>debe caber en el
-  presupuesto</b> (1536 o 3072). Las dos bandas terminan exactamente ahí:</p>
-  <p style="font-family:var(--mono)">
-  B = 65 &nbsp;→&nbsp; 24B = 1560 &gt; 1536 &nbsp;→&nbsp; potencia de 2<br>
-  B = 129 → 24B = 3096 &gt; 3072 → potencia de 2</p>
-  <p><b>Condición NECESARIA, verificada 2/2.</b> Pero <b>no suficiente</b>:
-  B = 51…57 y 113…119 caben de sobra y aun así toman potencia de 2.</p>
-</div>
-
-<h3>El corte inferior: sin resolver, y cinco predictores refutados</h3>
-<div class="tw"><table>
-  <thead><tr><th>predictor</th><th>en <code>tb=B</code></th>
-    <th>en pot. de 2</th><th>veredicto</th></tr></thead>
-  <tbody>
-    <tr><td><code>B mod 8</code></td><td class="n">{1,3,5,7}</td>
-        <td class="n">{1,3,5,7}</td><td class="bad">conjuntos idénticos</td></tr>
-    <tr><td><code>B mod 16</code></td><td class="n">{9,11,13,15}</td>
-        <td class="n">{1,3,5,7,9}</td>
-        <td class="bad">separa 20/22 <b>aquí</b>, pero <b>REFUTADO</b> por ocho
-        contraejemplos previos</td></tr>
-    <tr><td>distancia a la pot. de 2</td><td class="n">{1,3,5,7}</td>
-        <td class="n">{7,9,…,127}</td><td class="bad">solapa en 7</td></tr>
-    <tr><td><code>B / pot2</code></td><td class="n">[0.922, 0.992]</td>
-        <td class="n">[0.504, 0.930]</td>
-        <td class="bad">solapa: 0.922 es <code>tb=B</code> pero 0.930 no</td></tr>
-    <tr><td><code>24B / presupuesto</code></td><td class="n">[0.922, 0.992]</td>
-        <td class="n">[0, 0.930]</td><td class="bad">mismo solape</td></tr>
-  </tbody>
-</table></div>
-
-<div class="note bad"><strong>La regla de <code>mod 16</code> murió con datos
-que ya tenía.</strong> Separaba 20 de 22 en esta corrida, pero
-<code>B = 45, 47, 75, 77, 79, 91, 93, 95</code> tienen todos
-<code>B mod 16 ∈ {11,13,15}</code> y <b>tomaron potencia de 2</b>. Es el
-<b>quinto patrón post-hoc que se cae</b> en este trabajo — y el <b>primero que
-cacé antes de gastar una corrida</b> en probarlo.</div>
-
-<h3>Pero el resultado práctico sí sale, y es el que importa</h3>
-<div class="tw"><table>
-  <thead><tr><th>banda</th><th>n</th><th>rango</th><th>media s/réplica</th></tr></thead>
-  <tbody>
-    <tr class="best"><td><b><code>tb=B</code> [59,63]</b></td><td class="n">3</td>
-        <td class="best"><b>2.2 %</b></td><td class="n">0.007992</td></tr>
-    <tr><td>pot2 [51,57]</td><td class="n">4</td><td class="bad">6.7 %</td>
-        <td class="n">0.008494</td></tr>
-    <tr><td>pot2 [65,71]</td><td class="n">4</td><td class="bad">10.8 %</td>
-        <td class="n">0.008210</td></tr>
-    <tr class="best"><td><b><code>tb=B</code> [121,127]</b></td><td class="n">4</td>
-        <td class="best"><b>1.5 %</b></td><td class="n">0.008120</td></tr>
-    <tr><td>pot2 [113,119]</td><td class="n">4</td><td class="n">4.9 %</td>
-        <td class="n">0.008177</td></tr>
-    <tr><td>pot2 [129,133]</td><td class="n">3</td><td class="n">3.4 %</td>
-        <td class="n">0.008039</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>Las bandas <code>tb = B</code> son 3.5× más lisas</b> — rango medio
-  <b>1.8 %</b> contra <b>6.5 %</b> — y el salto entre lotes vecinos es
-  <b>2.4× menor</b>: <b>1.11 %</b> contra <b>2.70 %</b>.</p>
-  <p>Eso es exactamente el objetivo de estandarización, <b>conseguido sin una
-  regla que lo alcance</b>.</p>
-</div>
-
-<div class="key">
-  <p><b>Qué hacer con esto.</b> No hay forma cerrada que llegue al régimen
-  <code>tb = B</code>, pero <b>el tile se ve al compilar en ~40 segundos</b>.
-  Así que las bandas se <b>encuentran</b> compilando candidatos en vez de
-  predecirse — el mismo procedimiento del selector de firma, ahora con un
-  blanco más afilado: <b>preferir un lote cuyo kernel pesado tenga
-  <code>tb = B</code></b>, porque su vecindario es de 2.4 a 3.5 veces más
-  plano.</p>
-</div>
-
-<div class="note warn"><strong>Cuatro límites.</strong> Una corrida, una GPU,
-3600 barridos, 7 repeticiones. <b>Solo se observaron dos bandas</b>, las dos
-justo bajo una potencia de 2, así que si el patrón se repite bajo 256 está sin
-probar. La afirmación de lisura se apoya en <b>5 saltos dentro de bandas
-<code>tb=B</code> contra 11 fuera</b>: la dirección es consistente pero
-<code>n</code> es chico. Y las bandas están a <code>B</code> distintos, así que
-la tendencia <code>a/B</code> contribuye a las <b>medias</b> — la comparación de
-lisura es <b>dentro de cada banda</b> y de eso no se contamina.</div>
-
-<h2>Lo que el diagrama deja ver</h2>
-<div class="key">
-  <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las
-  cajas 2 y 4, que son precisamente las dos que el compilador vectoriza por 4.
-  Las cajas 1 y 5 no se mueven, y la caja 1 es la más cara del lote impar.</p>
-  <p><b>Menos hilos y más lento.</b> En la caja 2, el lote múltiplo de cuatro
-  usa <b>4× menos hilos</b> (266 K contra 1.03 M) y tarda <b>2.2× más</b>. Cada
-  hilo hace cuatro veces el trabajo y lo hace mal, porque las cuatro cargas son
-  escalares y pisan cuatro transacciones de memoria distintas.</p>
-</div>
-
-<div class="note warn"><strong>Lo que no pudimos medir.</strong> Nsight Compute
-(<code>ncu</code>) no está disponible en los contenedores de Modal, así que la
-tasa de aciertos de L2 y las transacciones por sector <b>no están leídas de los
-contadores de hardware</b>: se infieren del reloj y del conteo de instrucciones
-en el PTX. La predicción que quedaría por verificar con contadores es concreta —
-los lotes múltiplos de cuatro deberían mostrar ~4× las transacciones de sector
-por byte útil en la caja 2.</div>
-
-<hr>
-<p style="color:var(--muted);font-size:.87rem">Trazado con
-<code>jax.profiler.trace</code> sobre una ejecución completa tras calentamiento,
-8 temperaturas × 450 barridos = 3600 barridos, con la geometría de lanzamiento
-tomada del <code>thunk_sequence.txt</code> del módulo compilado y el conteo de
-instrucciones del PTX emitido. 44 kernels en B=135 y 43 en B=140; el diagrama
-agrupa los que comparten función. Datos en
-<code>notebooks/simulation/results/curves/opstep_135_140.json</code>.</p>
-</div>
-
-<h2>Dos encargos: la convención, y la gráfica rehecha</h2>
-
-<h3>1. ¿La convención de 20 000 barridos y 50 réplicas está respaldada?</h3>
-
-<div class="note bad"><strong>Primero lo incómodo: no existe una convención
-única en la literatura.</strong> Los valores publicados varían en órdenes de
-magnitud, y cada artículo declara los suyos. Tres ejemplos reales de estudios
-de redes de skyrmiones: <b>10⁵ pasos</b> de equilibración y <b>10⁵</b> de
-promedio, con errores sobre <b>3 corridas</b>; <b>2×10⁵</b> pasos por espín con
-la primera mitad descartada; y <b>2000</b> barridos de termalización más
-<b>2000 realizaciones de 40 barridos</b>. No se puede citar un número y decir
-que es «el estándar», porque no lo hay.</div>
-
-<div class="key"><p><b>Lo que sí hay es un criterio de principio</b>, y es el
-que decide: <code>τ<sub>int</sub> ≪ N<sub>muestras</sub></code>, con la
-advertencia de que <b>τ difiere entre observables</b> y hay que comprobarlo en
-cada uno. Berg lo complementa: <b>descartar un número de barridos mayor que
-τ</b>.</p></div>
-
-<p>Y eso sí lo podemos evaluar, porque <b>medimos nuestro propio τ</b> — y
-resultó depender del estado, no solo de la temperatura:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>estado</th><th>τ medido</th><th>termalización / τ</th>
-    <th>muestras indep.<br>por réplica</th><th>× 50 réplicas</th>
-    <th>veredicto</th></tr></thead>
-  <tbody>
-    <tr><td>uniform</td><td class="n">9</td><td class="best">1667×</td>
-        <td class="n">556</td><td class="n">27 778</td>
-        <td class="best">holgado</td></tr>
-    <tr><td><b>lines</b> (laberinto)</td><td class="bad">482</td>
-        <td class="n">31×</td><td class="bad">10.4</td>
-        <td class="best">519</td><td class="best">holgado</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>El veredicto, con precisión.</b></p>
-  <p>La <b>termalización está bien</b> incluso en el peor estado: 15 000
-  barridos son <b>31×</b> el τ del laberinto, muy por encima del mínimo de
-  Berg.</p>
-  <p>Pero la <b>ventana de medida da solo ~10 muestras independientes por
-  réplica</b> en ese estado. <b>Son las 50 réplicas las que salvan la
-  convención</b>: 10.4 × 50 = <b>519 muestras efectivas</b>, que sí es
-  holgado.</p>
-  <p>O sea: <b>la convención es defendible gracias a las réplicas, no a pesar
-  de ellas</b>. Con 3 corridas, como hace parte de la literatura, el laberinto
-  quedaría con ~31 muestras y las barras de error serían poco fiables.</p>
-</div>
-
-<div class="note warn"><strong>Y el riesgo que esto expone.</strong> Si se
-reduce el número de réplicas para ahorrar tiempo, <b>el estado laberinto es el
-primero que se rompe</b>, y lo hará en silencio: las barras de error se
-subestiman, no desaparecen. Cualquier recorte debería comprobarse midiendo τ en
-ese estado, no en el uniforme.</div>
-
-<h3>2. La gráfica rehecha con el protocolo</h3>
-
-<div class="note bad"><strong>Primero, una corrección de una versión anterior de
-esta misma sección.</strong> Apliqué la ganancia del protocolo a <b>todos</b> los
-brazos de GPU. Está mal: <b>el castigo del ancho depende del lote
-POR DISPOSITIVO, no del total</b>. <code>BP + réplicas</code> reparte 100 cadenas
-entre las GPUs, así que en 2 GPU son <b>50 por dispositivo (ancho 2, gratis)</b> y
-en 4 GPU son <b>25 (ancho 1, gratis)</b> — ahí <b>no hay castigo que quitar</b>.
-Los números de abajo ya están corregidos, y de paso quedan mejor sostenidos:
-<b>dos de las tres celdas mejoradas usan ganancias medidas directamente</b>.</div>
-
-<div class="tw"><table>
-  <thead><tr><th>agrupación</th><th>GPUs</th><th>por dispositivo</th>
-    <th>ancho</th><th>protocolo</th><th>ganancia</th></tr></thead>
-  <tbody>
-    <tr><td rowspan="3">BP + réplicas</td><td class="n">1</td><td class="n">100</td>
-        <td class="bad">4</td><td class="n">1×51 + 1×49</td>
-        <td class="best"><b>−23.5 %</b> <span style="opacity:.7">medido R=100</span></td></tr>
-    <tr><td class="n">2</td><td class="n">50</td><td class="best">2</td>
-        <td class="dead">—</td><td class="dead">sin castigo</td></tr>
-    <tr><td class="n">4</td><td class="n">25</td><td class="best">1</td>
-        <td class="dead">—</td><td class="dead">sin castigo</td></tr>
-    <tr><td rowspan="3">BP + réplicas<br>+ estados</td><td class="n">1</td>
-        <td class="n">400</td><td class="bad">4</td><td class="n">1×201 + 1×199</td>
-        <td class="n">−22.7 % <span style="opacity:.7">extrap. R=200</span></td></tr>
-    <tr><td class="n">2</td><td class="n">200</td><td class="bad">4</td>
-        <td class="n">2×101 + 2×99</td>
-        <td class="best"><b>−22.7 %</b> <span style="opacity:.7">medido R=200</span></td></tr>
-    <tr><td class="n">4</td><td class="n">100</td><td class="bad">4</td>
-        <td class="n">4×51 + 4×49</td>
-        <td class="best"><b>−23.5 %</b> <span style="opacity:.7">medido R=100</span></td></tr>
-    <tr><td>BP only</td><td class="n">1/2/4</td><td class="n">1</td>
-        <td class="best">1</td><td class="dead">—</td>
-        <td class="dead">ya es ancho 1</td></tr>
-    <tr><td>BP + estados</td><td class="n">1</td><td class="n">4</td>
-        <td class="bad">4</td><td class="dead">partir B=4 duplica lanzamientos</td>
-        <td class="dead">no compensa</td></tr>
-  </tbody>
-</table></div>
-
-<h4>Las cuatro plataformas, escala logarítmica</h4>
-<svg viewBox="0 0 1000 440" xmlns="http://www.w3.org/2000/svg" role="img" style="width:100%;height:auto;display:block;margin:1rem auto;font-family:var(--mono),monospace">
-<line x1="72" y1="384.0" x2="984" y2="384.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="389.0" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">0.1</text>
-<line x1="72" y1="317.6" x2="984" y2="317.6" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="322.6" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">1</text>
-<line x1="72" y1="251.2" x2="984" y2="251.2" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="256.2" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">10</text>
-<line x1="72" y1="184.8" x2="984" y2="184.8" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="189.8" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">100</text>
-<line x1="72" y1="118.4" x2="984" y2="118.4" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="123.4" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">1 000</text>
-<line x1="72" y1="52.0" x2="984" y2="52.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="57.0" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">10 000</text>
-<rect x="95.3" y="99.8" width="42.2" height="284.2" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="116.4" y="92.8" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 116.4 92.8)">79.4 d</text>
-<rect x="141.7" y="158.8" width="42.2" height="225.2" fill="#27ae60" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="162.8" y="151.8" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 162.8 151.8)">10.3 d</text>
-<rect x="188.1" y="115.9" width="42.2" height="268.1" fill="#e67e22" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="209.2" y="108.9" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 209.2 108.9)">45.4 d</text>
-<rect x="234.5" y="167.6" width="42.2" height="216.4" fill="#2980b9" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="255.6" y="160.6" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 255.6 160.6)">7.6 d</text>
-<text x="186.0" y="414" text-anchor="middle" font-size="17" font-weight="700" fill="currentColor">CPU</text>
-<rect x="323.3" y="267.1" width="42.2" height="116.9" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="344.4" y="260.1" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 344.4 260.1)">5.8 h</text>
-<rect x="369.7" y="329.6" width="42.2" height="54.4" fill="#27ae60"/>
-<rect x="369.7" y="321.9" width="42.2" height="7.7" fill="none" stroke="#27ae60" stroke-dasharray="4 3" stroke-width="1.3" stroke-opacity="0.9"/>
-<text x="390.8" y="322.6" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 390.8 322.6)">40 min</text>
-<rect x="416.1" y="300.9" width="42.2" height="83.1" fill="#e67e22" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="437.2" y="293.9" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 437.2 293.9)">1.8 h</text>
-<rect x="462.5" y="324.0" width="42.2" height="60.0" fill="#2980b9"/>
-<rect x="462.5" y="316.6" width="42.2" height="7.4" fill="none" stroke="#2980b9" stroke-dasharray="4 3" stroke-width="1.3" stroke-opacity="0.9"/>
-<text x="483.6" y="317.0" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 483.6 317.0)">48 min</text>
-<text x="414.0" y="414" text-anchor="middle" font-size="17" font-weight="700" fill="currentColor">1x H100</text>
-<rect x="551.3" y="266.9" width="42.2" height="117.1" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="572.4" y="259.9" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 572.4 259.9)">5.8 h</text>
-<rect x="597.7" y="340.0" width="42.2" height="44.0" fill="#27ae60"/>
-<text x="618.8" y="333.0" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 618.8 333.0)">28 min</text>
-<rect x="644.1" y="301.3" width="42.2" height="82.7" fill="#e67e22" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="665.2" y="294.3" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 665.2 294.3)">1.8 h</text>
-<rect x="690.5" y="344.9" width="42.2" height="39.1" fill="#2980b9"/>
-<rect x="690.5" y="337.5" width="42.2" height="7.4" fill="none" stroke="#2980b9" stroke-dasharray="4 3" stroke-width="1.3" stroke-opacity="0.9"/>
-<text x="711.6" y="337.9" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 711.6 337.9)">23 min</text>
-<text x="642.0" y="414" text-anchor="middle" font-size="17" font-weight="700" fill="currentColor">2x H100</text>
-<rect x="779.3" y="266.9" width="42.2" height="117.1" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="800.4" y="259.9" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 800.4 259.9)">5.8 h</text>
-<rect x="825.7" y="354.2" width="42.2" height="29.8" fill="#27ae60"/>
-<text x="846.8" y="347.2" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 846.8 347.2)">17 min</text>
-<rect x="872.1" y="302.5" width="42.2" height="81.5" fill="#e67e22" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="893.2" y="295.5" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 893.2 295.5)">1.7 h</text>
-<rect x="918.5" y="362.8" width="42.2" height="21.2" fill="#2980b9"/>
-<rect x="918.5" y="355.1" width="42.2" height="7.7" fill="none" stroke="#2980b9" stroke-dasharray="4 3" stroke-width="1.3" stroke-opacity="0.9"/>
-<text x="939.6" y="355.8" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 939.6 355.8)">13 min</text>
-<text x="870.0" y="414" text-anchor="middle" font-size="17" font-weight="700" fill="currentColor">4x H100</text>
-<rect x="76.0" y="19" width="14" height="14" fill="#c0392b"/>
-<text x="96.0" y="30" font-size="14" fill="currentColor">BP only</text>
-<rect x="301.1851851851852" y="19" width="14" height="14" fill="#27ae60"/>
-<text x="321.1851851851852" y="30" font-size="14" fill="currentColor">BP + réplicas</text>
-<rect x="526.3703703703704" y="19" width="14" height="14" fill="#e67e22"/>
-<text x="546.3703703703704" y="30" font-size="14" fill="currentColor">BP + estados</text>
-<rect x="751.5555555555555" y="19" width="14" height="14" fill="#2980b9"/>
-<text x="771.5555555555555" y="30" font-size="14" fill="currentColor">BP + répl. + estados</text>
-<text x="20" y="218.0" font-size="13" fill="currentColor" opacity="0.75" transform="rotate(-90 20 218.0)" text-anchor="middle">reloj de pared total, horas (log)</text>
-</svg>
-<h4>Solo GPU, escala lineal — donde se ven las diferencias</h4>
-<svg viewBox="0 0 1000 400" xmlns="http://www.w3.org/2000/svg" role="img" style="width:100%;height:auto;display:block;margin:1rem auto;font-family:var(--mono),monospace">
-<line x1="72" y1="344.0" x2="984" y2="344.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="349.0" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">0.0</text>
-<line x1="72" y1="271.0" x2="984" y2="271.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="276.0" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">1.7</text>
-<line x1="72" y1="198.0" x2="984" y2="198.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="203.0" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">3.4</text>
-<line x1="72" y1="125.0" x2="984" y2="125.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="130.0" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">5.1</text>
-<line x1="72" y1="52.0" x2="984" y2="52.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="63" y="57.0" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">6.8</text>
-<rect x="103.1" y="96.4" width="56.2" height="247.6" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="131.2" y="89.4" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 131.2 89.4)">5.8 h</text>
-<rect x="164.9" y="315.6" width="56.2" height="28.4" fill="#27ae60"/>
-<rect x="164.9" y="306.9" width="56.2" height="8.7" fill="none" stroke="#27ae60" stroke-dasharray="4 3" stroke-width="1.3" stroke-opacity="0.9"/>
-<text x="193.1" y="308.6" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 193.1 308.6)">40 min</text>
-<rect x="226.8" y="267.1" width="56.2" height="76.9" fill="#e67e22" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="254.9" y="260.1" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 254.9 260.1)">1.8 h</text>
-<rect x="288.7" y="309.6" width="56.2" height="34.4" fill="#2980b9"/>
-<rect x="288.7" y="299.4" width="56.2" height="10.1" fill="none" stroke="#2980b9" stroke-dasharray="4 3" stroke-width="1.3" stroke-opacity="0.9"/>
-<text x="316.8" y="302.6" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 316.8 302.6)">48 min</text>
-<text x="224.0" y="374" text-anchor="middle" font-size="17" font-weight="700" fill="currentColor">1x H100</text>
-<rect x="407.1" y="94.4" width="56.2" height="249.6" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="435.2" y="87.4" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 435.2 87.4)">5.8 h</text>
-<rect x="468.9" y="324.2" width="56.2" height="19.8" fill="#27ae60"/>
-<text x="497.1" y="317.2" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 497.1 317.2)">28 min</text>
-<rect x="530.8" y="268.3" width="56.2" height="75.7" fill="#e67e22" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="558.9" y="261.3" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 558.9 261.3)">1.8 h</text>
-<rect x="592.7" y="327.3" width="56.2" height="16.7" fill="#2980b9"/>
-<rect x="592.7" y="322.4" width="56.2" height="4.9" fill="none" stroke="#2980b9" stroke-dasharray="4 3" stroke-width="1.3" stroke-opacity="0.9"/>
-<text x="620.8" y="320.3" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 620.8 320.3)">23 min</text>
-<text x="528.0" y="374" text-anchor="middle" font-size="17" font-weight="700" fill="currentColor">2x H100</text>
-<rect x="711.1" y="94.4" width="56.2" height="249.6" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="739.2" y="87.4" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 739.2 87.4)">5.8 h</text>
-<rect x="772.9" y="331.9" width="56.2" height="12.1" fill="#27ae60"/>
-<text x="801.1" y="324.9" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 801.1 324.9)">17 min</text>
-<rect x="834.8" y="271.4" width="56.2" height="72.6" fill="#e67e22" fill-opacity="0.55" stroke="#666" stroke-dasharray="4 3" stroke-width="1"/>
-<text x="862.9" y="264.4" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 862.9 264.4)">1.7 h</text>
-<rect x="896.7" y="335.0" width="56.2" height="9.0" fill="#2980b9"/>
-<rect x="896.7" y="332.3" width="56.2" height="2.8" fill="none" stroke="#2980b9" stroke-dasharray="4 3" stroke-width="1.3" stroke-opacity="0.9"/>
-<text x="924.8" y="328.0" text-anchor="start" font-size="12" fill="currentColor" font-weight="600" transform="rotate(-90 924.8 328.0)">13 min</text>
-<text x="832.0" y="374" text-anchor="middle" font-size="17" font-weight="700" fill="currentColor">4x H100</text>
-<rect x="76.0" y="19" width="14" height="14" fill="#c0392b"/>
-<text x="96.0" y="30" font-size="14" fill="currentColor">BP only</text>
-<rect x="301.1851851851852" y="19" width="14" height="14" fill="#27ae60"/>
-<text x="321.1851851851852" y="30" font-size="14" fill="currentColor">BP + réplicas</text>
-<rect x="526.3703703703704" y="19" width="14" height="14" fill="#e67e22"/>
-<text x="546.3703703703704" y="30" font-size="14" fill="currentColor">BP + estados</text>
-<rect x="751.5555555555555" y="19" width="14" height="14" fill="#2980b9"/>
-<text x="771.5555555555555" y="30" font-size="14" fill="currentColor">BP + répl. + estados</text>
-<text x="20" y="198.0" font-size="13" fill="currentColor" opacity="0.75" transform="rotate(-90 20 198.0)" text-anchor="middle">reloj de pared total, horas</text>
-</svg>
-<div class="key">
-  <p><b>Mejor configuración, antes y después del protocolo:</b></p>
-  <p style="font-family:var(--mono);font-size:.95rem">
-  1× H100 &nbsp;51.7 min → <b>39.6 min</b> &nbsp;(−23.5 %)<br>
-  2× H100 &nbsp;27.6 min → <b>23.3 min</b> &nbsp;(−15.6 %)<br>
-  4× H100 &nbsp;16.4 min → <b>12.5 min</b> &nbsp;(−23.5 %)</p>
-  <p style="opacity:.8;font-size:.93rem">En 2 GPU la mejora es menor porque la
-  configuración que ganaba allí (<code>BP + réplicas</code>, 50 por dispositivo)
-  <b>ya era ancho 2 y no tenía castigo</b>; lo que mejora es la otra, que la
-  adelanta.</p>
-</div>
-
-<h3>Cómo se reparten las réplicas en cada caso</h3>
-<p>El reparto no es libre: <code>pmap</code> exige <b>fragmentos iguales</b>, y
-el código solo reparte si <code>lote % GPUs == 0</code>; si no, <b>corre todo en
-una sola GPU</b> y las demás quedan ociosas.</p>
-
-<div class="tw"><table>
-  <thead><tr><th>agrupación</th><th>lanzamientos</th><th>cadenas<br>por lanz.</th>
-    <th>1 GPU</th><th>2 GPU</th><th>4 GPU</th></tr></thead>
-  <tbody>
-    <tr><td>BP only</td><td class="n">400</td><td class="n">1</td>
-        <td class="n">1×1</td><td class="bad">1×1<br><span style="font-size:.85em">1 GPU ociosa</span></td>
-        <td class="bad">1×1<br><span style="font-size:.85em">3 GPU ociosas</span></td></tr>
-    <tr><td>BP + réplicas</td><td class="n">4</td><td class="n">100</td>
-        <td class="n">1×100</td><td class="n">2×50</td><td class="n">4×25</td></tr>
-    <tr><td>BP + estados</td><td class="n">100</td><td class="n">4</td>
-        <td class="n">1×4</td><td class="n">2×2</td><td class="n">4×1</td></tr>
-    <tr class="best"><td><b>BP + réplicas + estados</b></td><td class="n">1</td>
-        <td class="n">400</td><td class="n">1×400</td><td class="n">2×200</td>
-        <td class="n">4×100</td></tr>
-    <tr style="border-top:2px solid currentColor"><td><b>el mismo, con
-        protocolo</b></td><td class="n">2</td><td class="n">—</td>
-        <td class="best">1×201<br>+ 1×199</td><td class="best">2×101<br>+ 2×99</td>
-        <td class="best">4×51<br>+ 4×49</td></tr>
-  </tbody>
-</table></div>
-
-<div class="note warn"><strong>Dos cosas que esta tabla hace evidentes.</strong>
-<code>BP only</code> <b>no escala en absoluto</b>: su lote es 1, no divide entre
-2 ni 4, así que usa una sola GPU y las demás no hacen nada — por eso su barra es
-idéntica en los tres brazos. Y el protocolo <b>necesita dos lanzamientos</b>
-porque <code>pmap</code> pide fragmentos iguales: no se puede dar 101 a una GPU
-y 99 a otra en la misma llamada, hay que hacer una llamada con todos a 101 y
-otra con todos a 99.</div>
-
-<h3>Qué dice el estado del arte sobre réplicas y número de pasos</h3>
-
-<p>Lo revisé y la respuesta corta es que <b>no hay un número canónico</b>. Lo que
-hay son tres cosas distintas que conviene no mezclar.</p>
-
-<div class="tw"><table>
-  <thead><tr><th>lo que la literatura fija</th><th>valores publicados</th>
-    <th>lo nuestro</th></tr></thead>
-  <tbody>
-    <tr><td><b>Barridos de termalización</b><br>
-        <span style="opacity:.75">descartados antes de medir</span></td>
-        <td class="n">10⁵ · 10⁵ (mitad de 2×10⁵) · 2 000</td>
-        <td class="n">15 000 por temperatura</td></tr>
-    <tr><td><b>Barridos de medida</b><br>
-        <span style="opacity:.75">de los que sale el promedio</span></td>
-        <td class="n">10⁵ · 10⁵ · 2 000×40</td>
-        <td class="n">5 000 por temperatura</td></tr>
-    <tr><td><b>Corridas independientes</b><br>
-        <span style="opacity:.75">de las que salen las barras de error</span></td>
-        <td class="bad">3 · 30 (réplica-exchange)</td>
-        <td class="best">50</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>Los rangos publicados abarcan órdenes de magnitud</b>, y cada artículo
-  declara los suyos sin apelar a un estándar. Lo que sí es común a todos es el
-  <b>criterio</b>, no el número:</p>
-  <p style="font-family:var(--mono);font-size:.95rem;text-align:center">
-  τ<sub>int</sub> ≪ N<sub>muestras</sub></p>
-  <p>con dos advertencias que se repiten: <b>τ difiere entre observables</b>, así
-  que hay que comprobarlo en cada uno; y <b>hay que descartar más barridos que
-  τ</b> antes de empezar a medir (Berg).</p>
-</div>
-
-<div class="note"><strong>Dónde nos deja eso, en las dos direcciones.</strong>
-Nuestros <b>barridos van por debajo</b> de lo que usan los estudios de una sola
-temperatura — pero esa comparación <b>no es justa</b>, porque nosotros
-<b>recocemos</b>: cada temperatura arranca del estado ya equilibrado de la
-anterior, que es el argumento clásico del recocido simulado para necesitar menos
-termalización por paso. Y nuestras <b>réplicas van muy por encima</b>: 50 contra
-las 3 de un estudio y las 30 de otro. <b>El exceso en un eje compensa el defecto
-en el otro</b>, y la tabla de τ de arriba muestra que la cuenta cierra — pero
-cierra <b>por las réplicas</b>.</div>
-
-<div class="note bad"><strong>Y la advertencia operativa.</strong> El equilibrio
-es frágil en una dirección concreta: <b>si se recortan réplicas, el estado
-laberinto es el primero que se rompe</b>, porque es el de τ = 482. Con 50
-réplicas tiene 519 muestras efectivas; con 10 bajaría a 104, y con 3 —como parte
-de la literatura— a <b>31</b>, que ya no sostiene una barra de error. <b>El
-número de pasos no es el que hay que vigilar; es el número de réplicas.</b></div>
-
-<div class="note warn"><strong>Qué es medido y qué no, porque importa.</strong>
-Las seis celdas de <b>BP + réplicas</b> y <b>BP + réplicas + estados</b> sobre
-1, 2 y 4 GPU vienen de <b>escaleras completas medidas de punta a punta</b>; las
-otras diez se extrapolan de una tasa medida y van <b>punteadas</b>. Las ganancias
-del <b>−23.5 %</b> (R=100) y <b>−22.7 %</b> (R=200) están <b>medidas</b> con 7
-repeticiones y se aplican donde el lote <b>por dispositivo</b> coincide con el
-que se midió; solo la celda de 1 GPU en <code>BP + réplicas + estados</code>
-(400 por dispositivo) es <b>extrapolada</b>. El <b>contorno punteado encima de
-cada barra mejorada marca dónde estaba antes</b>.</div>
-
-<div class="note bad"><strong>Y tres límites que no hay que cruzar.</strong> El
-castigo del ancho es un efecto de <b>XLA sobre GPU</b>, así que <b>las barras
-de CPU no cambian</b>. <b>BP + estados no mejora</b>: su lote es
-<code>B = 4</code>, y partirlo duplicaría los lanzamientos sobre un lote donde
-el costo fijo ya domina. Y <b>BP + réplicas solo mejora en 1 GPU</b>, porque al
-repartirse entre 2 o 4 su lote por dispositivo cae a 50 y 25, que ya son ancho
-2 y 1.</div>
-
-<div class="note"><strong>Nota de cronograma.</strong> Esta gráfica mantiene el
-cronograma original de <b>200 × 15 000</b> para que la comparación antes/después
-sea limpia. La producción actual usa <b>200 × 20 000</b>, así que los tiempos
-reales son <b>4/3</b> de estos.</div>
-
-
-<h3>Repartir desigual entre GPUs: la idea es buena, el runtime no la sostiene</h3>
-
-<p>La propuesta: con 400 réplicas y 4 GPUs, en vez de 4×100, dar
-<b>101 a dos GPUs y 99 a las otras dos</b>. Cada dispositivo recibe ~100
-cadenas, <b>impares</b> (ancho 1) y <b>fuera de la zona empinada</b> de
-<code>a/B</code>. Sobre el papel junta las dos ventajas en una sola ola.</p>
-
-<div class="key"><p><b>Y la observación que la motiva es correcta y es un
-hallazgo.</b> <code>BP + réplicas</code> en 4 GPU reparte 100 cadenas entre
-cuatro → <b>25 por dispositivo</b>. La curva medida pone <code>B = 25</code> en
-<b>11.561 s/réplica</b> contra <b>9.130</b> en B=45 y <b>9.162</b> en B=55:
-<b>26 % peor</b>. Eso explica por qué <code>both</code> le gana ahí <b>a pesar
-de pagar ancho 4</b>.</p></div>
-
-<p>Medido en <b>4 H100 reales</b>, 400 barridos, 7 repeticiones:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>esquema</th><th>olas</th><th>por dispositivo</th>
-    <th>segundos</th><th>vs A</th></tr></thead>
-  <tbody>
-    <tr><td><b>A</b> &nbsp;1 ola de 4×100 <span style="opacity:.75">(lo que hay
-        hoy)</span></td><td class="n">1</td><td class="bad">100 · ancho 4</td>
-        <td class="n">0.0547</td><td class="n">—</td></tr>
-    <tr class="best"><td><b>B</b> &nbsp;2 olas de 4×51 y 4×49
-        <span style="opacity:.75">(el protocolo)</span></td><td class="n">2</td>
-        <td class="best">51, 49 · ancho 1</td><td class="n"><b>0.0455</b></td>
-        <td class="best"><b>−16.8 %</b></td></tr>
-    <tr><td><b>C</b> &nbsp;2×101 + 2×99 en pares disjuntos
-        <span style="opacity:.75">(la propuesta)</span></td><td class="n">2</td>
-        <td class="best">101, 99 · ancho 1</td><td class="bad">0.0836</td>
-        <td class="bad">+52.8 %</td></tr>
-    <tr><td><b>D</b> &nbsp;4 olas de 4×25
-        <span style="opacity:.75">(BP + réplicas)</span></td><td class="n">4</td>
-        <td class="bad">25 · zona empinada</td><td class="n">0.0583</td>
-        <td class="n">+6.7 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="note bad"><strong>Los dos <code>pmap</code> disjuntos NO se
-solapan.</strong> C sale <b>+83.8 %</b> contra B. El diagnóstico es directo:
-cada llamada usa <b>solo dos de las cuatro GPUs</b>, así que si se serializan,
-el esquema corre sobre <b>la mitad del hardware durante el doble de tiempo</b> —
-que es justo lo que dice ese +84 %. Emití las dos llamadas sin bloquear entre
-ellas, que es la forma correcta de pedir solapamiento, y aun así se
-serializaron. <b>La idea es sólida; el runtime no entrega la concurrencia que
-necesita.</b></div>
-
-<div class="key"><p><b>Y de paso, la primera confirmación del protocolo en
-multi-GPU real:</b> el esquema B le gana <b>16.8 %</b> al reparto actual, sobre
-cuatro H100 físicos y no por modelo.</p></div>
-
-<div class="note warn"><strong>Un límite que hay que leer antes de usar estos
-números.</strong> Esto corrió a <b>400 barridos</b>, donde la curva
-<code>a/B</code> <b>no reproduce el orden de producción</b>: el esquema D salió
-<b>+6.7 %</b> contra A aquí, mientras que el modelo extrapolado a producción lo
-pone en <b>−9.9 %</b>. Así que <b>las magnitudes de esta tabla no se trasladan
-a la escalera completa</b>. Lo que sí se traslada es el hallazgo estructural —
-que los <code>pmap</code> disjuntos se serializan — porque es una propiedad del
-despacho y no del cronograma.</div>
-
-<div class="key">
-  <p><b>Dónde queda la recomendación.</b></p>
-  <p>Sigue siendo el <b>protocolo B</b>: dos olas con lote impar por
-  dispositivo. No porque el reparto desigual sea peor en principio —en el
-  modelo <b>empatan</b>, dentro del 0.02 %— sino porque <b>el desigual exige
-  una concurrencia que JAX no da</b>.</p>
-</div>
-
-<h3>¿Y por qué «quitar» BP + réplicas? — lo expliqué mal</h3>
-
-<div class="note bad"><strong>Lo escribí como si 25 por dispositivo fuera un
-defecto descalificante. No lo es.</strong> El argumento correcto es otro, y es
-más matizado: <b>el ganador cambia con el número de GPUs</b>, y en 2 y 4 la
-otra agrupación simplemente llega a un punto mejor de la curva.</div>
-
-<p>Con la escalera completa <b>medida</b> (200 × 15 000), aplicando el
-protocolo donde hay castigo:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>GPUs</th><th>agrupación</th><th>por dispositivo</th>
-    <th>ancho</th><th>medido</th><th>con protocolo</th><th>gana</th></tr></thead>
-  <tbody>
-    <tr class="best"><td rowspan="2" class="n">1</td><td>BP + réplicas</td>
-        <td class="n">100</td><td class="bad">4</td><td class="n">51.7 min</td>
-        <td class="best"><b>39.6 min</b></td>
-        <td rowspan="2" class="best"><b>réplicas</b><br>por 21.4 %</td></tr>
-    <tr><td>BP + répl. + estados</td><td class="n">400</td><td class="bad">4</td>
-        <td class="n">62.1 min</td><td class="n">48.0 min</td></tr>
-    <tr><td rowspan="2" class="n">2</td><td>BP + réplicas</td>
-        <td class="n">50</td><td class="best">2</td><td class="n">27.6 min</td>
-        <td class="n">27.6 min</td>
-        <td rowspan="2" class="best"><b>ambos ejes</b><br>por 15.6 %</td></tr>
-    <tr class="best"><td>BP + répl. + estados</td><td class="n">200</td>
-        <td class="bad">4</td><td class="n">30.1 min</td>
-        <td class="best"><b>23.3 min</b></td></tr>
-    <tr><td rowspan="2" class="n">4</td><td>BP + réplicas</td>
-        <td class="bad">25</td><td class="best">1</td><td class="n">16.9 min</td>
-        <td class="n">16.9 min</td>
-        <td rowspan="2" class="best"><b>ambos ejes</b><br>por 25.8 %</td></tr>
-    <tr class="best"><td>BP + répl. + estados</td><td class="n">100</td>
-        <td class="bad">4</td><td class="n">16.4 min</td>
-        <td class="best"><b>12.5 min</b></td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>El ganador se da la vuelta entre 1 y 2 GPUs.</b></p>
-  <p>En <b>1 GPU gana BP + réplicas</b> (39.6 contra 48.0 min). En <b>2 y 4
-  gana la de ambos ejes</b>. No hay una agrupación «mejor» a secas.</p>
-</div>
-
-<div class="key">
-  <p><b>Y por qué BP + réplicas no se puede arreglar en 4 GPU.</b></p>
-  <p>Su lote por lanzamiento es <b>100</b> — un estado a la vez, sus 100
-  réplicas. Repartido entre 4 da <b>25 por dispositivo</b>. Para subir ese
-  número habría que meter <b>más de un estado por lanzamiento</b>… y eso
-  <b>ya es la agrupación de ambos ejes</b>.</p>
-  <p>O sea: <b>25 no está «roto»</b>, es un punto peor de la curva
-  (11.561 s/réplica contra 9.1 en la zona de 45–55). Lo que pasa es que esa
-  agrupación <b>no puede alcanzar un punto mejor por construcción</b>, y la
-  otra sí.</p>
-</div>
-
-<div class="note warn"><strong>Así que la recomendación correcta no es
-«quitarla».</strong> Es: <b>elegir la agrupación según cuántas GPUs haya</b> —
-réplicas en 1, ambos ejes en 2 y 4 — y aplicar el protocolo donde el lote por
-dispositivo sea múltiplo de cuatro. Retiro el «debería dejar de usarse» que
-escribí antes: era cierto para 4 GPU pero lo presenté como si valiera siempre,
-y en 1 GPU es justo al revés.</div>
-
-
-<h2>La metodología, corregida: el eje de «estados» no existe</h2>
-
-<div class="key"><p><b>Esto lo corrigió el usuario y tiene razón.</b> Fui a
-verificarlo al código en vez de discutirlo, y el código le da la razón.</p></div>
-
-<p><code>pack()</code> construye las columnas de parámetros con
-<code>np.repeat</code>, que ordena <b>en bloques</b>; y <code>shard()</code>
-hace <code>reshape(4, 100)</code>. El resultado sobre 4 GPUs:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>dispositivo</th><th>cadenas</th><th>estados que recibe</th></tr></thead>
+  <thead><tr><th>dispositivo</th><th>cadenas</th><th>estados</th></tr></thead>
   <tbody>
     <tr><td class="n">GPU 0</td><td class="n">100</td><td><code>uniform</code></td></tr>
     <tr><td class="n">GPU 1</td><td class="n">100</td><td><code>helical</code></td></tr>
@@ -2602,87 +437,17 @@ hace <code>reshape(4, 100)</code>. El resultado sobre 4 GPUs:</p>
   </tbody>
 </table></div>
 
-<div class="key">
-  <p><b>Un estado entero por GPU.</b> Así que el supuesto «eje de estados»
-  <b>no aporta paralelismo ninguno</b>: solo decide <b>qué</b> estado cae en
-  <b>qué</b> dispositivo. Un estado no es un eje — es un <b>parámetro por
-  cadena</b>, y las cadenas ya son independientes.</p>
-</div>
+<div class="key"><p><b>Un estado entero por GPU.</b> El «eje de estados» <b>no
+aporta paralelismo</b>: solo decide qué estado cae en qué dispositivo. Un estado
+no es un eje — es un <b>parámetro por cadena</b>, y las cadenas ya eran
+independientes. Así que todas las agrupaciones son lo mismo: <b>elecciones de
+cuántas cadenas por dispositivo y en cuántas olas</b>.</p></div>
 
-<h3>Lo que eso implica para toda la comparación</h3>
+<h3>6.2 · Las gráficas</h3>
 
-<p>Si el eje de estados no existe, entonces las cuatro «agrupaciones»
-<b>no son cuatro estrategias de paralelización</b>. Son cuatro elecciones de
-<b>cuántas cadenas por dispositivo y en cuántas olas</b>, y nada más:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>agrupación</th><th>olas</th><th>por disp. y ola</th>
-    <th>ancho</th><th>total por disp.</th><th>medido 4 GPU</th></tr></thead>
-  <tbody>
-    <tr><td>BP + réplicas</td><td class="n">4</td><td class="bad">25</td>
-        <td class="best">1</td><td class="n">100</td><td class="n">16.9 min</td></tr>
-    <tr><td>BP + répl. + estados</td><td class="n">1</td><td class="n">100</td>
-        <td class="bad">4</td><td class="n">100</td><td class="n">16.4 min</td></tr>
-    <tr class="best"><td><b>el protocolo</b></td><td class="n">2</td>
-        <td class="best">51 y 49</td><td class="best">1</td><td class="n">100</td>
-        <td class="best"><b>12.5 min</b></td></tr>
-  </tbody>
-</table></div>
-
-<div class="key"><p><b>Las tres mueven exactamente las mismas 100 cadenas por
-dispositivo.</b> Lo único que cambia es <b>en cuántas olas y de qué tamaño</b>
-— y eso explica toda la diferencia de tiempo. No hay ninguna «ventaja de
-estados» que medir.</p></div>
-
-<div class="note"><strong>Y así es como el usuario lleva razón en el fondo.</strong>
-Lo que gana <b>es una decisión sobre el reparto de réplicas</b>: dos olas con
-51 y 49 por dispositivo. Los estados van de pasajeros, como columnas de
-parámetros. Llamar a eso «BP + réplicas + estados» <b>sugiere una segunda
-palanca que no existe</b>. El nombre honesto sería <b>«51 y 49 réplicas por
-dispositivo, dos olas»</b>, y los estados ni se mencionan.</div>
-
-<h3>Y una consecuencia práctica que esto desbloquea</h3>
-
-<div class="key">
-  <p>Si un estado es solo un parámetro por cadena, <b>no hay nada que obligue a
-  dar el mismo número de réplicas a cada estado</b>.</p>
-  <p>Y eso importa, porque <b>ya medimos que no todos cuestan lo mismo
-  estadísticamente</b>: <code>τ = 9</code> para <code>uniform</code> contra
-  <code>τ = 482</code> para <code>lines</code>. Con 50 réplicas por estado,
-  <code>lines</code> acaba con <b>519 muestras efectivas</b> y
-  <code>uniform</code> con <b>27 778</b> — un desperdicio de <b>50×</b> en el
-  estado fácil.</p>
-  <p>Repartir por <code>τ</code> en vez de por partes iguales daría las mismas
-  barras de error con <b>bastantes menos cadenas totales</b>. Es la vía más
-  prometedora que queda, y <b>sin probar</b>.</p>
-</div>
-
-<div class="note warn"><strong>El obstáculo, concreto.</strong>
-<code>pmap</code> exige <b>fragmentos iguales</b>, así que un reparto desigual
-por estado necesita <b>un lanzamiento por estado</b> — justo la estructura de
-<code>BP + réplicas</code>. Y ahí vuelve el problema del lote chico: 4
-lanzamientos de 25 por dispositivo. La salida sería dar a cada estado el
-<b>número de réplicas que su τ pida</b>, redondeado a un lote impar decente por
-dispositivo, en vez de 100 a cada uno. <b>Eso sí habría que medirlo.</b></div>
-
-
-<h2>La gráfica, rehecha sin el eje de estados</h2>
-
-<p>Ya que el eje de estados no existe, las barras pasan de cuatro a <b>tres</b>,
-y todas son decisiones sobre <b>cómo repartir 400 réplicas</b>:</p>
-
-<div class="tw"><table>
-  <thead><tr><th>barra</th><th>1 GPU</th><th>2 GPU</th><th>4 GPU</th></tr></thead>
-  <tbody>
-    <tr><td><b>BP only</b></td><td colspan="3" class="n">400 lanzamientos de
-        1 cadena — una sola GPU trabaja</td></tr>
-    <tr><td><b>BP + réplicas</b></td><td class="n">1×400</td>
-        <td class="n">2×200</td><td class="n">4×100</td></tr>
-    <tr class="best"><td><b>BP + réplicas optimizado</b></td>
-        <td class="n">2 olas<br>201 + 199</td><td class="n">2 olas<br>101 + 99</td>
-        <td class="n">2 olas<br>51 + 49</td></tr>
-  </tbody>
-</table></div>
+<p>400 cadenas, 200 temperaturas × 15 000 barridos. Tres repartos:
+<b>BP only</b> (400 lanzamientos de 1), <b>BP + réplicas</b> (una ola de 400
+repartida) y el mismo <b>optimizado</b> con el protocolo.</p>
 
 <svg viewBox="0 0 1000 430" xmlns="http://www.w3.org/2000/svg" role="img" style="width:100%;height:auto;display:block;margin:1rem auto;font-family:var(--mono),monospace">
 <line x1="72" y1="374.0" x2="984" y2="374.0" stroke="currentColor" stroke-opacity="0.18"/>
@@ -2734,7 +499,7 @@ y todas son decisiones sobre <b>cómo repartir 400 réplicas</b>:</p>
 <text x="20" y="213.0" font-size="13" fill="currentColor" opacity="0.75" transform="rotate(-90 20 213.0)" text-anchor="middle">reloj de pared total, horas (log)</text>
 </svg>
 <p style="text-align:center;opacity:.75;font-size:.92rem">
-Las cuatro plataformas, escala logarítmica</p>
+Las cuatro plataformas, escala logarítmica · barra punteada = extrapolada</p>
 <svg viewBox="0 0 1000 395" xmlns="http://www.w3.org/2000/svg" role="img" style="width:100%;height:auto;display:block;margin:1rem auto;font-family:var(--mono),monospace">
 <line x1="72" y1="339.0" x2="984" y2="339.0" stroke="currentColor" stroke-opacity="0.18"/>
 <text x="63" y="344.0" text-anchor="end" font-size="13" fill="currentColor" opacity="0.7">0.0</text>
@@ -2781,176 +546,41 @@ Solo GPU, escala lineal</p>
 <div class="key">
   <p><b>Con el reparto optimizado:</b></p>
   <p style="font-family:var(--mono);font-size:.95rem">
-  1× H100 &nbsp;62.1 → <b>48.0 min</b> &nbsp;(−22.7 %)<br>
-  2× H100 &nbsp;30.1 → <b>23.3 min</b> &nbsp;(−22.7 %)<br>
-  4× H100 &nbsp;16.4 → <b>12.5 min</b> &nbsp;(−23.5 %)</p>
-  <p style="opacity:.8;font-size:.92rem">Ganancias medidas con el
-  <b>kernel de producción</b> (<code>eng["anneal"]</code>): −23.5 % en R=100 y
-  −22.7 % en R=200. La celda de 1 GPU (400 por dispositivo) <b>extrapola</b> la
-  de R=200, porque R=400 nunca se midió directo.</p>
+  1× H100 &nbsp;62.1 → <b>48.0 min</b><br>
+  2× H100 &nbsp;30.1 → <b>23.3 min</b><br>
+  4× H100 &nbsp;16.4 → <b>12.5 min</b></p>
+  <p style="opacity:.8;font-size:.92rem">Las tres celdas de
+  <b>BP + réplicas</b> son escaleras completas medidas de punta a punta. Las
+  ganancias vienen del <b>kernel de producción</b>: −23.5 % en R=100 y −22.7 %
+  en R=200.</p>
 </div>
 
-<h3>La búsqueda de particiones, y lo que encontró</h3>
-<p>No asumí la partición: la busqué. Cinco candidatas por brazo, 600 barridos,
-7 repeticiones, sobre 4 H100. <b>Advertencia:</b> esta tabla se midió con el
-<b>kernel simplificado</b>, así que sus <b>magnitudes están subestimadas</b> —
-lo que sí vale de ella es <b>cuál partición gana</b>, que es la pregunta que se
-le hizo.</p>
+<div class="note"><strong>Por qué <code>BP only</code> no escala.</strong> Su
+lote es 1, que no divide entre 2 ni entre 4, así que <code>pmap</code> lo manda
+a <b>una sola GPU</b> y las demás quedan ociosas. Por eso su barra es idéntica
+en los tres brazos.</div>
 
-<div class="tw"><table>
-  <thead><tr><th>por dispositivo</th><th>partición</th><th>olas</th>
-    <th>anchos</th><th>vs una ola</th></tr></thead>
-  <tbody>
-    <tr><td rowspan="4" class="n">400<br>(1 GPU)</td><td class="n">400</td>
-        <td class="n">1</td><td class="bad">4</td><td class="n">—</td></tr>
-    <tr class="best"><td class="n">201 + 199</td><td class="n">2</td>
-        <td class="best">1, 1</td><td class="n">−1.3 %</td></tr>
-    <tr><td class="n">135 + 133 + 132</td><td class="n">3</td>
-        <td class="bad">1,1,4</td><td class="bad">+8.5 %</td></tr>
-    <tr><td class="n">101+101+99+99</td><td class="n">4</td>
-        <td class="best">1×4</td><td class="n">−1.3 %</td></tr>
-    <tr><td rowspan="3" class="n">200<br>(2 GPU)</td><td class="n">200</td>
-        <td class="n">1</td><td class="bad">4</td><td class="n">—</td></tr>
-    <tr class="best"><td class="n">101 + 99</td><td class="n">2</td>
-        <td class="best">1, 1</td><td class="best"><b>−13.0 %</b></td></tr>
-    <tr><td class="n">51+51+49+49</td><td class="n">4</td>
-        <td class="best">1×4</td><td class="n">−6.5 %</td></tr>
-    <tr><td rowspan="3" class="n">100<br>(4 GPU)</td><td class="n">100</td>
-        <td class="n">1</td><td class="bad">4</td><td class="n">—</td></tr>
-    <tr class="best"><td class="n">51 + 49</td><td class="n">2</td>
-        <td class="best">1, 1</td><td class="best"><b>−9.9 %</b></td></tr>
-    <tr><td class="n">25+25+25+25</td><td class="n">4</td>
-        <td class="best">1×4</td><td class="bad">+14.1 %</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key"><p><b>El patrón es el mismo en los tres brazos: dos olas con
-las mitades impares.</b> Más olas <b>empeora</b> — cuatro de 25 sobre 4 GPU
-sale <b>+14.1 %</b>, porque el lote por dispositivo cae a la zona empinada de
-<code>a/B</code>.</p></div>
-
-<div class="note bad"><strong>Y un resultado que no cuadra, dicho como
-tal.</strong> En <b>1 GPU la ganancia es solo −1.3 %</b>, cuando la curva de
-producción dice que el castigo del ancho vale <b>+40 % entre B=40 y 200</b> y
-<b>+55 % entre 200 y 1200</b>. Con 400 por dispositivo debería haber mucho más
-que ganar. No es que faltara la partición: <code>[101,101,99,99]</code> dio
-exactamente lo mismo que <code>[201,199]</code>. <b>El lote de 400 simplemente
-no paga el castigo en esta prueba.</b></div>
-
-<h3>En qué se diferencian los dos kernels, y por qué pesa tanto</h3>
-
-<p>La búsqueda de particiones usaba un <code>body</code> simplificado y el
-chart usa <code>eng["anneal"]</code>, el de producción. Leídos en
-<code>sim_core</code>, las diferencias son tres:</p>
-
-<div class="tw"><table>
-  <thead><tr><th></th><th>mi kernel de prueba</th><th><code>anneal</code>
-    (producción)</th></tr></thead>
-  <tbody>
-    <tr><td><b>sub-pasos por barrido</b></td>
-        <td class="bad">uno</td>
-        <td class="n">dos — subred par y subred impar, que es el
-        <b>update bipartito</b></td></tr>
-    <tr><td><b>medición</b></td><td class="bad">ninguna</td>
-        <td class="n">bucle de <code>n_meas</code> acumulando E, E², M, M²,
-        M<sub>z</sub> y carga topológica</td></tr>
-    <tr><td><b>escalera</b></td><td class="bad">una sola temperatura</td>
-        <td class="n">200 betas anidadas sobre todo lo anterior</td></tr>
-  </tbody>
-</table></div>
-
-<div class="key">
-  <p><b>Y por eso pesa tanto: la fusión es una propiedad del programa
-  entero, no del <code>substep</code>.</b></p>
-  <p>El castigo del ancho no vive «en el substep». Vive en <b>las fusiones que
-  XLA construye</b> — y XLA fusiona mirando todo el programa. Con solo un
-  <code>substep</code> en un bucle, el compilador tiene un grafo distinto y
-  produce <b>fusiones distintas</b>: puede no emitir las <code>kLoop</code>
-  anchas que en el programa completo cuestan +118 % (la mega-fusión de
-  Threefry) y +76 % (la aceptación).</p>
-  <p>Dicho de otro modo: <b>medí un programa que no existe</b>. El castigo era
-  real en producción y ausente en mi maqueta, no porque el hardware cambiara
-  sino porque el compilador emitió otro código.</p>
-</div>
-
-<div class="note warn"><strong>Lo que esto NO prueba todavía.</strong> Nombro
-las tres diferencias leyéndolas del código, y el argumento de que la fusión es
-program-wide está apoyado en lo que ya medimos (los mismos kernels cambian de
-nombre y de forma entre dos lotes del mismo programa). Pero <b>no he comparado
-los volcados de HLO de los dos kernels</b>, que es lo que cerraría el caso. La
-búsqueda ya está arreglada para usar <code>anneal</code> y queda pendiente de
-correr.</div>
-
-<div class="note bad"><strong>Y la consecuencia inmediata: retrocedí.</strong>
-La gráfica anterior daba <b>12.5 min</b> en 4 GPU y la nueva daba
-<b>14.7 min</b>. La diferencia no era un hallazgo: era que cambié la fuente de
-la ganancia de <b>−23.5 % (kernel de producción)</b> a <b>−9.9 % (kernel
-simplificado)</b>. <b>Revertido</b>: la gráfica vuelve a usar las ganancias
-medidas con <code>anneal</code>.</div>
-
-<div class="note"><strong>Qué es medido y qué no, en estas barras.</strong> Las
-tres celdas de <b>BP + réplicas</b> sobre 1, 2 y 4 GPU son <b>escaleras
-completas medidas de punta a punta</b> (sólidas). <b>BP only</b> y todo el brazo
-de <b>CPU</b> se extrapolan de una tasa medida (punteadas). Y la barra
-<b>optimizado</b> es la medida anterior <b>multiplicada por la ganancia de la
-búsqueda de particiones</b>, que se midió a 600 barridos: es la opción
-conservadora, pero <b>no es una escalera completa</b>.</div>
-
-
-<h2>Qué es <code>tau</code>, y el reparto de réplicas que permite</h2>
+<h3>6.3 · <code>tau</code>: cuántas réplicas hacen falta de verdad</h3>
 
 <div class="key"><p><b><code>τ</code> es el tiempo de autocorrelación
 integrado: cuántos barridos hay que esperar para que una medida sea
 independiente de la anterior.</b></p></div>
 
-<p>El problema que resuelve: en Monte Carlo cada configuración nace de la
-anterior, así que dos medidas consecutivas <b>no son dos datos</b> — son casi
-el mismo dato. Si tomas 5000 medidas con <code>τ = 694</code>, no tienes 5000
-datos:</p>
+<p>En Monte Carlo cada configuración nace de la anterior, así que dos medidas
+consecutivas <b>no son dos datos</b>. Con <code>τ = 694</code>, 5000 medidas
+son <code>5000/694 ≈ 7</code> datos reales. Y como las barras de error escalan
+con <code>1/√N<sub>efectivo</sub></code>, <b>ignorar <code>τ</code> no falla
+ruidosamente: produce barras ~27 veces más estrechas de lo que corresponde</b>.
+Mienten en silencio.</p>
 
-<p style="font-family:var(--mono);text-align:center;font-size:1.02rem">
-N<sub>efectivo</sub> = 5000 / 694 ≈ 7</p>
-
-<p>Y las barras de error escalan con <code>1/√N<sub>efectivo</sub></code>, no
-con <code>1/√5000</code>. <b>Ignorar <code>τ</code> no produce un fallo
-ruidoso: produce barras de error ~27 veces más estrechas de lo que
-corresponde.</b> Mienten en silencio.</p>
-
-<p>Formalmente se obtiene sumando la función de autocorrelación,
-<code>τ<sub>int</sub> = ½ + Σ<sub>k</sub> ρ(k)</code>, donde <code>ρ(k)</code>
-es la correlación entre medidas separadas <code>k</code> barridos. Esa suma
-hasta infinito tiene varianza divergente, así que hay que <b>cortarla en una
-ventana</b>; el código usa el criterio de <b>Madras–Sokal</b> — cortar en el
-primer <code>M</code> con <code>M ≥ 5·τ</code> — calculado por FFT.</p>
-
-<h3>Medido en los cuatro estados</h3>
-<div class="tw"><table>
-  <thead><tr><th>T</th><th>uniform</th><th>helical</th><th>points</th>
-    <th>lines</th></tr></thead>
-  <tbody>
-    <tr><td class="n">20.00</td><td class="n">5.6</td><td class="n">7.6</td>
-        <td class="n">7.5</td><td class="n">7.1</td></tr>
-    <tr><td class="n">14.20</td><td class="n">7.8</td><td class="n">39.2</td>
-        <td class="n">32.8</td><td class="n">73.0</td></tr>
-    <tr><td class="n">11.00</td><td class="n">10.5</td><td class="n">78.8</td>
-        <td class="n">48.4</td><td class="bad">257.2</td></tr>
-    <tr><td class="n">3.00</td><td class="n">65.4</td><td class="n">167.5</td>
-        <td class="n">229.7</td><td class="n">365.7</td></tr>
-    <tr><td class="n">0.50</td><td class="bad">316.5</td><td class="bad">467.7</td>
-        <td class="bad">590.0</td><td class="bad">694.4</td></tr>
-  </tbody>
-</table></div>
-
-<div class="note bad"><strong>Y esto corrige a la baja algo que afirmé.</strong>
-Dije que había un «desperdicio de 50×» en el estado fácil, apoyándome en una
-medición vieja (<code>τ = 9</code> contra <code>482</code>). <b>Esos números
-eran de una sola temperatura.</b> Lo que ata de verdad es el <b>máximo sobre
-toda la escalera</b>, porque hace falta muestreo adecuado en cada punto — y ahí
-el desequilibrio es <b>2.2×</b>, no 50×.</div>
+<p>Medido en los cuatro estados con ventaneo de Madras–Sokal, el
+<code>τ</code> máximo sobre la escalera —que es el que ata— y el reparto que
+sugiere:</p>
 
 <div class="tw"><table>
   <thead><tr><th>estado</th><th>τ máx</th><th>réplicas<br>iguales</th>
-    <th>N<sub>ef</sub></th><th>réplicas<br>por τ</th><th>N<sub>ef</sub></th></tr></thead>
+    <th>N<sub>ef</sub></th><th>réplicas<br>por τ</th>
+    <th>N<sub>ef</sub></th></tr></thead>
   <tbody>
     <tr><td>uniform</td><td class="n">316.5</td><td class="n">100</td>
         <td class="bad">1580</td><td class="best">61</td><td class="n">967</td></tr>
@@ -2963,19 +593,75 @@ el desequilibrio es <b>2.2×</b>, no 50×.</div>
   </tbody>
 </table></div>
 
-<div class="key">
-  <p><b>El reparto por <code>τ</code> iguala las muestras efectivas en los
-  cuatro estados</b> — 967 cada uno, contra un abanico de 720 a 1580 con
-  reparto igual.</p>
-  <p>Y el ahorro: para dar a <b>todos</b> las 720 muestras efectivas que hoy
-  tiene el peor estado, bastan <b>298 cadenas en vez de 400</b> —
-  un <b>−26 %</b>.</p>
-</div>
+<div class="key"><p>El reparto por <code>τ</code> iguala las muestras efectivas
+en los cuatro estados. Y para dar a <b>todos</b> las 720 que hoy tiene el peor,
+bastan <b>298 cadenas en vez de 400</b> — un <b>−26 %</b>. Es aritmética sobre
+los τ medidos, <b>no una corrida comparada</b>.</p></div>
 
-<div class="note warn"><strong>Dos límites.</strong> El ahorro del 26 % es
-<b>aritmética sobre los τ medidos</b>, no una corrida comparada: habría que
-verificar que las barras de error efectivamente coinciden. Y <code>τ</code>
-crece mucho al enfriar — de 5.6 a 316.5 en <code>uniform</code> — así que
-<b>la ventana de 5000 barridos es holgada arriba y justa abajo</b>; repartir
-por τ equilibra entre estados pero <b>no arregla eso</b>.</div>
+<h2>7 · Lo que se intentó y no funcionó</h2>
+
+<p>Tres kernels propios, en dos backends. <b>Los tres exactos a redondeo de
+<code>f32</code>, los tres más lentos.</b></p>
+
+<div class="tw"><table>
+  <thead><tr><th>intento</th><th>resultado</th><th>por qué</th></tr></thead>
+  <tbody>
+    <tr><td>Pallas sobre <code>mosaic_gpu</code></td><td class="bad">+15 a +31 %</td>
+        <td>ocho rechazos distintos; el único tile admisible es <b>degenerado</b>
+        (1×1), así que cada sitio se trae siete veces de memoria</td></tr>
+    <tr><td>Pallas sobre Triton, rejilla 2-D</td><td class="bad">+26.3 %</td>
+        <td>4096 carriles para 1521 sitios</td></tr>
+    <tr><td>Pallas sobre Triton, aplanado a 2048</td><td class="bad">+21.0 %</td>
+        <td>la mitad de carriles desperdiciados, pero solo <b>−2.9 %</b> —
+        lo que <b>refuta</b> que el desperdicio fuera la causa</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>El costo real es el <i>gather</i>.</b> 1521 sitios × 7
+vecinos × 3 componentes = <b>31 941 direcciones calculadas por carril</b>,
+contra siete lecturas contiguas y coalescidas que produce
+<code>jnp.roll</code>. Ganar exigiría cargas coalescidas, o sea el halo en
+SRAM — el diseño que <code>mosaic_gpu</code> rechazó y que Pallas-Triton
+tampoco expresa, porque no tiene <code>slice</code> ni
+<code>concatenate</code>. <b>Las dos puertas dan al mismo sitio.</b></p></div>
+
+<h2>8 · La convención de barridos y réplicas</h2>
+
+<div class="note bad"><strong>No existe un estándar.</strong> Los estudios
+publicados de redes de skyrmiones varían en órdenes de magnitud y cada uno
+declara el suyo: 10⁵ + 10⁵ con <b>3 corridas</b>; 2×10⁵ por espín con la mitad
+descartada; 2000 + 2000×40. <b>No se puede citar un número y llamarlo «el
+estándar».</b></div>
+
+<p>Lo que sí hay es un <b>criterio</b>:
+<code>τ<sub>int</sub> ≪ N<sub>muestras</sub></code>, con la advertencia de que
+τ difiere entre observables, más la regla de Berg de <b>descartar más barridos
+que τ</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>lo que se fija</th><th>publicado</th><th>lo nuestro</th>
+    <th>veredicto</th></tr></thead>
+  <tbody>
+    <tr><td>termalización</td><td class="n">10⁵ · 10⁵ · 2 000</td>
+        <td class="n">15 000</td>
+        <td class="best">31× el τ del peor estado — holgado</td></tr>
+    <tr><td>medida</td><td class="n">10⁵ · 10⁵ · 2 000×40</td>
+        <td class="n">5 000</td>
+        <td class="bad">~10 muestras indep. por réplica en el laberinto</td></tr>
+    <tr><td><b>corridas independientes</b></td><td class="bad">3 · 30</td>
+        <td class="best">50</td>
+        <td class="best">×50 → 519 muestras efectivas</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>La convención es defendible gracias a las réplicas, no a
+pesar de ellas.</b> Nuestros barridos van por debajo de lo que usan los
+estudios de una sola temperatura —aunque esa comparación no es justa, porque
+nosotros <b>recocemos</b>— y nuestras réplicas van muy por encima. El exceso en
+un eje compensa el defecto en el otro.</p>
+<p><b>Y la advertencia operativa:</b> si se recortan réplicas, <b>el estado
+laberinto se rompe primero y en silencio</b>. El número de pasos no es el que
+hay que vigilar; es el número de réplicas.</p></div>
+
+</div>
 
