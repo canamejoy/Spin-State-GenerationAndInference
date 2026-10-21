@@ -1,0 +1,96 @@
+{
+ "device": {
+  "repr": "cuda:0",
+  "kind": "NVIDIA H100 80GB HBM3",
+  "platform": "gpu",
+  "n_devices": 4,
+  "smi": [
+   "NVIDIA H100 80GB HBM3, GPU-3c3afc12-dc60-c62a-485c-ee56a2490a56, 81559 MiB, 1980 MHz, 610.57.04, 5",
+   "NVIDIA H100 80GB HBM3, GPU-658dbb32-3eee-06a6-5de6-aedb1d90b91b, 81559 MiB, 1980 MHz, 610.57.04, 5",
+   "NVIDIA H100 80GB HBM3, GPU-cc200784-3cfa-155c-2cad-e0f11dfe14d8, 81559 MiB, 1980 MHz, 610.57.04, 5",
+   "NVIDIA H100 80GB HBM3, GPU-971c60e8-b45b-5d85-e95d-fd93f0c32a09, 81559 MiB, 1980 MHz, 610.57.04, 5"
+  ]
+ },
+ "n_devices": 4,
+ "sweeps": 400,
+ "repeats": 7,
+ "rows": [
+  {
+   "scheme": "A 1 ola 4x100",
+   "chains": 400,
+   "waves": 1,
+   "seconds": 0.05468496999998251,
+   "vs_A_pct": 0.0,
+   "spread_pct": 1.873475559894855
+  },
+  {
+   "scheme": "B 2 olas 4x51+4x49",
+   "chains": 400,
+   "waves": 2,
+   "seconds": 0.0454711360000033,
+   "vs_A_pct": -16.84893307975146,
+   "spread_pct": 5.133256989980062
+  },
+  {
+   "scheme": "C 1 ola 2x101+2x99",
+   "chains": 400,
+   "waves": 2,
+   "seconds": 0.0835538940000049,
+   "vs_A_pct": 52.791331877902856,
+   "spread_pct": 1.7263082292202636
+  },
+  {
+   "scheme": "D 4 olas 4x25",
+   "chains": 400,
+   "waves": 4,
+   "seconds": 0.05832542499999249,
+   "vs_A_pct": 6.657139978336168,
+   "spread_pct": 0.6511493723369899
+  }
+ ],
+ "C_vs_B_pct": 83.75149897288435,
+ "concurrency_works": false,
+ "analysis": {
+  "question": "four ways to put 400 chains on four GPUs, and whether two pmaps over disjoint device pairs overlap",
+  "measured_on": "4x H100, 400 sweeps, 7 repeats",
+  "results": {
+   "A": {
+    "seconds": 0.05468496999998251,
+    "waves": 1,
+    "vs_A_pct": 0.0
+   },
+   "B": {
+    "seconds": 0.0454711360000033,
+    "waves": 2,
+    "vs_A_pct": -16.8
+   },
+   "C": {
+    "seconds": 0.0835538940000049,
+    "waves": 2,
+    "vs_A_pct": 52.8
+   },
+   "D": {
+    "seconds": 0.05832542499999249,
+    "waves": 4,
+    "vs_A_pct": 6.7
+   }
+  },
+  "the_protocol_confirmed": {
+   "finding": "B (two waves of 4x51 and 4x49) beats A (one wave of 4x100) by 16.8% on real hardware",
+   "note": "first direct multi-GPU confirmation of the split protocol"
+  },
+  "the_uneven_split_fails": {
+   "proposal": "2x101 on two GPUs and 2x99 on the other two, one wave",
+   "why_it_should_work": "each device gets about 100 chains, odd so width 1, and out of the steep part of the a/B curve -- strictly better than 25 per device and no worse than 51",
+   "measured": "C costs 0.0836 s against B's 0.0455, which is +83.8%",
+   "diagnosis": "THE TWO PMAPS DO NOT OVERLAP. Each uses only two of the four devices, so if they serialise the scheme runs on half the hardware for twice as long, which is what the roughly +84% says. The idea is sound; the runtime does not deliver the concurrency it needs.",
+   "verdict": "cannot be recommended as written"
+  },
+  "the_25_finding": {
+   "claim": "BP + replicas on 4 GPUs shards 100 chains into 25 per device, which the production f(B) curve puts at 11.561 s/replica against 9.130 at B=45 and 9.162 at B=55 -- 26% worse",
+   "status": "CONFIRMED from the measured curve, and it explains why 'both' beats 'replicas' on 4 GPUs despite paying the width-4 penalty",
+   "credit": "raised by the user"
+  },
+  "honest_caveat": "This ran at 400 sweeps, where the a/B curve does not reproduce the production ranking: scheme D (4x25) came out at +6.7% against A here while the production-extrapolated model puts it at -9.9%. So the MAGNITUDES here do not transfer to the full ladder. What does transfer is the structural finding, that disjoint pmaps serialise, since that is a property of the dispatch rather than of the schedule."
+ }
+}

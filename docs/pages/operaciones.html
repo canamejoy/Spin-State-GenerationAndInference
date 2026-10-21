@@ -2451,3 +2451,75 @@ cronograma original de <b>200 × 15 000</b> para que la comparación antes/despu
 sea limpia. La producción actual usa <b>200 × 20 000</b>, así que los tiempos
 reales son <b>4/3</b> de estos.</div>
 
+
+<h3>Repartir desigual entre GPUs: la idea es buena, el runtime no la sostiene</h3>
+
+<p>La propuesta: con 400 réplicas y 4 GPUs, en vez de 4×100, dar
+<b>101 a dos GPUs y 99 a las otras dos</b>. Cada dispositivo recibe ~100
+cadenas, <b>impares</b> (ancho 1) y <b>fuera de la zona empinada</b> de
+<code>a/B</code>. Sobre el papel junta las dos ventajas en una sola ola.</p>
+
+<div class="key"><p><b>Y la observación que la motiva es correcta y es un
+hallazgo.</b> <code>BP + réplicas</code> en 4 GPU reparte 100 cadenas entre
+cuatro → <b>25 por dispositivo</b>. La curva medida pone <code>B = 25</code> en
+<b>11.561 s/réplica</b> contra <b>9.130</b> en B=45 y <b>9.162</b> en B=55:
+<b>26 % peor</b>. Eso explica por qué <code>both</code> le gana ahí <b>a pesar
+de pagar ancho 4</b>.</p></div>
+
+<p>Medido en <b>4 H100 reales</b>, 400 barridos, 7 repeticiones:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>esquema</th><th>olas</th><th>por dispositivo</th>
+    <th>segundos</th><th>vs A</th></tr></thead>
+  <tbody>
+    <tr><td><b>A</b> &nbsp;1 ola de 4×100 <span style="opacity:.75">(lo que hay
+        hoy)</span></td><td class="n">1</td><td class="bad">100 · ancho 4</td>
+        <td class="n">0.0547</td><td class="n">—</td></tr>
+    <tr class="best"><td><b>B</b> &nbsp;2 olas de 4×51 y 4×49
+        <span style="opacity:.75">(el protocolo)</span></td><td class="n">2</td>
+        <td class="best">51, 49 · ancho 1</td><td class="n"><b>0.0455</b></td>
+        <td class="best"><b>−16.8 %</b></td></tr>
+    <tr><td><b>C</b> &nbsp;2×101 + 2×99 en pares disjuntos
+        <span style="opacity:.75">(la propuesta)</span></td><td class="n">2</td>
+        <td class="best">101, 99 · ancho 1</td><td class="bad">0.0836</td>
+        <td class="bad">+52.8 %</td></tr>
+    <tr><td><b>D</b> &nbsp;4 olas de 4×25
+        <span style="opacity:.75">(BP + réplicas)</span></td><td class="n">4</td>
+        <td class="bad">25 · zona empinada</td><td class="n">0.0583</td>
+        <td class="n">+6.7 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Los dos <code>pmap</code> disjuntos NO se
+solapan.</strong> C sale <b>+83.8 %</b> contra B. El diagnóstico es directo:
+cada llamada usa <b>solo dos de las cuatro GPUs</b>, así que si se serializan,
+el esquema corre sobre <b>la mitad del hardware durante el doble de tiempo</b> —
+que es justo lo que dice ese +84 %. Emití las dos llamadas sin bloquear entre
+ellas, que es la forma correcta de pedir solapamiento, y aun así se
+serializaron. <b>La idea es sólida; el runtime no entrega la concurrencia que
+necesita.</b></div>
+
+<div class="key"><p><b>Y de paso, la primera confirmación del protocolo en
+multi-GPU real:</b> el esquema B le gana <b>16.8 %</b> al reparto actual, sobre
+cuatro H100 físicos y no por modelo.</p></div>
+
+<div class="note warn"><strong>Un límite que hay que leer antes de usar estos
+números.</strong> Esto corrió a <b>400 barridos</b>, donde la curva
+<code>a/B</code> <b>no reproduce el orden de producción</b>: el esquema D salió
+<b>+6.7 %</b> contra A aquí, mientras que el modelo extrapolado a producción lo
+pone en <b>−9.9 %</b>. Así que <b>las magnitudes de esta tabla no se trasladan
+a la escalera completa</b>. Lo que sí se traslada es el hallazgo estructural —
+que los <code>pmap</code> disjuntos se serializan — porque es una propiedad del
+despacho y no del cronograma.</div>
+
+<div class="key">
+  <p><b>Dónde queda la recomendación.</b></p>
+  <p>Sigue siendo el <b>protocolo B</b>: dos olas con lote impar por
+  dispositivo. No porque el reparto desigual sea peor en principio —en el
+  modelo <b>empatan</b>, dentro del 0.02 %— sino porque <b>el desigual exige
+  una concurrencia que JAX no da</b>.</p>
+  <p>Y queda una acción nueva que salió de aquí: <b><code>BP + réplicas</code>
+  en 4 GPU debería dejar de usarse</b>, porque sus 25 por dispositivo caen en
+  la parte mala de la curva.</p>
+</div>
+

@@ -5701,6 +5701,126 @@ def triton_flat(batches: str = "63,65,66,96,99,100,128,129", repeats: int = 7,
                             tag, rd, layers, steps)
 
 
+def _split4(tag, Rd, L, sweeps, repeats):
+    """Four ways to put 400 chains on four GPUs, measured.
+
+    The model says two of them tie, and the one open question is whether two
+    pmaps over DISJOINT device pairs actually overlap. If JAX serialises them,
+    the uneven split costs twice what it should and must not be recommended.
+
+      A  one pmap of 4x100      -- what the chart does today, width 4
+      B  two pmaps of 4x51,4x49 -- the split protocol, two sequential waves
+      C  two pmaps on disjoint pairs, 2x101 + 2x99 -- one wave, uneven
+      D  four pmaps of 4x25     -- what BP+replicas does, small per device
+
+    Per-device batch is about 100 in A, B and C and only 25 in D, which the
+    measured f(B) curve puts 26% higher per replica.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    devs = jax.devices()
+    print(f"dispositivos: {len(devs)}", flush=True)
+    if len(devs) < 4:
+        return dict(error=f"se necesitan 4 GPU, hay {len(devs)}")
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    thetas = PA.load_thetas("/root/theta4.json")
+    kB = 0.086173404
+    beta = float(1.0 / (kB * 5.0))
+    eng = S.build_engine(geo)
+    surf = jnp.asarray(geo["surf"]) if "surf" in geo else None
+
+    def body(s, key, k1_, p, n):
+        def one(_, v):
+            st, kk = v
+            kk, ka = jax.random.split(kk, 2)
+            return (eng["substep"](st, ka, beta, True, p, k1_), kk)
+        return jax.lax.fori_loop(0, n, one, (s, key))[0]
+
+    def build(B, device_list):
+        """One pmap over `device_list`, B chains on EACH of them."""
+        nd = len(device_list)
+        cols = PA.pack(thetas, max(1, (B * nd) // len(thetas)))
+        # trim or pad the packed columns to exactly B*nd
+        cols = {k: v[: B * nd] for k, v in cols.items()}
+        need = B * nd
+        cols = {k: jnp.concatenate([v] * (need // v.shape[0] + 1))[:need]
+                for k, v in cols.items()}
+        k1 = jnp.where(jnp.asarray(geo["surf"])[None], cols["KanS"], cols["Kan1"]) \
+            if "surf" in geo else cols["Kan1"]
+        spins = S.init_spins(jax.random.PRNGKey(7 + B), geo, need)
+        shard = lambda a: a.reshape(nd, B, *a.shape[1:])
+        fn = jax.pmap(body, static_broadcasted_argnums=4, devices=device_list)
+        return (fn, shard(spins),
+                jax.random.split(jax.random.PRNGKey(11 + B), nd),
+                shard(k1), {k: shard(v) for k, v in cols.items()})
+
+    SCHEMES = {
+        "A 1 ola 4x100":            [(100, devs)],
+        "B 2 olas 4x51+4x49":       [(51, devs), (49, devs)],
+        "C 1 ola 2x101+2x99":       [(101, devs[:2]), (99, devs[2:])],
+        "D 4 olas 4x25":            [(25, devs)] * 4,
+    }
+    built = {}
+    for name, parts in SCHEMES.items():
+        built[name] = [build(B, dl) for B, dl in parts]
+        for fn, sp, kk, k1, p in built[name]:
+            jax.block_until_ready(fn(sp, kk, k1, p, int(sweeps)))
+        print(f"  compilado {name}", flush=True)
+
+    res = dict(device=device_identity(), n_devices=len(devs),
+               sweeps=int(sweeps), repeats=int(repeats), rows=[])
+    print(f"\n{'esquema':<24}{'chains':>8}{'olas':>6}{'s':>10}{'vs A':>9}", flush=True)
+    base = None
+    for name, parts in SCHEMES.items():
+        ts = []
+        for _ in range(int(repeats)):
+            t0 = time.perf_counter()
+            # issue every wave's work, then block once: disjoint pmaps can
+            # overlap only if we do not block between them
+            outs = []
+            for (fn, sp, kk, k1, p) in built[name]:
+                outs.append(fn(sp, kk, k1, p, int(sweeps)))
+            for o in outs:
+                jax.block_until_ready(o)
+            ts.append(time.perf_counter() - t0)
+        m = float(np.median(ts))
+        if base is None:
+            base = m
+        chains = sum(B * len(dl) for B, dl in parts)
+        res["rows"].append(dict(scheme=name, chains=chains, waves=len(parts),
+                                seconds=m, vs_A_pct=100 * (m / base - 1),
+                                spread_pct=100 * (max(ts) / min(ts) - 1)))
+        print(f"{name:<24}{chains:>8}{len(parts):>6}{m:>10.4f}"
+              f"{100*(m/base-1):>+8.1f}%", flush=True)
+    rb = next(r for r in res["rows"] if r["scheme"].startswith("B"))
+    rc = next(r for r in res["rows"] if r["scheme"].startswith("C"))
+    ch = 100 * (rc["seconds"] / rb["seconds"] - 1)
+    res["C_vs_B_pct"] = ch
+    res["concurrency_works"] = ch < 25
+    print(f"\n  C contra B: {ch:+.1f}%", flush=True)
+    print(f"  {'los pmap disjuntos SI se solapan' if ch < 25 else 'NO se solapan: C se serializa y no sirve'}",
+          flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    return res
+
+
+@app.function(gpu="H100:4", **_COMMON)
+def split4_h100(tag, Rd, L, sweeps, repeats):
+    return _split4(tag, Rd, L, sweeps, repeats)
+
+
+@app.local_entrypoint()
+def split4(rd: float = 18.30, layers: int = 5, sweeps: int = 400,
+           repeats: int = 7, tag: str = "split4"):
+    """Four ways to put 400 chains on four GPUs."""
+    split4_h100.remote(tag, rd, layers, sweeps, repeats)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 
