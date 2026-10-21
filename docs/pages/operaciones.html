@@ -1988,6 +1988,106 @@ minimización de carriles queda refutada al 36 %. Todo es para
 XLA: la regla de sectores debería generalizar porque se sigue del layout, el
 presupuesto puede que no.</div>
 
+<h2>Atacando el punto 3: la escapatoria <code>tb = B</code></h2>
+
+<p>22 lotes <b>impares consecutivos</b> en <b>una sola corrida</b> — así el
+ancho es 1 en todos y el orden de los tiles es consistente, lo que además
+<b>arregla el confound de extracción</b> que había marcado al mezclar corridas.
+Dispersión 0.2–0.5 %.</p>
+
+<div class="key"><p><b><code>tb = B</code> no son puntos dispersos: son dos
+bandas contiguas y nítidas.</b></p>
+<p style="font-family:var(--mono)">tb = B &nbsp;&nbsp;[59, 61, 63] &nbsp;y&nbsp;
+[121, 123, 125, 127]<br>
+pot. de 2 &nbsp;51, 53, 55, 57, 65, 67, 69, 71, 113, 115, 117, 119, 129, 131,
+133</p></div>
+
+<h3>El corte superior: limpio y exacto</h3>
+<div class="key">
+  <p><code>tb = B</code> obliga a <code>ty = 1</code> y <code>tx = 8</code>, así
+  que el tile mide <code><b>24·B</b></code> elementos y <b>debe caber en el
+  presupuesto</b> (1536 o 3072). Las dos bandas terminan exactamente ahí:</p>
+  <p style="font-family:var(--mono)">
+  B = 65 &nbsp;→&nbsp; 24B = 1560 &gt; 1536 &nbsp;→&nbsp; potencia de 2<br>
+  B = 129 → 24B = 3096 &gt; 3072 → potencia de 2</p>
+  <p><b>Condición NECESARIA, verificada 2/2.</b> Pero <b>no suficiente</b>:
+  B = 51…57 y 113…119 caben de sobra y aun así toman potencia de 2.</p>
+</div>
+
+<h3>El corte inferior: sin resolver, y cinco predictores refutados</h3>
+<div class="tw"><table>
+  <thead><tr><th>predictor</th><th>en <code>tb=B</code></th>
+    <th>en pot. de 2</th><th>veredicto</th></tr></thead>
+  <tbody>
+    <tr><td><code>B mod 8</code></td><td class="n">{1,3,5,7}</td>
+        <td class="n">{1,3,5,7}</td><td class="bad">conjuntos idénticos</td></tr>
+    <tr><td><code>B mod 16</code></td><td class="n">{9,11,13,15}</td>
+        <td class="n">{1,3,5,7,9}</td>
+        <td class="bad">separa 20/22 <b>aquí</b>, pero <b>REFUTADO</b> por ocho
+        contraejemplos previos</td></tr>
+    <tr><td>distancia a la pot. de 2</td><td class="n">{1,3,5,7}</td>
+        <td class="n">{7,9,…,127}</td><td class="bad">solapa en 7</td></tr>
+    <tr><td><code>B / pot2</code></td><td class="n">[0.922, 0.992]</td>
+        <td class="n">[0.504, 0.930]</td>
+        <td class="bad">solapa: 0.922 es <code>tb=B</code> pero 0.930 no</td></tr>
+    <tr><td><code>24B / presupuesto</code></td><td class="n">[0.922, 0.992]</td>
+        <td class="n">[0, 0.930]</td><td class="bad">mismo solape</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>La regla de <code>mod 16</code> murió con datos
+que ya tenía.</strong> Separaba 20 de 22 en esta corrida, pero
+<code>B = 45, 47, 75, 77, 79, 91, 93, 95</code> tienen todos
+<code>B mod 16 ∈ {11,13,15}</code> y <b>tomaron potencia de 2</b>. Es el
+<b>quinto patrón post-hoc que se cae</b> en este trabajo — y el <b>primero que
+cacé antes de gastar una corrida</b> en probarlo.</div>
+
+<h3>Pero el resultado práctico sí sale, y es el que importa</h3>
+<div class="tw"><table>
+  <thead><tr><th>banda</th><th>n</th><th>rango</th><th>media s/réplica</th></tr></thead>
+  <tbody>
+    <tr class="best"><td><b><code>tb=B</code> [59,63]</b></td><td class="n">3</td>
+        <td class="best"><b>2.2 %</b></td><td class="n">0.007992</td></tr>
+    <tr><td>pot2 [51,57]</td><td class="n">4</td><td class="bad">6.7 %</td>
+        <td class="n">0.008494</td></tr>
+    <tr><td>pot2 [65,71]</td><td class="n">4</td><td class="bad">10.8 %</td>
+        <td class="n">0.008210</td></tr>
+    <tr class="best"><td><b><code>tb=B</code> [121,127]</b></td><td class="n">4</td>
+        <td class="best"><b>1.5 %</b></td><td class="n">0.008120</td></tr>
+    <tr><td>pot2 [113,119]</td><td class="n">4</td><td class="n">4.9 %</td>
+        <td class="n">0.008177</td></tr>
+    <tr><td>pot2 [129,133]</td><td class="n">3</td><td class="n">3.4 %</td>
+        <td class="n">0.008039</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>Las bandas <code>tb = B</code> son 3.5× más lisas</b> — rango medio
+  <b>1.8 %</b> contra <b>6.5 %</b> — y el salto entre lotes vecinos es
+  <b>2.4× menor</b>: <b>1.11 %</b> contra <b>2.70 %</b>.</p>
+  <p>Eso es exactamente el objetivo de estandarización, <b>conseguido sin una
+  regla que lo alcance</b>.</p>
+</div>
+
+<div class="key">
+  <p><b>Qué hacer con esto.</b> No hay forma cerrada que llegue al régimen
+  <code>tb = B</code>, pero <b>el tile se ve al compilar en ~40 segundos</b>.
+  Así que las bandas se <b>encuentran</b> compilando candidatos en vez de
+  predecirse — el mismo procedimiento del selector de firma, ahora con un
+  blanco más afilado: <b>preferir un lote cuyo kernel pesado tenga
+  <code>tb = B</code></b>, porque su vecindario es de 2.4 a 3.5 veces más
+  plano.</p>
+</div>
+
+<div class="note warn"><strong>Cuatro límites.</strong> Una corrida, una GPU,
+3600 barridos, 7 repeticiones. <b>Solo se observaron dos bandas</b>, las dos
+justo bajo una potencia de 2, así que si el patrón se repite bajo 256 está sin
+probar. La afirmación de lisura se apoya en <b>5 saltos dentro de bandas
+<code>tb=B</code> contra 11 fuera</b>: la dirección es consistente pero
+<code>n</code> es chico. Y las bandas están a <code>B</code> distintos, así que
+la tendencia <code>a/B</code> contribuye a las <b>medias</b> — la comparación de
+lisura es <b>dentro de cada banda</b> y de eso no se contamina.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las
