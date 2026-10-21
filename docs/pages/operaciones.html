@@ -390,6 +390,44 @@ correcto para Monte Carlo.</p></div>
   </tbody>
 </table></div>
 
+<h3>La búsqueda de particiones, con el kernel de producción</h3>
+
+<p>No asumí la partición: busqué cinco candidatas por brazo sobre 4 H100, con
+<code>eng["anneal"]</code> y 7 repeticiones.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>por dispositivo</th><th>partición</th><th>olas</th>
+    <th>vs una ola</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="3" class="n">400<br>(1 GPU)</td>
+        <td class="n">201 + 199</td><td class="n">2</td>
+        <td class="best"><b>−28.3 %</b></td></tr>
+    <tr><td class="n">101+101+99+99</td><td class="n">4</td>
+        <td class="n">−26.2 %</td></tr>
+    <tr><td class="n">135 + 133 + 132</td><td class="n">3</td>
+        <td class="n">−17.7 % <span style="opacity:.7">(una mitad ancho 4)</span></td></tr>
+    <tr><td rowspan="2" class="n">200<br>(2 GPU)</td>
+        <td class="n">101 + 99</td><td class="n">2</td>
+        <td class="best"><b>−21.7 %</b></td></tr>
+    <tr><td class="n">51+51+49+49</td><td class="n">4</td>
+        <td class="n">−14.2 %</td></tr>
+    <tr><td rowspan="3" class="n">100<br>(4 GPU)</td>
+        <td class="n">53 + 47</td><td class="n">2</td>
+        <td class="best"><b>−26.8 %</b></td></tr>
+    <tr><td class="n">51 + 49</td><td class="n">2</td>
+        <td class="n">−22.4 %</td></tr>
+    <tr><td class="n">25+25+25+25</td><td class="n">4</td>
+        <td class="bad">−7.5 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Dos olas con las mitades impares gana en los tres
+brazos</b>, entre <b>−21.7 % y −28.3 %</b>. Y más olas <b>empeora</b>: el lote
+por dispositivo cae a la zona empinada de <code>a/B</code>.</p>
+<p>Esta tabla <b>confirma de paso la sección 4</b>. La misma búsqueda con un
+bucle pelado de <code>substep</code> daba <b>−1.3 %</b> en 1 GPU; con
+<code>anneal</code> da <b>−28.3 %</b>.</p></div>
+
 <h3>Tres detalles que hay que respetar</h3>
 
 <div class="tw"><table>

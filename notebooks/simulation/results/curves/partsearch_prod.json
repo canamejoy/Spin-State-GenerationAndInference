@@ -1,0 +1,288 @@
+{
+ "total": 400,
+ "sweeps": 450,
+ "repeats": 7,
+ "n_temps": 8,
+ "kernel": "eng[anneal] -- production",
+ "device": {
+  "repr": "cuda:0",
+  "kind": "NVIDIA H100 80GB HBM3",
+  "platform": "gpu",
+  "n_devices": 4,
+  "smi": [
+   "NVIDIA H100 80GB HBM3, GPU-652fd46c-443b-6c74-72dc-2eaee41d851f, 81559 MiB, 1980 MHz, 610.57.04, 5",
+   "NVIDIA H100 80GB HBM3, GPU-589a3842-f723-ad92-ed9b-9c233aa06a2e, 81559 MiB, 1980 MHz, 610.57.04, 5",
+   "NVIDIA H100 80GB HBM3, GPU-32703a56-22e4-0d9f-76c9-e57b61d4a8e1, 81559 MiB, 1980 MHz, 610.57.04, 5",
+   "NVIDIA H100 80GB HBM3, GPU-61588046-c5e4-0957-6eab-d41723ae103c, 81559 MiB, 1980 MHz, 610.57.04, 5"
+  ]
+ },
+ "n_devices": 4,
+ "plans": [
+  {
+   "gpus": 1,
+   "waves": [
+    400
+   ],
+   "n_waves": 1,
+   "widths": [
+    4
+   ],
+   "seconds": 4.351884721999994,
+   "vs_single_pct": 0.0,
+   "spread_pct": 0.5621468156029819
+  },
+  {
+   "gpus": 1,
+   "waves": [
+    201,
+    199
+   ],
+   "n_waves": 2,
+   "widths": [
+    1,
+    1
+   ],
+   "seconds": 3.120356627999996,
+   "vs_single_pct": -28.298729692316506,
+   "spread_pct": 0.15590865670513931
+  },
+  {
+   "gpus": 1,
+   "waves": [
+    203,
+    197
+   ],
+   "n_waves": 2,
+   "widths": [
+    1,
+    1
+   ],
+   "seconds": 3.1675430079999956,
+   "vs_single_pct": -27.214455107526636,
+   "spread_pct": 0.1301157991946411
+  },
+  {
+   "gpus": 1,
+   "waves": [
+    135,
+    133,
+    132
+   ],
+   "n_waves": 3,
+   "widths": [
+    1,
+    1,
+    4
+   ],
+   "seconds": 3.5828751399999987,
+   "vs_single_pct": -17.670725010532497,
+   "spread_pct": 0.28813942401948456
+  },
+  {
+   "gpus": 1,
+   "waves": [
+    101,
+    101,
+    99,
+    99
+   ],
+   "n_waves": 4,
+   "widths": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "seconds": 3.2123844920000693,
+   "vs_single_pct": -26.18406283235014,
+   "spread_pct": 0.23754497756187654
+  },
+  {
+   "gpus": 2,
+   "waves": [
+    200
+   ],
+   "n_waves": 1,
+   "widths": [
+    4
+   ],
+   "seconds": 2.0713587019999977,
+   "vs_single_pct": 0.0,
+   "spread_pct": 0.39881422907181996
+  },
+  {
+   "gpus": 2,
+   "waves": [
+    101,
+    99
+   ],
+   "n_waves": 2,
+   "widths": [
+    1,
+    1
+   ],
+   "seconds": 1.621067466999989,
+   "vs_single_pct": -21.738930807359957,
+   "spread_pct": 0.5536361231382347
+  },
+  {
+   "gpus": 2,
+   "waves": [
+    103,
+    97
+   ],
+   "n_waves": 2,
+   "widths": [
+    1,
+    1
+   ],
+   "seconds": 1.622397105999994,
+   "vs_single_pct": -21.67473917320595,
+   "spread_pct": 0.24086617756322592
+  },
+  {
+   "gpus": 2,
+   "waves": [
+    67,
+    67,
+    66
+   ],
+   "n_waves": 3,
+   "widths": [
+    1,
+    1,
+    2
+   ],
+   "seconds": 1.6748594260000118,
+   "vs_single_pct": -19.14199001926352,
+   "spread_pct": 0.2694023595456452
+  },
+  {
+   "gpus": 2,
+   "waves": [
+    51,
+    51,
+    49,
+    49
+   ],
+   "n_waves": 4,
+   "widths": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "seconds": 1.777016562999961,
+   "vs_single_pct": -14.210099811096699,
+   "spread_pct": 0.918465442406724
+  },
+  {
+   "gpus": 4,
+   "waves": [
+    100
+   ],
+   "n_waves": 1,
+   "widths": [
+    4
+   ],
+   "seconds": 1.1496654649999982,
+   "vs_single_pct": 0.0,
+   "spread_pct": 0.6889818491445654
+  },
+  {
+   "gpus": 4,
+   "waves": [
+    51,
+    49
+   ],
+   "n_waves": 2,
+   "widths": [
+    1,
+    1
+   ],
+   "seconds": 0.892019098999981,
+   "vs_single_pct": -22.410551055390503,
+   "spread_pct": 1.1142769998787827
+  },
+  {
+   "gpus": 4,
+   "waves": [
+    53,
+    47
+   ],
+   "n_waves": 2,
+   "widths": [
+    1,
+    1
+   ],
+   "seconds": 0.8416396929999337,
+   "vs_single_pct": -26.792643719193997,
+   "spread_pct": 0.9975651964869936
+  },
+  {
+   "gpus": 4,
+   "waves": [
+    35,
+    33,
+    32
+   ],
+   "n_waves": 3,
+   "widths": [
+    1,
+    1,
+    4
+   ],
+   "seconds": 0.9433913719999509,
+   "vs_single_pct": -17.942097008197734,
+   "spread_pct": 1.0290892683774588
+  },
+  {
+   "gpus": 4,
+   "waves": [
+    25,
+    25,
+    25,
+    25
+   ],
+   "n_waves": 4,
+   "widths": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "seconds": 1.0633161410000866,
+   "vs_single_pct": -7.510821767609732,
+   "spread_pct": 0.15145268336593798
+  }
+ ],
+ "best": {
+  "1": {
+   "waves": [
+    201,
+    199
+   ],
+   "seconds": 3.120356627999996,
+   "single_seconds": 4.351884721999994,
+   "gain_pct": -28.298729692316506
+  },
+  "2": {
+   "waves": [
+    101,
+    99
+   ],
+   "seconds": 1.621067466999989,
+   "single_seconds": 2.0713587019999977,
+   "gain_pct": -21.738930807359957
+  },
+  "4": {
+   "waves": [
+    53,
+    47
+   ],
+   "seconds": 0.8416396929999337,
+   "single_seconds": 1.1496654649999982,
+   "gain_pct": -26.792643719193997
+  }
+ }
+}
