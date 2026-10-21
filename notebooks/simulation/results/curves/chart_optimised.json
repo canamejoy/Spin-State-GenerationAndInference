@@ -2,189 +2,266 @@
  "schedule": {
   "temps": 200,
   "sweeps_per_temp": 15000,
-  "total_sweeps": 3000000,
-  "chains": 400,
-  "states": 4,
-  "replicas_per_state": 100
+  "chains": 400
  },
- "gains_pct": {
-  "replicas": -23.5,
-  "both": -22.7,
-  "states": 0.0,
-  "bp_only": 0.0
- },
- "gain_source": {
-  "replicas": "medido en R=100",
-  "both": "extrapolado de R=200",
-  "states": "no aplica (B=4, partir duplica lanzamientos)",
-  "bp_only": "no aplica (B=1 ya es ancho 1)"
- },
+ "correction": "an earlier version applied the gain to every GPU arm; the width penalty depends on the PER-DEVICE batch, so BP+replicas on 2 and 4 GPUs (50 and 25 per device) has no penalty to remove",
  "cells": [
   {
    "device": "CPU",
    "gpus": 0,
    "config": "bp_only",
    "name": "BP only",
+   "batch_per_launch": 1,
+   "devices_used": 1,
+   "per_device": 1,
+   "width": 1,
    "hours_original": 1905.1720394500003,
    "measured": false,
    "hours_optimised": 1905.1720394500003,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "CPU: el ancho es efecto de XLA sobre GPU"
   },
   {
    "device": "CPU",
    "gpus": 0,
    "config": "replicas",
-   "name": "BP + replicas",
+   "name": "BP + r\u00e9plicas",
+   "batch_per_launch": 100,
+   "devices_used": 1,
+   "per_device": 100,
+   "width": 4,
    "hours_original": 246.27695950624968,
    "measured": false,
    "hours_optimised": 246.27695950624968,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "CPU: el ancho es efecto de XLA sobre GPU"
   },
   {
    "device": "CPU",
    "gpus": 0,
    "config": "states",
-   "name": "BP + states",
+   "name": "BP + estados",
+   "batch_per_launch": 4,
+   "devices_used": 1,
+   "per_device": 4,
+   "width": 4,
    "hours_original": 1090.7739690020842,
    "measured": false,
    "hours_optimised": 1090.7739690020842,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "CPU: el ancho es efecto de XLA sobre GPU"
   },
   {
    "device": "CPU",
    "gpus": 0,
    "config": "both",
-   "name": "BP + replicas + states",
+   "name": "BP + r\u00e9plicas + estados",
+   "batch_per_launch": 400,
+   "devices_used": 1,
+   "per_device": 400,
+   "width": 4,
    "hours_original": 181.84166092916695,
    "measured": false,
    "hours_optimised": 181.84166092916695,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "CPU: el ancho es efecto de XLA sobre GPU"
   },
   {
    "device": "1x H100",
    "gpus": 1,
    "config": "bp_only",
    "name": "BP only",
+   "batch_per_launch": 1,
+   "devices_used": 1,
+   "per_device": 1,
+   "width": 1,
    "hours_original": 5.7535662356944455,
    "measured": false,
    "hours_optimised": 5.7535662356944455,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "1/device -> ancho 1, sin castigo"
   },
   {
    "device": "1x H100",
    "gpus": 1,
    "config": "replicas",
-   "name": "BP + replicas",
+   "name": "BP + r\u00e9plicas",
+   "batch_per_launch": 100,
+   "devices_used": 1,
+   "per_device": 100,
+   "width": 4,
    "hours_original": 0.8619934431524999,
    "measured": true,
    "hours_optimised": 0.6594249840116625,
-   "gain_pct": -23.5
+   "gain_pct": -23.5,
+   "gain_reason": "100/device, medido en R=100"
   },
   {
    "device": "1x H100",
    "gpus": 1,
    "config": "states",
-   "name": "BP + states",
+   "name": "BP + estados",
+   "batch_per_launch": 4,
+   "devices_used": 1,
+   "per_device": 4,
+   "width": 4,
    "hours_original": 1.7861119334722235,
    "measured": false,
    "hours_optimised": 1.7861119334722235,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "4/device: partir duplica lanzamientos"
   },
   {
    "device": "1x H100",
    "gpus": 1,
    "config": "both",
-   "name": "BP + replicas + states",
+   "name": "BP + r\u00e9plicas + estados",
+   "batch_per_launch": 400,
+   "devices_used": 1,
+   "per_device": 400,
+   "width": 4,
    "hours_original": 1.0353119881716666,
    "measured": true,
    "hours_optimised": 0.8002961668566982,
-   "gain_pct": -22.7
+   "gain_pct": -22.7,
+   "gain_reason": "400/device, extrapolado de R=200"
   },
   {
    "device": "2x H100",
    "gpus": 2,
    "config": "bp_only",
    "name": "BP only",
+   "batch_per_launch": 1,
+   "devices_used": 1,
+   "per_device": 1,
+   "width": 1,
    "hours_original": 5.799710204305556,
    "measured": false,
    "hours_optimised": 5.799710204305556,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "1/device -> ancho 1, sin castigo"
   },
   {
    "device": "2x H100",
    "gpus": 2,
    "config": "replicas",
-   "name": "BP + replicas",
+   "name": "BP + r\u00e9plicas",
+   "batch_per_launch": 100,
+   "devices_used": 2,
+   "per_device": 50,
+   "width": 2,
    "hours_original": 0.4593710867091666,
    "measured": true,
-   "hours_optimised": 0.3514188813325125,
-   "gain_pct": -23.5
+   "hours_optimised": 0.4593710867091666,
+   "gain_pct": 0.0,
+   "gain_reason": "50/device -> ancho 2, sin castigo"
   },
   {
    "device": "2x H100",
    "gpus": 2,
    "config": "states",
-   "name": "BP + states",
+   "name": "BP + estados",
+   "batch_per_launch": 4,
+   "devices_used": 2,
+   "per_device": 2,
+   "width": 2,
    "hours_original": 1.758280812777776,
    "measured": false,
    "hours_optimised": 1.758280812777776,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "2/device -> ancho 2, sin castigo"
   },
   {
    "device": "2x H100",
    "gpus": 2,
    "config": "both",
-   "name": "BP + replicas + states",
+   "name": "BP + r\u00e9plicas + estados",
+   "batch_per_launch": 400,
+   "devices_used": 2,
+   "per_device": 200,
+   "width": 4,
    "hours_original": 0.5017221532066666,
    "measured": true,
    "hours_optimised": 0.3878312244287533,
-   "gain_pct": -22.7
+   "gain_pct": -22.7,
+   "gain_reason": "200/device, medido en R=200"
   },
   {
    "device": "4x H100",
    "gpus": 4,
    "config": "bp_only",
    "name": "BP only",
+   "batch_per_launch": 1,
+   "devices_used": 1,
+   "per_device": 1,
+   "width": 1,
    "hours_original": 5.79933545361111,
    "measured": false,
    "hours_optimised": 5.79933545361111,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "1/device -> ancho 1, sin castigo"
   },
   {
    "device": "4x H100",
    "gpus": 4,
    "config": "replicas",
-   "name": "BP + replicas",
+   "name": "BP + r\u00e9plicas",
+   "batch_per_launch": 100,
+   "devices_used": 4,
+   "per_device": 25,
+   "width": 1,
    "hours_original": 0.2812473062261111,
    "measured": true,
-   "hours_optimised": 0.215154189262975,
-   "gain_pct": -23.5
+   "hours_optimised": 0.2812473062261111,
+   "gain_pct": 0.0,
+   "gain_reason": "25/device -> ancho 1, sin castigo"
   },
   {
    "device": "4x H100",
    "gpus": 4,
    "config": "states",
-   "name": "BP + states",
+   "name": "BP + estados",
+   "batch_per_launch": 4,
+   "devices_used": 4,
+   "per_device": 1,
+   "width": 1,
    "hours_original": 1.6874398573611138,
    "measured": false,
    "hours_optimised": 1.6874398573611138,
-   "gain_pct": 0.0
+   "gain_pct": 0.0,
+   "gain_reason": "1/device -> ancho 1, sin castigo"
   },
   {
    "device": "4x H100",
    "gpus": 4,
    "config": "both",
-   "name": "BP + replicas + states",
+   "name": "BP + r\u00e9plicas + estados",
+   "batch_per_launch": 400,
+   "devices_used": 4,
+   "per_device": 100,
+   "width": 4,
    "hours_original": 0.27263939667805553,
    "measured": true,
-   "hours_optimised": 0.21075025363213692,
-   "gain_pct": -22.7
+   "hours_optimised": 0.2085691384587125,
+   "gain_pct": -23.5,
+   "gain_reason": "100/device, medido en R=100"
   }
  ],
  "headline": {
-  "best_4gpu_original_min": 16.358363800683332,
-  "best_4gpu_optimised_min": 12.645015217928215,
-  "saving_min": 3.7133485827551165,
-  "saving_pct": -22.7
+  "1gpu": {
+   "before_min": 51.71960658915,
+   "after_min": 39.56549904069975,
+   "pct": -23.5
+  },
+  "2gpu": {
+   "before_min": 27.562265202549995,
+   "after_min": 23.269873465725198,
+   "pct": -15.57343601943021
+  },
+  "4gpu": {
+   "before_min": 16.358363800683332,
+   "after_min": 12.514148307522749,
+   "pct": -23.5
+  }
  }
 }

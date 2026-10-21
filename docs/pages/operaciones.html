@@ -2175,118 +2175,276 @@ ese estado, no en el uniforme.</div>
 
 <h3>2. La gráfica rehecha con el protocolo</h3>
 
-<p>Al revisar las cuatro agrupaciones apareció algo que no habíamos notado:
-<b>tres de las cuatro usan lotes múltiplos de cuatro</b>, así que
-<b>pagaban ancho 4 sin que nadie lo supiera</b>.</p>
+<div class="note bad"><strong>Primero, una corrección de una versión anterior de
+esta misma sección.</strong> Apliqué la ganancia del protocolo a <b>todos</b> los
+brazos de GPU. Está mal: <b>el castigo del ancho depende del lote
+POR DISPOSITIVO, no del total</b>. <code>BP + réplicas</code> reparte 100 cadenas
+entre las GPUs, así que en 2 GPU son <b>50 por dispositivo (ancho 2, gratis)</b> y
+en 4 GPU son <b>25 (ancho 1, gratis)</b> — ahí <b>no hay castigo que quitar</b>.
+Los números de abajo ya están corregidos, y de paso quedan mejor sostenidos:
+<b>dos de las tres celdas mejoradas usan ganancias medidas directamente</b>.</div>
 
 <div class="tw"><table>
-  <thead><tr><th>agrupación</th><th>lote</th><th>v₂(B)</th><th>ancho</th>
-    <th>protocolo</th><th>ganancia</th></tr></thead>
+  <thead><tr><th>agrupación</th><th>GPUs</th><th>por dispositivo</th>
+    <th>ancho</th><th>protocolo</th><th>ganancia</th></tr></thead>
   <tbody>
-    <tr><td>BP only</td><td class="n">400 × 1</td><td class="n">0</td>
-        <td class="best">1</td><td class="dead">ya es ancho 1</td>
-        <td class="dead">—</td></tr>
-    <tr class="best"><td>BP + réplicas</td><td class="n">4 × 100</td>
-        <td class="n">2</td><td class="bad">4</td>
-        <td class="n">4 × (51 + 49)</td><td class="best"><b>−23.5 %</b></td></tr>
-    <tr><td>BP + estados</td><td class="n">100 × 4</td><td class="n">2</td>
-        <td class="bad">4</td>
-        <td class="dead">partir duplicaría lanzamientos sobre B=4</td>
-        <td class="dead">—</td></tr>
-    <tr class="best"><td>BP + réplicas + estados</td><td class="n">1 × 400</td>
-        <td class="n">4</td><td class="bad">4</td>
-        <td class="n">1 × (201 + 199)</td><td class="best"><b>−22.7 %</b></td></tr>
+    <tr><td rowspan="3">BP + réplicas</td><td class="n">1</td><td class="n">100</td>
+        <td class="bad">4</td><td class="n">1×51 + 1×49</td>
+        <td class="best"><b>−23.5 %</b> <span style="opacity:.7">medido R=100</span></td></tr>
+    <tr><td class="n">2</td><td class="n">50</td><td class="best">2</td>
+        <td class="dead">—</td><td class="dead">sin castigo</td></tr>
+    <tr><td class="n">4</td><td class="n">25</td><td class="best">1</td>
+        <td class="dead">—</td><td class="dead">sin castigo</td></tr>
+    <tr><td rowspan="3">BP + réplicas<br>+ estados</td><td class="n">1</td>
+        <td class="n">400</td><td class="bad">4</td><td class="n">1×201 + 1×199</td>
+        <td class="n">−22.7 % <span style="opacity:.7">extrap. R=200</span></td></tr>
+    <tr><td class="n">2</td><td class="n">200</td><td class="bad">4</td>
+        <td class="n">2×101 + 2×99</td>
+        <td class="best"><b>−22.7 %</b> <span style="opacity:.7">medido R=200</span></td></tr>
+    <tr><td class="n">4</td><td class="n">100</td><td class="bad">4</td>
+        <td class="n">4×51 + 4×49</td>
+        <td class="best"><b>−23.5 %</b> <span style="opacity:.7">medido R=100</span></td></tr>
+    <tr><td>BP only</td><td class="n">1/2/4</td><td class="n">1</td>
+        <td class="best">1</td><td class="dead">—</td>
+        <td class="dead">ya es ancho 1</td></tr>
+    <tr><td>BP + estados</td><td class="n">1</td><td class="n">4</td>
+        <td class="bad">4</td><td class="dead">partir B=4 duplica lanzamientos</td>
+        <td class="dead">no compensa</td></tr>
   </tbody>
 </table></div>
 
-<svg viewBox="0 0 940 470" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:var(--mono),monospace">
-<rect x="0" y="0" width="940" height="470" fill="none"/>
-<line x1="62" y1="406.0" x2="926" y2="406.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="54" y="410.0" text-anchor="end" font-size="11" fill="currentColor" opacity="0.75">10^-1</text>
-<line x1="62" y1="328.0" x2="926" y2="328.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="54" y="332.0" text-anchor="end" font-size="11" fill="currentColor" opacity="0.75">1</text>
-<line x1="62" y1="250.0" x2="926" y2="250.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="54" y="254.0" text-anchor="end" font-size="11" fill="currentColor" opacity="0.75">10</text>
-<line x1="62" y1="172.0" x2="926" y2="172.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="54" y="176.0" text-anchor="end" font-size="11" fill="currentColor" opacity="0.75">100</text>
-<line x1="62" y1="94.0" x2="926" y2="94.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="54" y="98.0" text-anchor="end" font-size="11" fill="currentColor" opacity="0.75">1,000</text>
-<line x1="62" y1="16.0" x2="926" y2="16.0" stroke="currentColor" stroke-opacity="0.18"/>
-<text x="54" y="20.0" text-anchor="end" font-size="11" fill="currentColor" opacity="0.75">10^4</text>
-<rect x="84.2" y="72.2" width="41.0" height="333.8" fill="#c0392b" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="104.7" y="67.2" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 104.7 67.2)">79.4 d</text>
-<rect x="127.7" y="141.5" width="41.0" height="264.5" fill="#27ae60" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="148.2" y="136.5" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 148.2 136.5)">10.3 d</text>
-<rect x="171.2" y="91.1" width="41.0" height="314.9" fill="#e67e22" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="191.8" y="86.1" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 191.8 86.1)">45.4 d</text>
-<rect x="214.7" y="151.7" width="41.0" height="254.3" fill="#2980b9" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="235.3" y="146.7" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 235.3 146.7)">7.6 d</text>
-<text x="170.0" y="428" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">CPU</text>
-<rect x="300.2" y="268.7" width="41.0" height="137.3" fill="#c0392b" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="320.7" y="263.7" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 320.7 263.7)">5.8 h</text>
-<rect x="343.7" y="342.1" width="41.0" height="63.9" fill="#27ae60" />
-<rect x="343.7" y="333.0" width="41.0" height="9.1" fill="none" stroke="#27ae60" stroke-dasharray="3 2" stroke-opacity="0.8"/>
-<text x="364.2" y="337.1" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 364.2 337.1)">39.6 min</text>
-<rect x="387.2" y="308.4" width="41.0" height="97.6" fill="#e67e22" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="407.8" y="303.4" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 407.8 303.4)">1.8 h</text>
-<rect x="430.7" y="335.5" width="41.0" height="70.5" fill="#2980b9" />
-<rect x="430.7" y="326.8" width="41.0" height="8.7" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.8"/>
-<text x="451.3" y="330.5" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 451.3 330.5)">48.0 min</text>
-<text x="386.0" y="428" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">1x H100</text>
-<rect x="516.2" y="268.5" width="41.0" height="137.5" fill="#c0392b" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="536.7" y="263.5" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 536.7 263.5)">5.8 h</text>
-<rect x="559.7" y="363.4" width="41.0" height="42.6" fill="#27ae60" />
-<rect x="559.7" y="354.4" width="41.0" height="9.1" fill="none" stroke="#27ae60" stroke-dasharray="3 2" stroke-opacity="0.8"/>
-<text x="580.2" y="358.4" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 580.2 358.4)">21.1 min</text>
-<rect x="603.2" y="308.9" width="41.0" height="97.1" fill="#e67e22" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="623.8" y="303.9" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 623.8 303.9)">1.8 h</text>
-<rect x="646.7" y="360.1" width="41.0" height="45.9" fill="#2980b9" />
-<rect x="646.7" y="351.4" width="41.0" height="8.7" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.8"/>
-<text x="667.3" y="355.1" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 667.3 355.1)">23.3 min</text>
-<text x="602.0" y="428" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">2x H100</text>
-<rect x="732.2" y="268.5" width="41.0" height="137.5" fill="#c0392b" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="752.7" y="263.5" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 752.7 263.5)">5.8 h</text>
-<rect x="775.7" y="380.0" width="41.0" height="26.0" fill="#27ae60" />
-<rect x="775.7" y="371.0" width="41.0" height="9.1" fill="none" stroke="#27ae60" stroke-dasharray="3 2" stroke-opacity="0.8"/>
-<text x="796.2" y="375.0" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 796.2 375.0)">12.9 min</text>
-<rect x="819.2" y="310.3" width="41.0" height="95.7" fill="#e67e22" fill-opacity='0.55' stroke='#555' stroke-dasharray='3 2'/>
-<text x="839.8" y="305.3" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 839.8 305.3)">1.7 h</text>
-<rect x="862.7" y="380.7" width="41.0" height="25.3" fill="#2980b9" />
-<rect x="862.7" y="372.0" width="41.0" height="8.7" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.8"/>
-<text x="883.3" y="375.7" text-anchor="start" font-size="10" fill="currentColor" transform="rotate(-90 883.3 375.7)">12.6 min</text>
-<text x="818.0" y="428" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">4x H100</text>
-<rect x="68" y="17" width="11" height="11" fill="#c0392b"/>
-<text x="84" y="26" font-size="11" fill="currentColor">BP only</text>
-<rect x="68" y="33" width="11" height="11" fill="#27ae60"/>
-<text x="84" y="42" font-size="11" fill="currentColor">BP + réplicas</text>
-<rect x="68" y="49" width="11" height="11" fill="#e67e22"/>
-<text x="84" y="58" font-size="11" fill="currentColor">BP + estados</text>
-<rect x="68" y="65" width="11" height="11" fill="#2980b9"/>
-<text x="84" y="74" font-size="11" fill="currentColor">BP + réplicas + estados</text>
-<text x="68" y="382" font-size="10.5" fill="currentColor" opacity="0.8">barra punteada = extrapolada · contorno punteado encima = dónde estaba antes del protocolo</text>
-<text x="14" y="211.0" font-size="11" fill="currentColor" opacity="0.8" transform="rotate(-90 14 211.0)" text-anchor="middle">reloj de pared total, horas (log)</text>
+<h4>Las cuatro plataformas, escala logarítmica</h4>
+<svg viewBox="0 0 820 340" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:var(--mono),monospace">
+<line x1="54" y1="300.0" x2="810" y2="300.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="303.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">10^-1</text>
+<line x1="54" y1="242.0" x2="810" y2="242.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="245.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">1</text>
+<line x1="54" y1="184.0" x2="810" y2="184.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="187.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">10</text>
+<line x1="54" y1="126.0" x2="810" y2="126.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="129.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">100</text>
+<line x1="54" y1="68.0" x2="810" y2="68.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="71.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">1,000</text>
+<line x1="54" y1="10.0" x2="810" y2="10.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="13.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">10^4</text>
+<rect x="74.9" y="51.8" width="35.0" height="248.2" fill="#c0392b" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="92.4" y="47.8" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 92.4 47.8)">79.4 d</text>
+<rect x="112.3" y="103.3" width="35.0" height="196.7" fill="#27ae60" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="129.8" y="99.3" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 129.8 99.3)">10.3 d</text>
+<rect x="149.7" y="65.8" width="35.0" height="234.2" fill="#e67e22" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="167.2" y="61.8" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 167.2 61.8)">45.4 d</text>
+<rect x="187.1" y="110.9" width="35.0" height="189.1" fill="#2980b9" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="204.6" y="106.9" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 204.6 106.9)">7.6 d</text>
+<text x="148.5" y="318" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">CPU</text>
+<rect x="263.9" y="197.9" width="35.0" height="102.1" fill="#c0392b" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="281.4" y="193.9" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 281.4 193.9)">5.8 h</text>
+<rect x="301.3" y="252.5" width="35.0" height="47.5" fill="#27ae60"/>
+<rect x="301.3" y="245.7" width="35.0" height="6.7" fill="none" stroke="#27ae60" stroke-dasharray="3 2" stroke-opacity="0.85"/>
+<text x="318.8" y="248.5" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 318.8 248.5)">39.6 min</text>
+<rect x="338.7" y="227.4" width="35.0" height="72.6" fill="#e67e22" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="356.2" y="223.4" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 356.2 223.4)">1.8 h</text>
+<rect x="376.1" y="247.6" width="35.0" height="52.4" fill="#2980b9"/>
+<rect x="376.1" y="241.1" width="35.0" height="6.5" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.85"/>
+<text x="393.6" y="243.6" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 393.6 243.6)">48.0 min</text>
+<text x="337.5" y="318" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">1x H100</text>
+<rect x="452.9" y="197.7" width="35.0" height="102.3" fill="#c0392b" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="470.4" y="193.7" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 470.4 193.7)">5.8 h</text>
+<rect x="490.3" y="261.6" width="35.0" height="38.4" fill="#27ae60"/>
+<text x="507.8" y="257.6" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 507.8 257.6)">27.6 min</text>
+<rect x="527.7" y="227.8" width="35.0" height="72.2" fill="#e67e22" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="545.2" y="223.8" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 545.2 223.8)">1.8 h</text>
+<rect x="565.1" y="265.9" width="35.0" height="34.1" fill="#2980b9"/>
+<rect x="565.1" y="259.4" width="35.0" height="6.5" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.85"/>
+<text x="582.6" y="261.9" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 582.6 261.9)">23.3 min</text>
+<text x="526.5" y="318" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">2x H100</text>
+<rect x="641.9" y="197.7" width="35.0" height="102.3" fill="#c0392b" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="659.4" y="193.7" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 659.4 193.7)">5.8 h</text>
+<rect x="679.3" y="274.0" width="35.0" height="26.0" fill="#27ae60"/>
+<text x="696.8" y="270.0" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 696.8 270.0)">16.9 min</text>
+<rect x="716.7" y="228.8" width="35.0" height="71.2" fill="#e67e22" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="734.2" y="224.8" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 734.2 224.8)">1.7 h</text>
+<rect x="754.1" y="281.5" width="35.0" height="18.5" fill="#2980b9"/>
+<rect x="754.1" y="274.7" width="35.0" height="6.7" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.85"/>
+<text x="771.6" y="277.5" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 771.6 277.5)">12.5 min</text>
+<text x="715.5" y="318" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">4x H100</text>
+<rect x="62.0" y="14" width="10" height="10" fill="#c0392b"/>
+<text x="76.0" y="22" font-size="10" fill="currentColor">BP only</text>
+<rect x="242.0" y="14" width="10" height="10" fill="#27ae60"/>
+<text x="256.0" y="22" font-size="10" fill="currentColor">BP + réplicas</text>
+<rect x="422.0" y="14" width="10" height="10" fill="#e67e22"/>
+<text x="436.0" y="22" font-size="10" fill="currentColor">BP + estados</text>
+<rect x="602.0" y="14" width="10" height="10" fill="#2980b9"/>
+<text x="616.0" y="22" font-size="10" fill="currentColor">BP + réplicas + estados</text>
 </svg>
+<h4>Solo GPU, escala lineal — donde se ven las diferencias</h4>
+<svg viewBox="0 0 820 320" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:var(--mono),monospace">
+<line x1="54" y1="280.0" x2="810" y2="280.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="283.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">0.0</text>
+<line x1="54" y1="226.0" x2="810" y2="226.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="229.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">1.3</text>
+<line x1="54" y1="172.0" x2="810" y2="172.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="175.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">2.6</text>
+<line x1="54" y1="118.0" x2="810" y2="118.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="121.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">4.0</text>
+<line x1="54" y1="64.0" x2="810" y2="64.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="67.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">5.3</text>
+<line x1="54" y1="10.0" x2="810" y2="10.0" stroke="currentColor" stroke-opacity="0.16"/>
+<text x="48" y="13.5" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">6.6</text>
+<rect x="81.9" y="45.0" width="46.6" height="235.0" fill="#c0392b" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="105.2" y="41.0" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 105.2 41.0)">5.8 h</text>
+<rect x="131.7" y="253.1" width="46.6" height="26.9" fill="#27ae60"/>
+<rect x="131.7" y="244.8" width="46.6" height="8.3" fill="none" stroke="#27ae60" stroke-dasharray="3 2" stroke-opacity="0.85"/>
+<text x="155.1" y="249.1" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 155.1 249.1)">39.6 min</text>
+<rect x="181.6" y="207.1" width="46.6" height="72.9" fill="#e67e22" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="204.9" y="203.1" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 204.9 203.1)">1.8 h</text>
+<rect x="231.5" y="247.3" width="46.6" height="32.7" fill="#2980b9"/>
+<rect x="231.5" y="237.7" width="46.6" height="9.6" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.85"/>
+<text x="254.8" y="243.3" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 254.8 243.3)">48.0 min</text>
+<text x="180.0" y="298" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">1x H100</text>
+<rect x="333.9" y="43.2" width="46.6" height="236.8" fill="#c0392b" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="357.2" y="39.2" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 357.2 39.2)">5.8 h</text>
+<rect x="383.7" y="261.2" width="46.6" height="18.8" fill="#27ae60"/>
+<text x="407.1" y="257.2" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 407.1 257.2)">27.6 min</text>
+<rect x="433.6" y="208.2" width="46.6" height="71.8" fill="#e67e22" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="456.9" y="204.2" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 456.9 204.2)">1.8 h</text>
+<rect x="483.5" y="264.2" width="46.6" height="15.8" fill="#2980b9"/>
+<rect x="483.5" y="259.5" width="46.6" height="4.7" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.85"/>
+<text x="506.8" y="260.2" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 506.8 260.2)">23.3 min</text>
+<text x="432.0" y="298" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">2x H100</text>
+<rect x="585.9" y="43.2" width="46.6" height="236.8" fill="#c0392b" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="609.2" y="39.2" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 609.2 39.2)">5.8 h</text>
+<rect x="635.7" y="268.5" width="46.6" height="11.5" fill="#27ae60"/>
+<text x="659.1" y="264.5" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 659.1 264.5)">16.9 min</text>
+<rect x="685.6" y="211.1" width="46.6" height="68.9" fill="#e67e22" fill-opacity="0.5" stroke="#666" stroke-dasharray="3 2"/>
+<text x="708.9" y="207.1" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 708.9 207.1)">1.7 h</text>
+<rect x="735.5" y="271.5" width="46.6" height="8.5" fill="#2980b9"/>
+<rect x="735.5" y="268.9" width="46.6" height="2.6" fill="none" stroke="#2980b9" stroke-dasharray="3 2" stroke-opacity="0.85"/>
+<text x="758.8" y="267.5" text-anchor="start" font-size="9" fill="currentColor" transform="rotate(-90 758.8 267.5)">12.5 min</text>
+<text x="684.0" y="298" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">4x H100</text>
+<rect x="62.0" y="14" width="10" height="10" fill="#c0392b"/>
+<text x="76.0" y="22" font-size="10" fill="currentColor">BP only</text>
+<rect x="242.0" y="14" width="10" height="10" fill="#27ae60"/>
+<text x="256.0" y="22" font-size="10" fill="currentColor">BP + réplicas</text>
+<rect x="422.0" y="14" width="10" height="10" fill="#e67e22"/>
+<text x="436.0" y="22" font-size="10" fill="currentColor">BP + estados</text>
+<rect x="602.0" y="14" width="10" height="10" fill="#2980b9"/>
+<text x="616.0" y="22" font-size="10" fill="currentColor">BP + réplicas + estados</text>
+</svg>
+<div class="key">
+  <p><b>Mejor configuración, antes y después del protocolo:</b></p>
+  <p style="font-family:var(--mono);font-size:.95rem">
+  1× H100 &nbsp;51.7 min → <b>39.6 min</b> &nbsp;(−23.5 %)<br>
+  2× H100 &nbsp;27.6 min → <b>23.3 min</b> &nbsp;(−15.6 %)<br>
+  4× H100 &nbsp;16.4 min → <b>12.5 min</b> &nbsp;(−23.5 %)</p>
+  <p style="opacity:.8;font-size:.93rem">En 2 GPU la mejora es menor porque la
+  configuración que ganaba allí (<code>BP + réplicas</code>, 50 por dispositivo)
+  <b>ya era ancho 2 y no tenía castigo</b>; lo que mejora es la otra, que la
+  adelanta.</p>
+</div>
+
+<h3>Cómo se reparten las réplicas en cada caso</h3>
+<p>El reparto no es libre: <code>pmap</code> exige <b>fragmentos iguales</b>, y
+el código solo reparte si <code>lote % GPUs == 0</code>; si no, <b>corre todo en
+una sola GPU</b> y las demás quedan ociosas.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>agrupación</th><th>lanzamientos</th><th>cadenas<br>por lanz.</th>
+    <th>1 GPU</th><th>2 GPU</th><th>4 GPU</th></tr></thead>
+  <tbody>
+    <tr><td>BP only</td><td class="n">400</td><td class="n">1</td>
+        <td class="n">1×1</td><td class="bad">1×1<br><span style="font-size:.85em">1 GPU ociosa</span></td>
+        <td class="bad">1×1<br><span style="font-size:.85em">3 GPU ociosas</span></td></tr>
+    <tr><td>BP + réplicas</td><td class="n">4</td><td class="n">100</td>
+        <td class="n">1×100</td><td class="n">2×50</td><td class="n">4×25</td></tr>
+    <tr><td>BP + estados</td><td class="n">100</td><td class="n">4</td>
+        <td class="n">1×4</td><td class="n">2×2</td><td class="n">4×1</td></tr>
+    <tr class="best"><td><b>BP + réplicas + estados</b></td><td class="n">1</td>
+        <td class="n">400</td><td class="n">1×400</td><td class="n">2×200</td>
+        <td class="n">4×100</td></tr>
+    <tr style="border-top:2px solid currentColor"><td><b>el mismo, con
+        protocolo</b></td><td class="n">2</td><td class="n">—</td>
+        <td class="best">1×201<br>+ 1×199</td><td class="best">2×101<br>+ 2×99</td>
+        <td class="best">4×51<br>+ 4×49</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note warn"><strong>Dos cosas que esta tabla hace evidentes.</strong>
+<code>BP only</code> <b>no escala en absoluto</b>: su lote es 1, no divide entre
+2 ni 4, así que usa una sola GPU y las demás no hacen nada — por eso su barra es
+idéntica en los tres brazos. Y el protocolo <b>necesita dos lanzamientos</b>
+porque <code>pmap</code> pide fragmentos iguales: no se puede dar 101 a una GPU
+y 99 a otra en la misma llamada, hay que hacer una llamada con todos a 101 y
+otra con todos a 99.</div>
+
+<h3>Qué dice el estado del arte sobre réplicas y número de pasos</h3>
+
+<p>Lo revisé y la respuesta corta es que <b>no hay un número canónico</b>. Lo que
+hay son tres cosas distintas que conviene no mezclar.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>lo que la literatura fija</th><th>valores publicados</th>
+    <th>lo nuestro</th></tr></thead>
+  <tbody>
+    <tr><td><b>Barridos de termalización</b><br>
+        <span style="opacity:.75">descartados antes de medir</span></td>
+        <td class="n">10⁵ · 10⁵ (mitad de 2×10⁵) · 2 000</td>
+        <td class="n">15 000 por temperatura</td></tr>
+    <tr><td><b>Barridos de medida</b><br>
+        <span style="opacity:.75">de los que sale el promedio</span></td>
+        <td class="n">10⁵ · 10⁵ · 2 000×40</td>
+        <td class="n">5 000 por temperatura</td></tr>
+    <tr><td><b>Corridas independientes</b><br>
+        <span style="opacity:.75">de las que salen las barras de error</span></td>
+        <td class="bad">3 · 30 (réplica-exchange)</td>
+        <td class="best">50</td></tr>
+  </tbody>
+</table></div>
 
 <div class="key">
-  <p><b>En 4× H100: de 16.4 min a 12.6 min, −22.7 %.</b></p>
-  <p>Y en 1× H100 la mejor configuración pasa de <b>51.7 min a 39.6 min</b>.</p>
+  <p><b>Los rangos publicados abarcan órdenes de magnitud</b>, y cada artículo
+  declara los suyos sin apelar a un estándar. Lo que sí es común a todos es el
+  <b>criterio</b>, no el número:</p>
+  <p style="font-family:var(--mono);font-size:.95rem;text-align:center">
+  τ<sub>int</sub> ≪ N<sub>muestras</sub></p>
+  <p>con dos advertencias que se repiten: <b>τ difiere entre observables</b>, así
+  que hay que comprobarlo en cada uno; y <b>hay que descartar más barridos que
+  τ</b> antes de empezar a medir (Berg).</p>
 </div>
+
+<div class="note"><strong>Dónde nos deja eso, en las dos direcciones.</strong>
+Nuestros <b>barridos van por debajo</b> de lo que usan los estudios de una sola
+temperatura — pero esa comparación <b>no es justa</b>, porque nosotros
+<b>recocemos</b>: cada temperatura arranca del estado ya equilibrado de la
+anterior, que es el argumento clásico del recocido simulado para necesitar menos
+termalización por paso. Y nuestras <b>réplicas van muy por encima</b>: 50 contra
+las 3 de un estudio y las 30 de otro. <b>El exceso en un eje compensa el defecto
+en el otro</b>, y la tabla de τ de arriba muestra que la cuenta cierra — pero
+cierra <b>por las réplicas</b>.</div>
+
+<div class="note bad"><strong>Y la advertencia operativa.</strong> El equilibrio
+es frágil en una dirección concreta: <b>si se recortan réplicas, el estado
+laberinto es el primero que se rompe</b>, porque es el de τ = 482. Con 50
+réplicas tiene 519 muestras efectivas; con 10 bajaría a 104, y con 3 —como parte
+de la literatura— a <b>31</b>, que ya no sostiene una barra de error. <b>El
+número de pasos no es el que hay que vigilar; es el número de réplicas.</b></div>
 
 <div class="note warn"><strong>Qué es medido y qué no, porque importa.</strong>
 Las seis celdas de <b>BP + réplicas</b> y <b>BP + réplicas + estados</b> sobre
 1, 2 y 4 GPU vienen de <b>escaleras completas medidas de punta a punta</b>; las
-otras diez se extrapolan de una tasa medida y van <b>punteadas</b>. La ganancia
-del <b>−23.5 %</b> está <b>medida</b> en R=100 con 7 repeticiones; la de
-<b>−22.7 %</b> está <b>extrapolada de R=200</b>, porque no medimos R=400
-directamente. El <b>contorno punteado encima de cada barra mejorada marca dónde
-estaba antes</b>.</div>
+otras diez se extrapolan de una tasa medida y van <b>punteadas</b>. Las ganancias
+del <b>−23.5 %</b> (R=100) y <b>−22.7 %</b> (R=200) están <b>medidas</b> con 7
+repeticiones y se aplican donde el lote <b>por dispositivo</b> coincide con el
+que se midió; solo la celda de 1 GPU en <code>BP + réplicas + estados</code>
+(400 por dispositivo) es <b>extrapolada</b>. El <b>contorno punteado encima de
+cada barra mejorada marca dónde estaba antes</b>.</div>
 
-<div class="note bad"><strong>Y dos límites que no hay que cruzar.</strong> El
+<div class="note bad"><strong>Y tres límites que no hay que cruzar.</strong> El
 castigo del ancho es un efecto de <b>XLA sobre GPU</b>, así que <b>las barras
-de CPU no cambian</b> — sería deshonesto aplicarles la ganancia. Y
-<b>BP + estados no mejora</b>: su lote es <code>B = 4</code>, y partirlo en
-3 + 1 duplicaría los lanzamientos sobre un lote donde el costo fijo ya domina,
-que es justo lo que medimos que no conviene.</div>
+de CPU no cambian</b>. <b>BP + estados no mejora</b>: su lote es
+<code>B = 4</code>, y partirlo duplicaría los lanzamientos sobre un lote donde
+el costo fijo ya domina. Y <b>BP + réplicas solo mejora en 1 GPU</b>, porque al
+repartirse entre 2 o 4 su lote por dispositivo cae a 50 y 25, que ya son ancho
+2 y 1.</div>
 
 <div class="note"><strong>Nota de cronograma.</strong> Esta gráfica mantiene el
 cronograma original de <b>200 × 15 000</b> para que la comparación antes/después
