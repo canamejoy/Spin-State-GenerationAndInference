@@ -2580,3 +2580,86 @@ dispositivo sea múltiplo de cuatro. Retiro el «debería dejar de usarse» que
 escribí antes: era cierto para 4 GPU pero lo presenté como si valiera siempre,
 y en 1 GPU es justo al revés.</div>
 
+
+<h2>La metodología, corregida: el eje de «estados» no existe</h2>
+
+<div class="key"><p><b>Esto lo corrigió el usuario y tiene razón.</b> Fui a
+verificarlo al código en vez de discutirlo, y el código le da la razón.</p></div>
+
+<p><code>pack()</code> construye las columnas de parámetros con
+<code>np.repeat</code>, que ordena <b>en bloques</b>; y <code>shard()</code>
+hace <code>reshape(4, 100)</code>. El resultado sobre 4 GPUs:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>dispositivo</th><th>cadenas</th><th>estados que recibe</th></tr></thead>
+  <tbody>
+    <tr><td class="n">GPU 0</td><td class="n">100</td><td><code>uniform</code></td></tr>
+    <tr><td class="n">GPU 1</td><td class="n">100</td><td><code>helical</code></td></tr>
+    <tr><td class="n">GPU 2</td><td class="n">100</td><td><code>points</code></td></tr>
+    <tr><td class="n">GPU 3</td><td class="n">100</td><td><code>lines</code></td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>Un estado entero por GPU.</b> Así que el supuesto «eje de estados»
+  <b>no aporta paralelismo ninguno</b>: solo decide <b>qué</b> estado cae en
+  <b>qué</b> dispositivo. Un estado no es un eje — es un <b>parámetro por
+  cadena</b>, y las cadenas ya son independientes.</p>
+</div>
+
+<h3>Lo que eso implica para toda la comparación</h3>
+
+<p>Si el eje de estados no existe, entonces las cuatro «agrupaciones»
+<b>no son cuatro estrategias de paralelización</b>. Son cuatro elecciones de
+<b>cuántas cadenas por dispositivo y en cuántas olas</b>, y nada más:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>agrupación</th><th>olas</th><th>por disp. y ola</th>
+    <th>ancho</th><th>total por disp.</th><th>medido 4 GPU</th></tr></thead>
+  <tbody>
+    <tr><td>BP + réplicas</td><td class="n">4</td><td class="bad">25</td>
+        <td class="best">1</td><td class="n">100</td><td class="n">16.9 min</td></tr>
+    <tr><td>BP + répl. + estados</td><td class="n">1</td><td class="n">100</td>
+        <td class="bad">4</td><td class="n">100</td><td class="n">16.4 min</td></tr>
+    <tr class="best"><td><b>el protocolo</b></td><td class="n">2</td>
+        <td class="best">51 y 49</td><td class="best">1</td><td class="n">100</td>
+        <td class="best"><b>12.5 min</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Las tres mueven exactamente las mismas 100 cadenas por
+dispositivo.</b> Lo único que cambia es <b>en cuántas olas y de qué tamaño</b>
+— y eso explica toda la diferencia de tiempo. No hay ninguna «ventaja de
+estados» que medir.</p></div>
+
+<div class="note"><strong>Y así es como el usuario lleva razón en el fondo.</strong>
+Lo que gana <b>es una decisión sobre el reparto de réplicas</b>: dos olas con
+51 y 49 por dispositivo. Los estados van de pasajeros, como columnas de
+parámetros. Llamar a eso «BP + réplicas + estados» <b>sugiere una segunda
+palanca que no existe</b>. El nombre honesto sería <b>«51 y 49 réplicas por
+dispositivo, dos olas»</b>, y los estados ni se mencionan.</div>
+
+<h3>Y una consecuencia práctica que esto desbloquea</h3>
+
+<div class="key">
+  <p>Si un estado es solo un parámetro por cadena, <b>no hay nada que obligue a
+  dar el mismo número de réplicas a cada estado</b>.</p>
+  <p>Y eso importa, porque <b>ya medimos que no todos cuestan lo mismo
+  estadísticamente</b>: <code>τ = 9</code> para <code>uniform</code> contra
+  <code>τ = 482</code> para <code>lines</code>. Con 50 réplicas por estado,
+  <code>lines</code> acaba con <b>519 muestras efectivas</b> y
+  <code>uniform</code> con <b>27 778</b> — un desperdicio de <b>50×</b> en el
+  estado fácil.</p>
+  <p>Repartir por <code>τ</code> en vez de por partes iguales daría las mismas
+  barras de error con <b>bastantes menos cadenas totales</b>. Es la vía más
+  prometedora que queda, y <b>sin probar</b>.</p>
+</div>
+
+<div class="note warn"><strong>El obstáculo, concreto.</strong>
+<code>pmap</code> exige <b>fragmentos iguales</b>, así que un reparto desigual
+por estado necesita <b>un lanzamiento por estado</b> — justo la estructura de
+<code>BP + réplicas</code>. Y ahí vuelve el problema del lote chico: 4
+lanzamientos de 25 por dispositivo. La salida sería dar a cada estado el
+<b>número de réplicas que su τ pida</b>, redondeado a un lote impar decente por
+dispositivo, en vez de 100 a cada uno. <b>Eso sí habría que medirlo.</b></div>
+
