@@ -1,0 +1,126 @@
+{
+ "schedule": {
+  "temps": 200,
+  "sweeps_per_temp": 15000,
+  "chains": 400
+ },
+ "gains_source": "partsearch.json, 600 barridos, 7 repeticiones, kernel simplificado (solo substep)",
+ "bars": [
+  {
+   "device": "CPU",
+   "gpus": 0,
+   "bar": "bp_only",
+   "name": "BP only",
+   "hours": 1905.1720394500003,
+   "measured": false,
+   "note": "400 lanzamientos de 1 cadena"
+  },
+  {
+   "device": "CPU",
+   "gpus": 0,
+   "bar": "replicas",
+   "name": "BP + r\u00e9plicas",
+   "hours": 181.84166092916695,
+   "measured": false,
+   "note": "1 lanzamiento de 400"
+  },
+  {
+   "device": "CPU",
+   "gpus": 0,
+   "bar": "opt",
+   "name": "BP + r\u00e9plicas optimizado",
+   "hours": 181.84166092916695,
+   "measured": false,
+   "note": "sin castigo de ancho en CPU",
+   "gain_pct": 0.0,
+   "partition": null
+  },
+  {
+   "device": "1x H100",
+   "gpus": 1,
+   "bar": "bp_only",
+   "name": "BP only",
+   "hours": 5.7535662356944455,
+   "measured": false,
+   "note": "400 lanzamientos de 1 cadena"
+  },
+  {
+   "device": "1x H100",
+   "gpus": 1,
+   "bar": "replicas",
+   "name": "BP + r\u00e9plicas",
+   "hours": 1.0353119881716666,
+   "measured": true,
+   "note": "1x400 por dispositivo"
+  },
+  {
+   "device": "1x H100",
+   "gpus": 1,
+   "bar": "opt",
+   "name": "BP + r\u00e9plicas optimizado",
+   "hours": 1.0218529323254348,
+   "measured": false,
+   "note": "2 olas: 201+199 por dispositivo, -1.3%",
+   "gain_pct": -1.3,
+   "partition": "201+199"
+  },
+  {
+   "device": "2x H100",
+   "gpus": 2,
+   "bar": "bp_only",
+   "name": "BP only",
+   "hours": 5.799710204305556,
+   "measured": false,
+   "note": "400 lanzamientos de 1 cadena"
+  },
+  {
+   "device": "2x H100",
+   "gpus": 2,
+   "bar": "replicas",
+   "name": "BP + r\u00e9plicas",
+   "hours": 0.5017221532066666,
+   "measured": true,
+   "note": "2x200 por dispositivo"
+  },
+  {
+   "device": "2x H100",
+   "gpus": 2,
+   "bar": "opt",
+   "name": "BP + r\u00e9plicas optimizado",
+   "hours": 0.4364982732897999,
+   "measured": false,
+   "note": "2 olas: 101+99 por dispositivo, -13.0%",
+   "gain_pct": -13.0,
+   "partition": "101+99"
+  },
+  {
+   "device": "4x H100",
+   "gpus": 4,
+   "bar": "bp_only",
+   "name": "BP only",
+   "hours": 5.79933545361111,
+   "measured": false,
+   "note": "400 lanzamientos de 1 cadena"
+  },
+  {
+   "device": "4x H100",
+   "gpus": 4,
+   "bar": "replicas",
+   "name": "BP + r\u00e9plicas",
+   "hours": 0.27263939667805553,
+   "measured": true,
+   "note": "4x100 por dispositivo"
+  },
+  {
+   "device": "4x H100",
+   "gpus": 4,
+   "bar": "opt",
+   "name": "BP + r\u00e9plicas optimizado",
+   "hours": 0.24564809640692803,
+   "measured": false,
+   "note": "2 olas: 51+49 por dispositivo, -9.9%",
+   "gain_pct": -9.9,
+   "partition": "51+49"
+  }
+ ]
+}

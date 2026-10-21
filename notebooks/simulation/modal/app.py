@@ -5821,6 +5821,142 @@ def split4(rd: float = 18.30, layers: int = 5, sweeps: int = 400,
     split4_h100.remote(tag, rd, layers, sweeps, repeats)
 
 
+def _partsearch(tag, Rd, L, total, sweeps, repeats):
+    """Find the cheapest way to split R chains over 1, 2 and 4 GPUs.
+
+    The chart needs three bars: BP only, BP + replicas as it is arranged today
+    (one wave, R/D per device), and the best partition we can find. This
+    searches the partitions rather than assuming one.
+
+    A partition is a list of per-device batch sizes, one per wave, summing to
+    R/D. Every wave launches on all D devices, because two pmaps over disjoint
+    device subsets were measured to serialise rather than overlap.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+    import parallel_axes as PA
+
+    devs = jax.devices()
+    D_ALL = len(devs)
+    print(f"dispositivos: {D_ALL}", flush=True)
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    thetas = PA.load_thetas("/root/theta4.json")
+    kB = 0.086173404
+    beta = float(1.0 / (kB * 5.0))
+    v2 = lambda n: (n & -n).bit_length() - 1
+    width = lambda B: min(4, 2 ** (v2(B) + v2(int(L))))
+
+    def body(s, key, k1_, p, n):
+        def one(_, v):
+            st, kk = v
+            kk, ka = jax.random.split(kk, 2)
+            return (eng["substep"](st, ka, beta, True, p, k1_), kk)
+        return jax.lax.fori_loop(0, n, one, (s, key))[0]
+
+    cache = {}
+
+    def build(b, nd):
+        """One pmap over the first `nd` devices, `b` chains on each."""
+        key = (b, nd)
+        if key in cache:
+            return cache[key]
+        need = b * nd
+        cols = PA.pack(thetas, need // len(thetas) + 1)
+        cols = {k: v[:need] for k, v in cols.items()}
+        # the key is "surface", not "surf" -- an unguarded lookup cost one run
+        surf = jnp.asarray(geo["surface"])
+        k1 = jnp.where(surf[None], cols["KanS"], cols["Kan1"])
+        spins = S.init_spins(jax.random.PRNGKey(7 + b), geo, need)
+        sh = lambda a: a.reshape(nd, b, *a.shape[1:])
+        fn = jax.pmap(body, static_broadcasted_argnums=4, devices=devs[:nd])
+        out = (fn, sh(spins), jax.random.split(jax.random.PRNGKey(11 + b), nd),
+               sh(k1), {k: sh(v) for k, v in cols.items()})
+        jax.block_until_ready(fn(out[1], out[2], out[3], out[4], int(sweeps)))
+        cache[key] = out
+        return out
+
+    R = int(total)
+    PLANS = {
+        1: [[R], [R // 2 + 1, R // 2 - 1], [R // 2 + 3, R // 2 - 3],
+            [135, 133, 132], [101, 101, 99, 99]],
+        2: [[R // 2], [R // 4 + 1, R // 4 - 1], [R // 4 + 3, R // 4 - 3],
+            [67, 67, 66], [51, 51, 49, 49]],
+        4: [[R // 4], [R // 8 + 1, R // 8 - 1], [R // 8 + 3, R // 8 - 3],
+            [35, 33, 32], [25, 25, 25, 25]],
+    }
+    res = dict(total=R, sweeps=int(sweeps), repeats=int(repeats),
+               device=device_identity(), n_devices=D_ALL, plans=[])
+    for nd in (1, 2, 4):
+        if nd > D_ALL:
+            continue
+        print(f"\n=== {nd} GPU, {R} cadenas, {R//nd} por dispositivo ===",
+              flush=True)
+        print(f"  {'particion':<26}{'olas':>6}{'anchos':>12}{'s':>10}{'vs 1 ola':>10}",
+              flush=True)
+        base = None
+        for waves in PLANS[nd]:
+            if sum(waves) * nd != R:
+                print(f"  {str(waves):<26}  suma {sum(waves)*nd} != {R}, se omite",
+                      flush=True)
+                continue
+            try:
+                parts = [build(b, nd) for b in waves]
+            except Exception as e:
+                print(f"  {str(waves):<26}  fallo: {type(e).__name__}", flush=True)
+                continue
+            ts = []
+            for _ in range(int(repeats)):
+                t0 = time.perf_counter()
+                outs = [fn(sp, kk, k1, p, int(sweeps))
+                        for (fn, sp, kk, k1, p) in parts]
+                for o in outs:
+                    jax.block_until_ready(o)
+                ts.append(time.perf_counter() - t0)
+            m = float(np.median(ts))
+            if base is None:
+                base = m
+            ws = ",".join(str(width(b)) for b in waves)
+            res["plans"].append(dict(gpus=nd, waves=waves, n_waves=len(waves),
+                                     widths=[width(b) for b in waves],
+                                     seconds=m, vs_single_pct=100*(m/base-1),
+                                     spread_pct=100*(max(ts)/min(ts)-1)))
+            print(f"  {str(waves):<26}{len(waves):>6}{ws:>12}{m:>10.4f}"
+                  f"{100*(m/base-1):>+9.1f}%", flush=True)
+        mine = [p for p in res["plans"] if p["gpus"] == nd]
+        if not mine:
+            print("  ninguna particion corrio en este brazo", flush=True)
+            continue
+        best = min(mine, key=lambda p: p["seconds"])
+        single = next(p for p in res["plans"] if p["gpus"] == nd
+                      and p["n_waves"] == 1)
+        print(f"  -> mejor: {best['waves']}  "
+              f"{100*(best['seconds']/single['seconds']-1):+.1f}% contra una ola",
+              flush=True)
+        res.setdefault("best", {})[str(nd)] = dict(
+            waves=best["waves"], seconds=best["seconds"],
+            single_seconds=single["seconds"],
+            gain_pct=100*(best["seconds"]/single["seconds"]-1))
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100:4", **_COMMON)
+def partsearch_h100(tag, Rd, L, total, sweeps, repeats):
+    return _partsearch(tag, Rd, L, total, sweeps, repeats)
+
+
+@app.local_entrypoint()
+def partsearch(rd: float = 18.30, layers: int = 5, total: int = 400,
+               sweeps: int = 600, repeats: int = 7, tag: str = "partsearch"):
+    """Cheapest partition of R chains over 1, 2 and 4 GPUs."""
+    partsearch_h100.remote(tag, rd, layers, total, sweeps, repeats)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 

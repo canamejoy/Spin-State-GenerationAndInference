@@ -2663,3 +2663,266 @@ lanzamientos de 25 por dispositivo. La salida sería dar a cada estado el
 <b>número de réplicas que su τ pida</b>, redondeado a un lote impar decente por
 dispositivo, en vez de 100 a cada uno. <b>Eso sí habría que medirlo.</b></div>
 
+
+<h2>La gráfica, rehecha sin el eje de estados</h2>
+
+<p>Ya que el eje de estados no existe, las barras pasan de cuatro a <b>tres</b>,
+y todas son decisiones sobre <b>cómo repartir 400 réplicas</b>:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>barra</th><th>1 GPU</th><th>2 GPU</th><th>4 GPU</th></tr></thead>
+  <tbody>
+    <tr><td><b>BP only</b></td><td colspan="3" class="n">400 lanzamientos de
+        1 cadena — una sola GPU trabaja</td></tr>
+    <tr><td><b>BP + réplicas</b></td><td class="n">1×400</td>
+        <td class="n">2×200</td><td class="n">4×100</td></tr>
+    <tr class="best"><td><b>BP + réplicas optimizado</b></td>
+        <td class="n">2 olas<br>201 + 199</td><td class="n">2 olas<br>101 + 99</td>
+        <td class="n">2 olas<br>51 + 49</td></tr>
+  </tbody>
+</table></div>
+
+<svg viewBox="0 0 740 270" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:760px;height:auto;display:block;margin:0 auto;font-family:var(--mono),monospace">
+<line x1="46" y1="238.0" x2="730" y2="238.0" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="241.2" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">1e-1</text>
+<line x1="46" y1="196.4" x2="730" y2="196.4" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="199.6" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">1e0</text>
+<line x1="46" y1="154.8" x2="730" y2="154.8" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="158.0" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">1e1</text>
+<line x1="46" y1="113.2" x2="730" y2="113.2" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="116.4" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">1e2</text>
+<line x1="46" y1="71.6" x2="730" y2="71.6" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="74.8" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">1e3</text>
+<line x1="46" y1="30.0" x2="730" y2="30.0" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="33.2" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">1e4</text>
+<rect x="71.9" y="60.0" width="36.8" height="178.0" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="90.3" y="57.0" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 90.3 57.0)">79d</text>
+<rect x="113.1" y="102.4" width="36.8" height="135.6" fill="#27ae60" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="131.5" y="99.4" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 131.5 99.4)">8d</text>
+<rect x="154.3" y="102.4" width="36.8" height="135.6" fill="#2980b9" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="172.7" y="99.4" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 172.7 99.4)">8d</text>
+<text x="131.5" y="254" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">CPU</text>
+<rect x="242.9" y="164.8" width="36.8" height="73.2" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="261.3" y="161.8" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 261.3 161.8)">5.8h</text>
+<rect x="284.1" y="195.8" width="36.8" height="42.2" fill="#27ae60"/>
+<text x="302.5" y="192.8" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 302.5 192.8)">1.0h</text>
+<rect x="325.3" y="196.0" width="36.8" height="42.0" fill="#2980b9" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="343.7" y="193.0" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 343.7 193.0)">1.0h</text>
+<text x="302.5" y="254" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">1x H100</text>
+<rect x="413.9" y="164.6" width="36.8" height="73.4" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="432.3" y="161.6" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 432.3 161.6)">5.8h</text>
+<rect x="455.1" y="208.9" width="36.8" height="29.1" fill="#27ae60"/>
+<text x="473.5" y="205.9" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 473.5 205.9)">30m</text>
+<rect x="496.3" y="211.4" width="36.8" height="26.6" fill="#2980b9" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="514.7" y="208.4" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 514.7 208.4)">26m</text>
+<text x="473.5" y="254" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">2x H100</text>
+<rect x="584.9" y="164.6" width="36.8" height="73.4" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="603.3" y="161.6" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 603.3 161.6)">5.8h</text>
+<rect x="626.1" y="219.9" width="36.8" height="18.1" fill="#27ae60"/>
+<text x="644.5" y="216.9" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 644.5 216.9)">16m</text>
+<rect x="667.3" y="221.8" width="36.8" height="16.2" fill="#2980b9" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="685.7" y="218.8" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 685.7 218.8)">15m</text>
+<text x="644.5" y="254" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">4x H100</text>
+<rect x="50.0" y="11" width="9" height="9" fill="#c0392b"/>
+<text x="63.0" y="18" font-size="9.5" fill="currentColor">BP only</text>
+<rect x="274.26229508196724" y="11" width="9" height="9" fill="#27ae60"/>
+<text x="287.26229508196724" y="18" font-size="9.5" fill="currentColor">BP + réplicas</text>
+<rect x="498.5245901639345" y="11" width="9" height="9" fill="#2980b9"/>
+<text x="511.5245901639345" y="18" font-size="9.5" fill="currentColor">BP + répl. optimizado</text>
+</svg>
+<p style="text-align:center;opacity:.75;font-size:.92rem">
+Las cuatro plataformas, escala logarítmica</p>
+<svg viewBox="0 0 740 255" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:760px;height:auto;display:block;margin:0 auto;font-family:var(--mono),monospace">
+<line x1="46" y1="223.0" x2="730" y2="223.0" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="226.2" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">0.0</text>
+<line x1="46" y1="174.8" x2="730" y2="174.8" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="177.9" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">1.7</text>
+<line x1="46" y1="126.5" x2="730" y2="126.5" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="129.7" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">3.4</text>
+<line x1="46" y1="78.2" x2="730" y2="78.2" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="81.5" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">5.0</text>
+<line x1="46" y1="30.0" x2="730" y2="30.0" stroke="currentColor" stroke-opacity="0.15"/>
+<text x="41" y="33.2" text-anchor="end" font-size="9" fill="currentColor" opacity="0.65">6.7</text>
+<rect x="80.6" y="57.9" width="49.0" height="165.1" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="105.1" y="54.9" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 105.1 54.9)">5.8h</text>
+<rect x="135.5" y="193.3" width="49.0" height="29.7" fill="#27ae60"/>
+<text x="160.0" y="190.3" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 160.0 190.3)">1.0h</text>
+<rect x="190.4" y="193.7" width="49.0" height="29.3" fill="#2980b9" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="214.9" y="190.7" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 214.9 190.7)">1.0h</text>
+<text x="160.0" y="239" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">1x H100</text>
+<rect x="308.6" y="56.6" width="49.0" height="166.4" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="333.1" y="53.6" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 333.1 53.6)">5.8h</text>
+<rect x="363.5" y="208.6" width="49.0" height="14.4" fill="#27ae60"/>
+<text x="388.0" y="205.6" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 388.0 205.6)">30m</text>
+<rect x="418.4" y="210.5" width="49.0" height="12.5" fill="#2980b9" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="442.9" y="207.5" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 442.9 207.5)">26m</text>
+<text x="388.0" y="239" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">2x H100</text>
+<rect x="536.6" y="56.6" width="49.0" height="166.4" fill="#c0392b" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="561.1" y="53.6" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 561.1 53.6)">5.8h</text>
+<rect x="591.5" y="215.2" width="49.0" height="7.8" fill="#27ae60"/>
+<text x="616.0" y="212.2" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 616.0 212.2)">16m</text>
+<rect x="646.4" y="216.0" width="49.0" height="7.0" fill="#2980b9" fill-opacity="0.55" stroke="#666" stroke-dasharray="2 2" stroke-width="0.6"/>
+<text x="670.9" y="213.0" text-anchor="start" font-size="8.5" fill="currentColor" transform="rotate(-90 670.9 213.0)">15m</text>
+<text x="616.0" y="239" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">4x H100</text>
+<rect x="50.0" y="11" width="9" height="9" fill="#c0392b"/>
+<text x="63.0" y="18" font-size="9.5" fill="currentColor">BP only</text>
+<rect x="274.26229508196724" y="11" width="9" height="9" fill="#27ae60"/>
+<text x="287.26229508196724" y="18" font-size="9.5" fill="currentColor">BP + réplicas</text>
+<rect x="498.5245901639345" y="11" width="9" height="9" fill="#2980b9"/>
+<text x="511.5245901639345" y="18" font-size="9.5" fill="currentColor">BP + répl. optimizado</text>
+</svg>
+<p style="text-align:center;opacity:.75;font-size:.92rem">
+Solo GPU, escala lineal</p>
+
+<div class="key">
+  <p><b>Con el reparto optimizado:</b></p>
+  <p style="font-family:var(--mono);font-size:.95rem">
+  1× H100 &nbsp;62.1 → 61.3 min &nbsp;(−1.3 %)<br>
+  2× H100 &nbsp;30.1 → <b>26.2 min</b> &nbsp;(−13.0 %)<br>
+  4× H100 &nbsp;16.4 → <b>14.7 min</b> &nbsp;(−9.9 %)</p>
+</div>
+
+<h3>La búsqueda de particiones, y lo que encontró</h3>
+<p>No asumí la partición: la busqué. Cinco candidatas por brazo, 600 barridos,
+7 repeticiones, sobre 4 H100:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>por dispositivo</th><th>partición</th><th>olas</th>
+    <th>anchos</th><th>vs una ola</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="4" class="n">400<br>(1 GPU)</td><td class="n">400</td>
+        <td class="n">1</td><td class="bad">4</td><td class="n">—</td></tr>
+    <tr class="best"><td class="n">201 + 199</td><td class="n">2</td>
+        <td class="best">1, 1</td><td class="n">−1.3 %</td></tr>
+    <tr><td class="n">135 + 133 + 132</td><td class="n">3</td>
+        <td class="bad">1,1,4</td><td class="bad">+8.5 %</td></tr>
+    <tr><td class="n">101+101+99+99</td><td class="n">4</td>
+        <td class="best">1×4</td><td class="n">−1.3 %</td></tr>
+    <tr><td rowspan="3" class="n">200<br>(2 GPU)</td><td class="n">200</td>
+        <td class="n">1</td><td class="bad">4</td><td class="n">—</td></tr>
+    <tr class="best"><td class="n">101 + 99</td><td class="n">2</td>
+        <td class="best">1, 1</td><td class="best"><b>−13.0 %</b></td></tr>
+    <tr><td class="n">51+51+49+49</td><td class="n">4</td>
+        <td class="best">1×4</td><td class="n">−6.5 %</td></tr>
+    <tr><td rowspan="3" class="n">100<br>(4 GPU)</td><td class="n">100</td>
+        <td class="n">1</td><td class="bad">4</td><td class="n">—</td></tr>
+    <tr class="best"><td class="n">51 + 49</td><td class="n">2</td>
+        <td class="best">1, 1</td><td class="best"><b>−9.9 %</b></td></tr>
+    <tr><td class="n">25+25+25+25</td><td class="n">4</td>
+        <td class="best">1×4</td><td class="bad">+14.1 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>El patrón es el mismo en los tres brazos: dos olas con
+las mitades impares.</b> Más olas <b>empeora</b> — cuatro de 25 sobre 4 GPU
+sale <b>+14.1 %</b>, porque el lote por dispositivo cae a la zona empinada de
+<code>a/B</code>.</p></div>
+
+<div class="note bad"><strong>Y un resultado que no cuadra, dicho como
+tal.</strong> En <b>1 GPU la ganancia es solo −1.3 %</b>, cuando la curva de
+producción dice que el castigo del ancho vale <b>+40 % entre B=40 y 200</b> y
+<b>+55 % entre 200 y 1200</b>. Con 400 por dispositivo debería haber mucho más
+que ganar. No es que faltara la partición: <code>[101,101,99,99]</code> dio
+exactamente lo mismo que <code>[201,199]</code>. <b>El lote de 400 simplemente
+no paga el castigo en esta prueba.</b></div>
+
+<div class="note warn"><strong>Mi sospecha, y por qué no la vendo como
+conclusión.</strong> La búsqueda usa un <code>body</code> <b>simplificado</b> —
+solo <code>substep</code> en un bucle, <b>sin la escalera de temperaturas ni el
+registro de observables</b>. El castigo del ancho vive en las fusiones
+<code>kLoop</code> del programa completo (la mega-fusión de Threefry a +118 % y
+la aceptación a +76 %), y es plausible que mi kernel de prueba no las tenga con
+la misma forma. Pero <b>no lo he comprobado</b>, así que la barra de 1 GPU
+queda con la ganancia medida (−1.3 %) y no con la que la curva sugeriría.</div>
+
+<div class="note"><strong>Qué es medido y qué no, en estas barras.</strong> Las
+tres celdas de <b>BP + réplicas</b> sobre 1, 2 y 4 GPU son <b>escaleras
+completas medidas de punta a punta</b> (sólidas). <b>BP only</b> y todo el brazo
+de <b>CPU</b> se extrapolan de una tasa medida (punteadas). Y la barra
+<b>optimizado</b> es la medida anterior <b>multiplicada por la ganancia de la
+búsqueda de particiones</b>, que se midió a 600 barridos: es la opción
+conservadora, pero <b>no es una escalera completa</b>.</div>
+
+
+<h2>Qué es <code>tau</code>, y el reparto de réplicas que permite</h2>
+
+<div class="key"><p><b><code>τ</code> es el tiempo de autocorrelación
+integrado: cuántos barridos hay que esperar para que una medida sea
+independiente de la anterior.</b></p></div>
+
+<p>El problema que resuelve: en Monte Carlo cada configuración nace de la
+anterior, así que dos medidas consecutivas <b>no son dos datos</b> — son casi
+el mismo dato. Si tomas 5000 medidas con <code>τ = 694</code>, no tienes 5000
+datos:</p>
+
+<p style="font-family:var(--mono);text-align:center;font-size:1.02rem">
+N<sub>efectivo</sub> = 5000 / 694 ≈ 7</p>
+
+<p>Y las barras de error escalan con <code>1/√N<sub>efectivo</sub></code>, no
+con <code>1/√5000</code>. <b>Ignorar <code>τ</code> no produce un fallo
+ruidoso: produce barras de error ~27 veces más estrechas de lo que
+corresponde.</b> Mienten en silencio.</p>
+
+<p>Formalmente se obtiene sumando la función de autocorrelación,
+<code>τ<sub>int</sub> = ½ + Σ<sub>k</sub> ρ(k)</code>, donde <code>ρ(k)</code>
+es la correlación entre medidas separadas <code>k</code> barridos. Esa suma
+hasta infinito tiene varianza divergente, así que hay que <b>cortarla en una
+ventana</b>; el código usa el criterio de <b>Madras–Sokal</b> — cortar en el
+primer <code>M</code> con <code>M ≥ 5·τ</code> — calculado por FFT.</p>
+
+<h3>Medido en los cuatro estados</h3>
+<div class="tw"><table>
+  <thead><tr><th>T</th><th>uniform</th><th>helical</th><th>points</th>
+    <th>lines</th></tr></thead>
+  <tbody>
+    <tr><td class="n">20.00</td><td class="n">5.6</td><td class="n">7.6</td>
+        <td class="n">7.5</td><td class="n">7.1</td></tr>
+    <tr><td class="n">14.20</td><td class="n">7.8</td><td class="n">39.2</td>
+        <td class="n">32.8</td><td class="n">73.0</td></tr>
+    <tr><td class="n">11.00</td><td class="n">10.5</td><td class="n">78.8</td>
+        <td class="n">48.4</td><td class="bad">257.2</td></tr>
+    <tr><td class="n">3.00</td><td class="n">65.4</td><td class="n">167.5</td>
+        <td class="n">229.7</td><td class="n">365.7</td></tr>
+    <tr><td class="n">0.50</td><td class="bad">316.5</td><td class="bad">467.7</td>
+        <td class="bad">590.0</td><td class="bad">694.4</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Y esto corrige a la baja algo que afirmé.</strong>
+Dije que había un «desperdicio de 50×» en el estado fácil, apoyándome en una
+medición vieja (<code>τ = 9</code> contra <code>482</code>). <b>Esos números
+eran de una sola temperatura.</b> Lo que ata de verdad es el <b>máximo sobre
+toda la escalera</b>, porque hace falta muestreo adecuado en cada punto — y ahí
+el desequilibrio es <b>2.2×</b>, no 50×.</div>
+
+<div class="tw"><table>
+  <thead><tr><th>estado</th><th>τ máx</th><th>réplicas<br>iguales</th>
+    <th>N<sub>ef</sub></th><th>réplicas<br>por τ</th><th>N<sub>ef</sub></th></tr></thead>
+  <tbody>
+    <tr><td>uniform</td><td class="n">316.5</td><td class="n">100</td>
+        <td class="bad">1580</td><td class="best">61</td><td class="n">967</td></tr>
+    <tr><td>helical</td><td class="n">467.7</td><td class="n">100</td>
+        <td class="n">1069</td><td class="best">90</td><td class="n">967</td></tr>
+    <tr><td>points</td><td class="n">590.0</td><td class="n">100</td>
+        <td class="n">847</td><td class="best">114</td><td class="n">967</td></tr>
+    <tr><td>lines</td><td class="n">694.4</td><td class="n">100</td>
+        <td class="bad">720</td><td class="best">134</td><td class="n">967</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>El reparto por <code>τ</code> iguala las muestras efectivas en los
+  cuatro estados</b> — 967 cada uno, contra un abanico de 720 a 1580 con
+  reparto igual.</p>
+  <p>Y el ahorro: para dar a <b>todos</b> las 720 muestras efectivas que hoy
+  tiene el peor estado, bastan <b>298 cadenas en vez de 400</b> —
+  un <b>−26 %</b>.</p>
+</div>
+
+<div class="note warn"><strong>Dos límites.</strong> El ahorro del 26 % es
+<b>aritmética sobre los τ medidos</b>, no una corrida comparada: habría que
+verificar que las barras de error efectivamente coinciden. Y <code>τ</code>
+crece mucho al enfriar — de 5.6 a 316.5 en <code>uniform</code> — así que
+<b>la ventana de 5000 barridos es holgada arriba y justa abajo</b>; repartir
+por τ equilibra entre estados pero <b>no arregla eso</b>.</div>
+
