@@ -115,6 +115,10 @@ respecto.</p>
   <p>El orden no es negociable: <b><code>v₂</code> primero, firma después</b> —
   <code>B = 200</code> tiene la firma más barata que existe y es el peor lote de
   su grupo, porque paga ancho 4.</p>
+  <p><b>Y una salida de fondo.</b> Las dos causas son <b>decisiones del
+  compilador</b> sobre un bucle que el kernel de producción le entrega. Un
+  kernel escrito a mano que no entrega ese bucle no paga ninguna de las dos:
+  <b>−66.6 %</b> y el dentado de 39 % a 12 %. Está en la <b>sección 8</b>.</p>
 </div>
 
 <h2>1 · El ancho de vector</h2>
@@ -661,9 +665,156 @@ contra siete lecturas contiguas y coalescidas que produce
 <code>jnp.roll</code>. Ganar exigiría cargas coalescidas, o sea el halo en
 SRAM — el diseño que <code>mosaic_gpu</code> rechazó y que Pallas-Triton
 tampoco expresa, porque no tiene <code>slice</code> ni
-<code>concatenate</code>. <b>Las dos puertas dan al mismo sitio.</b></p></div>
+<code>concatenate</code>.</p>
+<p>Esa conclusión era correcta sobre Pallas y <b>equivocada sobre Triton</b>:
+las dos puertas de Pallas dan al mismo sitio, pero hay una tercera. La
+sección 8 la abre.</p></div>
 
-<h2>8 · La convención de barridos y réplicas</h2>
+<h2>8 · El kernel que sí funciona</h2>
+
+<p class="lede">Un <i>stencil</i> en Triton crudo, llamado desde JAX con
+<code>jax_triton.triton_call</code>, corre el mismo paso de producción
+<b>un 66.6 % más rápido</b> y deja el dentado casi plano.</p>
+
+<h3>8.1 · Qué cambió respecto a los tres intentos fallidos</h3>
+
+<p>No es que haga menos lecturas: sigue emitiendo <b>21</b>. Cambia su
+<b>forma</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>la dirección del vecino es…</th>
+    <th>el compilador emite…</th></tr></thead>
+  <tbody>
+    <tr><td>Pallas (los tres intentos)</td>
+        <td>una por carril, calculada por carril</td>
+        <td class="bad">accesos dispersos</td></tr>
+    <tr><td><b>este kernel</b></td>
+        <td>un <b>vector</b> desplazado sobre un tramo contiguo
+        (<code>xc + 1</code>)</td>
+        <td class="best">accesos coalescidos</td></tr>
+  </tbody>
+</table></div>
+
+<p>Una carga contigua desplazada tiene el mismo patrón de acceso que produce
+un <code>roll</code>, <b>pero el plano desplazado nunca se materializa</b>:
+cae en registros, la actualización entera ocurre ahí, y solo se escribe el
+resultado. Desaparece el viaje a memoria de las seis matrices y <b>sobrevive
+la coalescencia</b>. Eso es «el halo en SRAM»: las cargas desplazadas de
+bloques vecinos se solapan y pegan en L1.</p>
+
+<p>Dos detalles lo hacen posible:</p>
+<ul>
+  <li><b>El tablero de ajedrez hace innecesaria toda sincronización.</b> Todo
+  vecino de un sitio actualizado tiene la <b>paridad opuesta</b>, así que
+  ningún bloque lo escribe durante este medio paso. El halo se lee de memoria
+  global sin barrera — y esa es la verdadera razón de ser del tablero.</li>
+  <li><b>El dato se reordena a <code>(B, 3, L, N, N)</code></b>, con la
+  componente como plano en vez de como eje más rápido. Así un tramo en
+  <code>x</code> tiene paso 1 y una fila es un segmento contiguo de 39 flotantes.
+  La transposición se paga <b>una vez</b>, fuera del bucle de pasos.</li>
+</ul>
+
+<h3>8.2 · Tres validaciones antes de creer un solo tiempo</h3>
+
+<p>Un kernel cuyas propuestas estén degeneradas acepta todo o nada, y sale
+<b>rápido y falso</b>. Así que el tiempo no se miró hasta pasar esto:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>prueba</th><th>qué fija</th><th>resultado</th></tr></thead>
+  <tbody>
+    <tr><td>el <i>stencil</i> contra <code>sim_core.substep</code>, con la
+        <b>misma</b> aleatoriedad</td>
+        <td>que la física es la misma</td>
+        <td class="best"><b>0 de 182 520</b> espines distintos;
+        <code>dE</code> a <b>1.5·10⁻⁷</b> relativo</td></tr>
+    <tr><td>las dos cadenas a equilibrio, cada una con su propio RNG</td>
+        <td>que el Philox interno propone bien</td>
+        <td class="best">E/sitio dentro de <b>0.00–0.19 σ</b> en
+        T = 20, 5, 1; <code>|M|</code> a 4 decimales; norma en la esfera a
+        1.8·10⁻⁷</td></tr>
+    <tr><td>un brazo intermedio: <i>stencil</i> de Triton con las propuestas
+        de JAX</td>
+        <td>que la ganancia no sea una suma a ciegas de dos cambios</td>
+        <td class="n">separa el <i>stencil</i> del RNG (abajo)</td></tr>
+  </tbody>
+</table></div>
+
+<h3>8.3 · Lo medido</h3>
+
+<p>H100, 200 barridos por llamada dentro de un <code>fori_loop</code>,
+7 repeticiones intercaladas, bloque <code>BY=4 BX=64</code>, 4 warps.
+Microsegundos por réplica-barrido.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>producción<br><span style="opacity:.7">6 rolls +
+    Threefry</span></th><th>solo <i>stencil</i></th><th>vs prod</th>
+    <th>+ su RNG</th><th>vs prod</th></tr></thead>
+  <tbody>
+    <tr><td class="n">64</td><td class="n">2.218</td><td class="n">1.143</td>
+        <td class="n">−48.5 %</td><td class="n">0.789</td>
+        <td class="best">−64.4 %</td></tr>
+    <tr><td class="n">65</td><td class="n">2.191</td><td class="n">1.157</td>
+        <td class="n">−47.2 %</td><td class="n">0.801</td>
+        <td class="best">−63.4 %</td></tr>
+    <tr><td class="n">75</td><td class="n">2.088</td><td class="n">1.118</td>
+        <td class="n">−46.5 %</td><td class="n">0.763</td>
+        <td class="best">−63.5 %</td></tr>
+    <tr><td class="n">100</td><td class="bad">2.861</td><td class="n">1.041</td>
+        <td class="n">−63.6 %</td><td class="n">0.723</td>
+        <td class="best">−74.7 %</td></tr>
+    <tr><td class="n">101</td><td class="n">2.054</td><td class="n">1.073</td>
+        <td class="n">−47.8 %</td><td class="n">0.722</td>
+        <td class="best">−64.9 %</td></tr>
+    <tr><td class="n">128</td><td class="n">2.258</td><td class="n">1.036</td>
+        <td class="n">−54.1 %</td><td class="n">0.706</td>
+        <td class="best">−68.7 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>−66.6 % de media, gana 6 de 6</b>, mejor caso −74.7 %. Y se reparte
+  así: <b>−51.3 % el <i>stencil</i></b> (las seis matrices desplazadas) y
+  <b>−31.4 % adicional</b> el Philox interno sobre lo que queda.</p>
+  <p>Eso <b>cuadra con la sección 3</b>, que atribuía 31.5 % a los
+  <code>roll</code> y 17.1 % a Threefry por HLO: predecía cerca de un 49 %, y
+  lo medido fue 51.3 % + 31.4 %.</p>
+</div>
+
+<h3>8.4 · Y el dentado se aplana</h3>
+
+<p>Fíjate en la fila de <code>B = 100</code>. Producción paga <b>2.861</b>
+contra <b>2.054</b> en <code>B = 101</code> — ese es el ancho 4 de la
+sección 1, un <b>+39 %</b> por un solo lote de diferencia. El kernel da
+<b>0.723</b> y <b>0.722</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>brazo</th><th>dispersión de µs/réplica (máx/mín)</th></tr></thead>
+  <tbody>
+    <tr><td>producción</td><td class="bad">39.3 %</td></tr>
+    <tr><td>solo <i>stencil</i></td><td class="best">11.7 %</td></tr>
+    <tr><td><i>stencil</i> + su RNG</td><td class="best">13.5 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Lo que queda no es dentado.</b> Los seis valores bajan
+de forma monótona con <code>B</code> (0.789 → 0.706), que es la curva de
+amortización <code>a/B</code> de la sección 4.2, no un diente. <b>El ancho de
+vector y el re-tejido de Triton desaparecen juntos</b>, porque ninguno de los
+dos es una propiedad de la GPU: los dos eran decisiones del compilador sobre
+un bucle que este kernel ya no escribe.</p></div>
+
+<div class="note"><strong>Dos trampas, una corrida cada una.</strong>
+<code>triton_call</code> añade un puntero por cada entrada de
+<code>out_shape</code>, así que volver condicional una salida dejó un
+argumento sin ligar y Triton falló con
+<code>'NoneType' object has no attribute '_unflatten_ir'</code>: la lista de
+argumentos debe quedar <b>fija</b> y la salida que no se quiere se encoge a
+forma <code>(1,)</code>. Y <code>tl.randn4x</code> devuelve una tupla cuyo
+desempaquetado falla, además de una constante de semilla que desborda
+<code>int32</code>; cuatro sorteos de un solo tensor
+(<code>tl.randn</code>/<code>tl.rand</code>) son seguros.</div>
+
+<h2>9 · La convención de barridos y réplicas</h2>
 
 <div class="note bad"><strong>No existe un estándar.</strong> Los estudios
 publicados de redes de skyrmiones varían en órdenes de magnitud y cada uno

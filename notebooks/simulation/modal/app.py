@@ -59,6 +59,28 @@ image = (
     )
 )
 
+# Raw Triton, invoked from JAX through `jax_triton.triton_call`, so the kernel
+# sits inside the SAME XLA program as the production anneal and the comparison
+# is not cross-framework. Pallas was the wrong road for this kernel: it has no
+# `slice` and no `concatenate`, so the shifted contiguous loads this stencil
+# needs cannot be expressed there.
+triton_image = (
+    _base
+    .pip_install("jax-triton", "absl-py")
+    .add_local_file(
+        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/sim_core.py",
+        "/root/sim_core.py",
+    )
+    .add_local_file(
+        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/triton_halo.py",
+        "/root/triton_halo.py",
+    )
+    .add_local_file(
+        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/theta4.json",
+        "/root/theta4.json",
+    )
+)
+
 # The XLA-confound probe needs a kernel that XLA never touches, so this image
 # adds CuPy and compiles the stencil with nvrtc instead. It branches off `_base`
 # rather than `image` because the local files have to go on last, and it needs
@@ -7490,3 +7512,332 @@ def autocorr(replicas: int = 50, n_down: int = 30, n_therm: int = 10000,
              theta_index: int = 0):
     print(json.dumps(tau1.remote(replicas, n_down, n_therm, n_rec, seed, tag,
                                  theta_index), indent=1))
+
+
+def _triton_halo(batches, repeats, tag, Rd, L, steps, tiles, warps):
+    """The raw-Triton stencil: validate the physics, then time it amortised.
+
+    Two things have to be true before a number from this kernel means
+    anything. The stencil must reproduce `sim_core.substep` on identical
+    randomness -- that is what the `dE` comparison establishes, and it is the
+    part three earlier kernels got right while losing on speed. And the timing
+    has to amortise the launch: a `triton_call` costs about 122 us of host
+    dispatch, so the step loop runs inside `lax.fori_loop` and the reference
+    arm is the production therm loop, not a bare substep.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        import triton, jax_triton as jt
+        import triton_halo as TH
+    except Exception as e:
+        print(f"TRITON CRUDO NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+    print(f"  jax {jax.__version__}  triton {triton.__version__}  "
+          f"jax_triton {getattr(jt, '__version__', '?')}", flush=True)
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N, LZ = int(geo["N"]), int(geo["L"])
+    even_j = jnp.asarray(geo["even"][None, ..., None])
+    odd_j = jnp.asarray(geo["odd"][None, ..., None])
+    surf_j = jnp.asarray(geo["surface"][None, ...])
+    disk_f = jnp.asarray(geo["disk2d"].astype(np.float32))
+    beta = 1.0 / (0.086173404 * 5.0)
+    K = int(steps)
+    res = dict(available=True, gpu=device_identity(), N=N, L=LZ, Rd=float(Rd),
+               steps_per_call=K, beta=float(beta))
+    print(f"Rd={Rd} L={LZ} N={N}  beta={beta:.4f}  {K} barridos por llamada",
+          flush=True)
+
+    raw = json.load(open("/root/theta4.json"))
+    t0p = list(raw.values())[0]
+
+    def mk_p(B):
+        c = lambda v: jnp.full((B, 1, 1, 1), float(v), jnp.float32)
+        return dict(Jex=c(1.0), Kan1=c(t0p["Kan1"]), Kan2=c(0.0),
+                    KanS=c(t0p["KanS"]), Hex=c(t0p["Hex"]),
+                    KDM=c(t0p["KDM"]), g=c(float(np.deg2rad(90.0))))
+
+    eng = S.build_engine(geo)
+
+    # ---------------------------------------------------------- correctness
+    print("\n=== el stencil contra sim_core.substep, misma aleatoriedad ===",
+          flush=True)
+    Bv = 8
+    p = mk_p(Bv)
+    k1e = jnp.where(surf_j, p["KanS"], p["Kan1"])
+    sp0 = S.init_spins(jax.random.PRNGKey(3), geo, Bv)
+
+    kt, ka = jax.random.split(jax.random.PRNGKey(101))
+    tr = jax.random.normal(kt, sp0.shape)
+    tr = tr / jnp.linalg.norm(tr, axis=-1, keepdims=True)
+    ru = jax.random.uniform(ka, sp0.shape[:-1])
+
+    def ref_dE(sp, tr_raw, mask):
+        """`substep`'s dE, lifted out so it can be compared on its own."""
+        trm = jnp.where(mask, tr_raw, sp)
+        dS = trm - sp
+        xp = jnp.roll(sp, -1, 3); xm = jnp.roll(sp, 1, 3)
+        yp = jnp.roll(sp, -1, 2); ym = jnp.roll(sp, 1, 2)
+        zp = jnp.roll(sp, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp, 1, 1).at[:, 0].set(0.0)
+        sv = xp + xm + yp + ym + zp + zm
+        dE = -p["Jex"] * jnp.sum(dS * sv, -1)
+        an = lambda s: ((k1e) * ((s[..., 0] * s[..., 1]) ** 2
+                                 + (s[..., 0] * s[..., 2]) ** 2
+                                 + (s[..., 1] * s[..., 2]) ** 2)
+                        + p["Kan2"] * (s[..., 0] * s[..., 1]
+                                               * s[..., 2]) ** 2)
+        dE = dE + an(trm) - an(sp)
+        dE = dE - p["KDM"] * (dS[..., 1] * (xp[..., 2] - xm[..., 2])
+                                      - dS[..., 2] * (xp[..., 1] - xm[..., 1])
+                                      + dS[..., 2] * (yp[..., 0] - ym[..., 0])
+                                      - dS[..., 0] * (yp[..., 2] - ym[..., 2]))
+        return dE - p["Hex"] * (dS[..., 0] * jnp.cos(p["g"])
+                                        + dS[..., 2] * jnp.sin(p["g"]))
+
+    sub = TH.build(geo, BY=int(tiles[0]), num_warps=int(warps))
+    par = TH.pack_params(p, Bv)
+    spP = TH.planar(sp0)
+    trP = TH.planar(tr)
+    checks = []
+    for parity, mask, nm in ((0, even_j, "par"), (1, odd_j, "impar")):
+        dE_ref = ref_dE(sp0, tr, mask)
+        spn, dE_t = sub(spP, k1e, par, beta, 0, parity, trP, ru, want_de=True)
+        # even_j/odd_j carry a leading singleton, so the selector has to be
+        # broadcast up to the batch before it can index dE.
+        sel = np.broadcast_to(np.asarray(mask[..., 0]), dE_ref.shape)
+        a = np.asarray(dE_ref)[sel]
+        b = np.asarray(dE_t)[sel]
+        mad = float(np.max(np.abs(a - b)))
+        rel = mad / float(np.max(np.abs(a)) + 1e-30)
+        # The accepted state, rebuilt from the same dE and the same uniforms,
+        # which is exactly what `substep` does with its own draws.
+        acc = ((dE_ref < 0) | (ru < jnp.exp(-dE_ref * beta)))[..., None] & mask
+        out_ref = jnp.where(acc, jnp.where(mask, tr, sp0), sp0)
+        out_t = TH.unplanar(spn)
+        bad = int(np.sum(np.asarray(out_ref) != np.asarray(out_t)))
+        tot = int(np.asarray(out_ref).size)
+        checks.append(dict(sublattice=nm, dE_max_abs=mad, dE_rel=rel,
+                           spin_mismatch=bad, spin_total=tot,
+                           mismatch_frac=bad / tot))
+        print(f"  {nm:>5}: dE max |dif| {mad:.3e}  relativo {rel:.2e}   "
+              f"espines distintos {bad}/{tot}", flush=True)
+    res["correctness"] = checks
+    res["tile"] = sub.meta
+    print(f"  bloque BY={sub.meta['BY']} BX={sub.meta['BX']} "
+          f"warps={sub.meta['num_warps']}  rejilla/replica "
+          f"{sub.meta['grid_per_replica']}  desperdicio de carril "
+          f"{sub.meta['lane_waste_pct']:.1f}%", flush=True)
+
+    # ------------------------------------------------------- physics gate
+    # The exactness check above fixes the stencil, but it feeds the kernel
+    # JAX's own trial spins. The variant that actually competes draws them
+    # in-kernel with Philox, and nothing so far says those draws are right: a
+    # kernel whose proposals are degenerate accepts nothing or everything and
+    # comes out FAST and WRONG. So both arms are run to equilibrium from the
+    # same start and their observables compared.
+    print("\n=== fisica: produccion contra halo con su propio RNG ===",
+          flush=True)
+    kB = 0.086173404
+    Bp, n_eq = 16, int(max(400, K * 4))
+    pp = mk_p(Bp); k1p = jnp.where(surf_j, pp["KanS"], pp["Kan1"])
+    parp = TH.pack_params(pp, Bp)
+    sp_eq = S.init_spins(jax.random.PRNGKey(11), geo, Bp)
+    subp = TH.build(geo, BY=int(tiles[0]), num_warps=int(warps))
+    n_act = float(geo["n_active"])
+    phys = []
+    for T in (20.0, 5.0, 1.0):
+        bT = 1.0 / (kB * T)
+
+        def jx(sp):
+            def body(i, v):
+                s, k = v
+                k, ka_, kb_ = jax.random.split(k, 3)
+                s = eng["substep"](s, ka_, bT, even_j, pp, k1p)
+                s = eng["substep"](s, kb_, bT, odd_j, pp, k1p)
+                return s, k
+            return jax.lax.fori_loop(0, n_eq, body,
+                                     (sp, jax.random.PRNGKey(77)))[0]
+
+        sj = jax.block_until_ready(jax.jit(jx)(sp_eq))
+        st = jax.block_until_ready(
+            jax.jit(TH.sweeps(subp, k1p, parp, bT, n_eq))(TH.planar(sp_eq)))
+        st = TH.unplanar(st)
+        ej = float(jnp.mean(eng["energy"](sj, pp, k1p)) / n_act)
+        et = float(jnp.mean(eng["energy"](st, pp, k1p)) / n_act)
+        mj = float(jnp.mean(eng["magnetization"](sj)[0]))
+        mt = float(jnp.mean(eng["magnetization"](st)[0]))
+        sdj = float(jnp.std(eng["energy"](sj, pp, k1p)) / n_act)
+        # The norm must stay on the unit sphere; a broken proposal shows here.
+        nt = float(jnp.max(jnp.abs(
+            jnp.linalg.norm(st, axis=-1)
+            - jnp.asarray(geo["disco"][None]).astype(jnp.float32))))
+        row = dict(T=T, E_prod=ej, E_halo=et, E_sd_prod=sdj,
+                   E_sigma=abs(et - ej) / (sdj + 1e-30),
+                   M_prod=mj, M_halo=mt, norm_err=nt)
+        phys.append(row)
+        print(f"  T={T:>5.1f}  E/sitio prod {ej:+9.5f}  halo {et:+9.5f}  "
+              f"({row['E_sigma']:.2f} sigma)   |M| {mj:.4f} / {mt:.4f}   "
+              f"|norma-1| max {nt:.2e}", flush=True)
+    res["physics"] = phys
+    bad = [r for r in phys if r["E_sigma"] > 3.0 or r["norm_err"] > 1e-5]
+    res["physics_ok"] = not bad
+    if bad:
+        print(f"  AVISO: {len(bad)} temperatura(s) fuera de 3 sigma o con "
+              f"norma rota -- el tiempo NO es comparable", flush=True)
+    else:
+        print("  las dos cadenas coinciden dentro del error estadistico",
+              flush=True)
+
+    # ------------------------------------------------- the production arm
+    def prod_loop(sp, p_, k1_):
+        def body(i, v):
+            s, k = v
+            k, ka_, kb_ = jax.random.split(k, 3)
+            s = eng["substep"](s, ka_, beta, even_j, p_, k1_)
+            s = eng["substep"](s, kb_, beta, odd_j, p_, k1_)
+            return s, k
+        return jax.lax.fori_loop(0, K, body,
+                                 (sp, jax.random.PRNGKey(0)))[0]
+
+    # ---------------------------------------------------- pick the block
+    print(f"\n=== eleccion de bloque, B={batches[0]} ===", flush=True)
+    Bt = int(batches[0])
+    pt = mk_p(Bt); k1t = jnp.where(surf_j, pt["KanS"], pt["Kan1"])
+    spt = S.init_spins(jax.random.PRNGKey(5), geo, Bt)
+    part = TH.pack_params(pt, Bt)
+    sptP = TH.planar(spt)
+    fj = jax.jit(lambda s: prod_loop(s, pt, k1t)).lower(spt).compile()
+    jax.block_until_ready(fj(spt))
+    tj = []
+    for _ in range(int(repeats)):
+        t = time.perf_counter(); jax.block_until_ready(fj(spt))
+        tj.append(time.perf_counter() - t)
+    mj = float(np.median(tj))
+    print(f"  produccion (6 rolls + threefry): "
+          f"{1e6*mj/(K*Bt):8.3f} us/replica-barrido", flush=True)
+    best, tilerows = None, []
+    for by in tiles:
+        try:
+            sb = TH.build(geo, BY=int(by), num_warps=int(warps))
+            run = jax.jit(TH.sweeps(sb, k1t, part, beta, K)).lower(sptP).compile()
+            jax.block_until_ready(run(sptP))
+            ts = []
+            for _ in range(int(repeats)):
+                t = time.perf_counter(); jax.block_until_ready(run(sptP))
+                ts.append(time.perf_counter() - t)
+            m = float(np.median(ts))
+            row = dict(BY=int(by), us_per_replica_sweep=1e6 * m / (K * Bt),
+                       vs_prod_pct=100 * (m / mj - 1),
+                       grid_per_replica=sb.meta["grid_per_replica"],
+                       lane_waste_pct=sb.meta["lane_waste_pct"])
+            print(f"  BY={by:>3}: {row['us_per_replica_sweep']:8.3f} "
+                  f"us/replica-barrido  {row['vs_prod_pct']:+7.1f}% vs "
+                  f"produccion  (rejilla {row['grid_per_replica']}, "
+                  f"carril {row['lane_waste_pct']:.0f}%)", flush=True)
+            tilerows.append(row)
+            if best is None or m < best[1]:
+                best = (int(by), m)
+        except Exception as e:
+            print(f"  BY={by:>3}: FALLO {type(e).__name__}: {e}", flush=True)
+            tilerows.append(dict(BY=int(by), error=f"{type(e).__name__}: {e}"))
+    res["tile_scan"] = tilerows
+    if best is None:
+        with open(f"/out/{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        return res
+    BY = best[0]
+    res["BY_chosen"] = BY
+    print(f"  -> bloque elegido BY={BY}", flush=True)
+
+    # ------------------------------------------------- the sawtooth test
+    print(f"\n{'B':>6}{'produccion':>13}{'solo stencil':>13}{'vs prod':>9}"
+          f"{'+ su RNG':>13}{'vs prod':>9}{'gana RNG':>10}", flush=True)
+    rows = []
+    for B in batches:
+        pb = mk_p(B); k1b = jnp.where(surf_j, pb["KanS"], pb["Kan1"])
+        spb = S.init_spins(jax.random.PRNGKey(5 + B), geo, B)
+        parb = TH.pack_params(pb, B)
+        spbP = TH.planar(spb)
+        sb = TH.build(geo, BY=BY, num_warps=int(warps))
+        f1 = jax.jit(lambda s: prod_loop(s, pb, k1b)).lower(spb).compile()
+        f2 = jax.jit(TH.sweeps(sb, k1b, parb, beta, K)).lower(spbP).compile()
+        # The middle arm: Triton stencil, JAX's Threefry proposals. Without it
+        # the win is a lump sum over two changes at once.
+        f3 = jax.jit(TH.sweeps_extrng(sb, k1b, parb, beta, K, spbP.shape)
+                     ).lower(spbP).compile()
+        for f, a in ((f1, spb), (f2, spbP), (f3, spbP)):
+            jax.block_until_ready(f(a))
+        a1, a2, a3 = [], [], []
+        for _ in range(int(repeats)):          # interleaved, against drift
+            t = time.perf_counter(); jax.block_until_ready(f1(spb))
+            a1.append(time.perf_counter() - t)
+            t = time.perf_counter(); jax.block_until_ready(f2(spbP))
+            a2.append(time.perf_counter() - t)
+            t = time.perf_counter(); jax.block_until_ready(f3(spbP))
+            a3.append(time.perf_counter() - t)
+        m1, m2, m3 = (float(np.median(a1)), float(np.median(a2)),
+                      float(np.median(a3)))
+        rows.append(dict(B=B, prod_us=1e6 * m1 / (K * B),
+                         halo_us=1e6 * m2 / (K * B),
+                         stencil_only_us=1e6 * m3 / (K * B),
+                         change_pct=100 * (m2 / m1 - 1),
+                         stencil_pct=100 * (m3 / m1 - 1),
+                         rng_pct=100 * (m2 / m3 - 1)))
+        r = rows[-1]
+        print(f"{B:>6}{r['prod_us']:>13.3f}{r['stencil_only_us']:>13.3f}"
+              f"{r['stencil_pct']:>+8.1f}%{r['halo_us']:>13.3f}"
+              f"{r['change_pct']:>+8.1f}%{r['rng_pct']:>+9.1f}%", flush=True)
+    res["timing"] = rows
+
+    import statistics as stx
+    ch = [r["change_pct"] for r in rows]
+    st = [r["stencil_pct"] for r in rows]
+    rg = [r["rng_pct"] for r in rows]
+    disp = lambda k: (100 * (max(r[k] for r in rows) / min(r[k] for r in rows)
+                             - 1))
+    res["summary"] = dict(mean_change_pct=round(stx.mean(ch), 1),
+                          best_change_pct=round(min(ch), 1),
+                          wins=sum(1 for x in ch if x < 0), n=len(ch),
+                          dispersion_prod_pct=round(disp("prod_us"), 1),
+                          dispersion_halo_pct=round(disp("halo_us"), 1),
+                          dispersion_stencil_pct=round(
+                              disp("stencil_only_us"), 1),
+                          mean_stencil_pct=round(stx.mean(st), 1),
+                          mean_rng_pct=round(stx.mean(rg), 1))
+    print(f"\n=== resumen ===", flush=True)
+    print(f"  halo contra produccion: media {stx.mean(ch):+.1f}%  "
+          f"gana {sum(1 for x in ch if x<0)}/{len(ch)}  "
+          f"mejor {min(ch):+.1f}%", flush=True)
+    print(f"  de eso, el stencil {stx.mean(st):+.1f}% y el RNG propio "
+          f"{stx.mean(rg):+.1f}% adicional", flush=True)
+    print(f"  dentado (max/min de us/replica): produccion "
+          f"{disp('prod_us'):.1f}%, solo stencil "
+          f"{disp('stencil_only_us'):.1f}%, halo {disp('halo_us'):.1f}%",
+          flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=triton_image, timeout=60 * 60,
+              volumes={"/out": vol})
+def triton_halo_h100(b, rep, tag, Rd, L, steps, tiles, warps):
+    return _triton_halo(b, rep, tag, Rd, L, steps, tiles, warps)
+
+
+@app.local_entrypoint()
+def triton_halo(batches: str = "64,65,75,100,101,128", repeats: int = 7,
+                rd: float = 18.30, layers: int = 5, steps: int = 200,
+                tiles: str = "1,2,4,8", warps: int = 4,
+                tag: str = "triton_halo"):
+    """Raw Triton: shifted coalesced loads, no materialised rolls, Philox RNG."""
+    triton_halo_h100.remote(
+        [int(x) for x in batches.split(",") if x], repeats, tag, rd, layers,
+        steps, [int(x) for x in tiles.split(",") if x], warps)

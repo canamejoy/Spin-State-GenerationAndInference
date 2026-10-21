@@ -1,0 +1,163 @@
+{
+ "available": true,
+ "gpu": {
+  "repr": "cuda:0",
+  "kind": "NVIDIA H100 80GB HBM3",
+  "platform": "gpu",
+  "n_devices": 1,
+  "smi": [
+   "NVIDIA H100 80GB HBM3, GPU-6c551ce9-6fc2-7b95-44e5-496d360e92d0, 81559 MiB, 1980 MHz, 610.57.04, 5"
+  ]
+ },
+ "N": 39,
+ "L": 5,
+ "Rd": 18.3,
+ "steps_per_call": 200,
+ "beta": 2.320901701875442,
+ "correctness": [
+  {
+   "sublattice": "par",
+   "dE_max_abs": 1.430511474609375e-06,
+   "dE_rel": 1.4557110114736231e-07,
+   "spin_mismatch": 0,
+   "spin_total": 182520,
+   "mismatch_frac": 0.0
+  },
+  {
+   "sublattice": "impar",
+   "dE_max_abs": 1.430511474609375e-06,
+   "dE_rel": 1.504606050502403e-07,
+   "spin_mismatch": 0,
+   "spin_total": 182520,
+   "mismatch_frac": 0.0
+  }
+ ],
+ "tile": {
+  "N": 39,
+  "LZ": 5,
+  "BY": 2,
+  "BX": 64,
+  "n_strip": 20,
+  "num_warps": 4,
+  "grid_per_replica": 100,
+  "lanes_per_block": 128,
+  "lane_waste_pct": 40.5859375
+ },
+ "physics": [
+  {
+   "T": 20.0,
+   "E_prod": -1.4063559770584106,
+   "E_halo": -1.406455397605896,
+   "E_sd_prod": 0.02657989040017128,
+   "E_sigma": 0.003740442341504572,
+   "M_prod": 0.47530901432037354,
+   "M_halo": 0.4790010452270508,
+   "norm_err": 1.7881393432617188e-07
+  },
+  {
+   "T": 5.0,
+   "E_prod": -3.065532922744751,
+   "E_halo": -3.0667033195495605,
+   "E_sd_prod": 0.006291085388511419,
+   "E_sigma": 0.18604052123452527,
+   "M_prod": 0.8983781933784485,
+   "M_halo": 0.8979169726371765,
+   "norm_err": 1.7881393432617188e-07
+  },
+  {
+   "T": 1.0,
+   "E_prod": -3.429443836212158,
+   "E_halo": -3.429527997970581,
+   "E_sd_prod": 0.001061942894011736,
+   "E_sigma": 0.07925262167809323,
+   "M_prod": 0.9702267050743103,
+   "M_halo": 0.9701972007751465,
+   "norm_err": 1.7881393432617188e-07
+  }
+ ],
+ "physics_ok": true,
+ "tile_scan": [
+  {
+   "BY": 2,
+   "us_per_replica_sweep": 0.8133714843749916,
+   "vs_prod_pct": -65.12268184526862,
+   "grid_per_replica": 100,
+   "lane_waste_pct": 40.5859375
+  },
+  {
+   "BY": 4,
+   "us_per_replica_sweep": 0.7958087500004041,
+   "vs_prod_pct": -65.87577079197568,
+   "grid_per_replica": 50,
+   "lane_waste_pct": 40.5859375
+  }
+ ],
+ "BY_chosen": 4,
+ "timing": [
+  {
+   "B": 64,
+   "prod_us": 2.217973671876372,
+   "halo_us": 0.7889136718741696,
+   "stencil_only_us": 1.1433378125014215,
+   "change_pct": -64.43088203086015,
+   "stencil_pct": -48.451245071174576,
+   "rng_pct": -30.99907453002314
+  },
+  {
+   "B": 65,
+   "prod_us": 2.1914737692309947,
+   "halo_us": 0.801126615383597,
+   "stencil_only_us": 1.1566592307697368,
+   "change_pct": -63.443476867865115,
+   "stencil_pct": -47.22002850275422,
+   "rng_pct": -30.737887696581033
+  },
+  {
+   "B": 75,
+   "prod_us": 2.0882263333324618,
+   "halo_us": 0.7630525333335451,
+   "stencil_only_us": 1.1180585333344575,
+   "change_pct": -63.45929935114647,
+   "stencil_pct": -46.45893907724925,
+   "rng_pct": -31.752004874213103
+  },
+  {
+   "B": 100,
+   "prod_us": 2.860919249999938,
+   "halo_us": 0.7227794500010987,
+   "stencil_only_us": 1.0413240500000143,
+   "change_pct": -74.73611147881527,
+   "stencil_pct": -63.60176715927803,
+   "rng_pct": -30.59034313083533
+  },
+  {
+   "B": 101,
+   "prod_us": 2.054250495050799,
+   "halo_us": 0.7216129702979148,
+   "stencil_only_us": 1.0727433168312366,
+   "change_pct": -64.87220170877602,
+   "stencil_pct": -47.779332685291195,
+   "rng_pct": -32.73200037922598
+  },
+  {
+   "B": 128,
+   "prod_us": 2.25789980468738,
+   "halo_us": 0.7057295312495881,
+   "stencil_only_us": 1.0355277734364066,
+   "change_pct": -68.74398368853659,
+   "stencil_pct": -54.1375675179802,
+   "rng_pct": -31.84832417312966
+  }
+ ],
+ "summary": {
+  "mean_change_pct": -66.6,
+  "best_change_pct": -74.7,
+  "wins": 6,
+  "n": 6,
+  "dispersion_prod_pct": 39.3,
+  "dispersion_halo_pct": 13.5,
+  "dispersion_stencil_pct": 11.7,
+  "mean_stencil_pct": -51.3,
+  "mean_rng_pct": -31.4
+ }
+}
