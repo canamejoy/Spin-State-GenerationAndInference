@@ -4,7 +4,8 @@
   "sweeps_per_temp": 15000,
   "chains": 400
  },
- "gains_source": "partsearch.json, 600 barridos, 7 repeticiones, kernel simplificado (solo substep)",
+ "gains_source": "mitigation_curve_full.json -- PRODUCTION anneal kernel, 3600 sweeps, 7 repeats",
+ "superseded_source": "partsearch.json used a simplified substep loop and under-reported the gain; its numbers are kept on the page as a comparison, not as the chart's values",
  "bars": [
   {
    "device": "CPU",
@@ -31,9 +32,10 @@
    "name": "BP + r\u00e9plicas optimizado",
    "hours": 181.84166092916695,
    "measured": false,
-   "note": "sin castigo de ancho en CPU",
    "gain_pct": 0.0,
-   "partition": null
+   "gain_source": "sin castigo de ancho en CPU",
+   "partition": null,
+   "superseded": null
   },
   {
    "device": "1x H100",
@@ -58,11 +60,12 @@
    "gpus": 1,
    "bar": "opt",
    "name": "BP + r\u00e9plicas optimizado",
-   "hours": 1.0218529323254348,
+   "hours": 0.8002961668566982,
    "measured": false,
-   "note": "2 olas: 201+199 por dispositivo, -1.3%",
-   "gain_pct": -1.3,
-   "partition": "201+199"
+   "gain_pct": -22.7,
+   "gain_source": "extrapolado de R=200",
+   "partition": "201+199",
+   "superseded": -1.3
   },
   {
    "device": "2x H100",
@@ -87,11 +90,12 @@
    "gpus": 2,
    "bar": "opt",
    "name": "BP + r\u00e9plicas optimizado",
-   "hours": 0.4364982732897999,
+   "hours": 0.3878312244287533,
    "measured": false,
-   "note": "2 olas: 101+99 por dispositivo, -13.0%",
-   "gain_pct": -13.0,
-   "partition": "101+99"
+   "gain_pct": -22.7,
+   "gain_source": "medido en R=200",
+   "partition": "101+99",
+   "superseded": -13.0
   },
   {
    "device": "4x H100",
@@ -116,11 +120,12 @@
    "gpus": 4,
    "bar": "opt",
    "name": "BP + r\u00e9plicas optimizado",
-   "hours": 0.24564809640692803,
+   "hours": 0.2085691384587125,
    "measured": false,
-   "note": "2 olas: 51+49 por dispositivo, -9.9%",
-   "gain_pct": -9.9,
-   "partition": "51+49"
+   "gain_pct": -23.5,
+   "gain_source": "medido en R=100",
+   "partition": "51+49",
+   "superseded": -9.9
   }
  ]
 }

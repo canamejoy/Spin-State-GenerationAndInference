@@ -5821,7 +5821,7 @@ def split4(rd: float = 18.30, layers: int = 5, sweeps: int = 400,
     split4_h100.remote(tag, rd, layers, sweeps, repeats)
 
 
-def _partsearch(tag, Rd, L, total, sweeps, repeats):
+def _partsearch(tag, Rd, L, total, sweeps, repeats, n_temps=8):
     """Find the cheapest way to split R chains over 1, 2 and 4 GPUs.
 
     The chart needs three bars: BP only, BP + replicas as it is arranged today
@@ -5845,16 +5845,23 @@ def _partsearch(tag, Rd, L, total, sweeps, repeats):
     eng = S.build_engine(geo)
     thetas = PA.load_thetas("/root/theta4.json")
     kB = 0.086173404
-    beta = float(1.0 / (kB * 5.0))
     v2 = lambda n: (n & -n).bit_length() - 1
     width = lambda B: min(4, 2 ** (v2(B) + v2(int(L))))
 
-    def body(s, key, k1_, p, n):
-        def one(_, v):
-            st, kk = v
-            kk, ka = jax.random.split(kk, 2)
-            return (eng["substep"](st, ka, beta, True, p, k1_), kk)
-        return jax.lax.fori_loop(0, n, one, (s, key))[0]
+    # THE PRODUCTION KERNEL. An earlier version of this search looped
+    # eng["substep"] directly, which is NOT what production runs: it has no
+    # temperature ladder and no observable recording, so it lacks the kLoop
+    # fusions where the width penalty lives -- the Threefry mega-fusion at
+    # +118% and the acceptance at +76%. That version under-reported the gain
+    # badly (-9.9% at 100 chains per device against -23.5% measured here with
+    # anneal), and the whole point of the search is to compare against what
+    # production actually costs.
+    betas = jnp.asarray(1.0 / (kB * np.linspace(20.0, 0.1, int(n_temps))))
+    TH = int(sweeps) * 2 // 3
+    ME = int(sweeps) - TH
+
+    def body(sp, kk, p):
+        return eng["anneal"](sp, kk, betas, p, TH, ME)
 
     cache = {}
 
@@ -5866,15 +5873,12 @@ def _partsearch(tag, Rd, L, total, sweeps, repeats):
         need = b * nd
         cols = PA.pack(thetas, need // len(thetas) + 1)
         cols = {k: v[:need] for k, v in cols.items()}
-        # the key is "surface", not "surf" -- an unguarded lookup cost one run
-        surf = jnp.asarray(geo["surface"])
-        k1 = jnp.where(surf[None], cols["KanS"], cols["Kan1"])
         spins = S.init_spins(jax.random.PRNGKey(7 + b), geo, need)
         sh = lambda a: a.reshape(nd, b, *a.shape[1:])
-        fn = jax.pmap(body, static_broadcasted_argnums=4, devices=devs[:nd])
+        fn = jax.pmap(body, devices=devs[:nd])
         out = (fn, sh(spins), jax.random.split(jax.random.PRNGKey(11 + b), nd),
-               sh(k1), {k: sh(v) for k, v in cols.items()})
-        jax.block_until_ready(fn(out[1], out[2], out[3], out[4], int(sweeps)))
+               {k: sh(v) for k, v in cols.items()})
+        jax.block_until_ready(fn(out[1], out[2], out[3]))
         cache[key] = out
         return out
 
@@ -5888,6 +5892,7 @@ def _partsearch(tag, Rd, L, total, sweeps, repeats):
             [35, 33, 32], [25, 25, 25, 25]],
     }
     res = dict(total=R, sweeps=int(sweeps), repeats=int(repeats),
+               n_temps=int(n_temps), kernel="eng[anneal] -- production",
                device=device_identity(), n_devices=D_ALL, plans=[])
     for nd in (1, 2, 4):
         if nd > D_ALL:
@@ -5910,8 +5915,7 @@ def _partsearch(tag, Rd, L, total, sweeps, repeats):
             ts = []
             for _ in range(int(repeats)):
                 t0 = time.perf_counter()
-                outs = [fn(sp, kk, k1, p, int(sweeps))
-                        for (fn, sp, kk, k1, p) in parts]
+                outs = [fn(sp, kk, p) for (fn, sp, kk, p) in parts]
                 for o in outs:
                     jax.block_until_ready(o)
                 ts.append(time.perf_counter() - t0)
@@ -5946,15 +5950,16 @@ def _partsearch(tag, Rd, L, total, sweeps, repeats):
 
 
 @app.function(gpu="H100:4", **_COMMON)
-def partsearch_h100(tag, Rd, L, total, sweeps, repeats):
-    return _partsearch(tag, Rd, L, total, sweeps, repeats)
+def partsearch_h100(tag, Rd, L, total, sweeps, repeats, n_temps):
+    return _partsearch(tag, Rd, L, total, sweeps, repeats, n_temps)
 
 
 @app.local_entrypoint()
 def partsearch(rd: float = 18.30, layers: int = 5, total: int = 400,
-               sweeps: int = 600, repeats: int = 7, tag: str = "partsearch"):
-    """Cheapest partition of R chains over 1, 2 and 4 GPUs."""
-    partsearch_h100.remote(tag, rd, layers, total, sweeps, repeats)
+               sweeps: int = 450, repeats: int = 7, n_temps: int = 8,
+               tag: str = "partsearch"):
+    """Cheapest partition of R chains over 1, 2 and 4 GPUs, production kernel."""
+    partsearch_h100.remote(tag, rd, layers, total, sweeps, repeats, n_temps)
 
 
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
