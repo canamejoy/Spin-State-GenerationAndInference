@@ -5480,6 +5480,227 @@ def wave_probe(rd: float = 18.30, layers: int = 5, gmax: int = 600,
     wave_probe_h100.remote(tag, rd, layers, gmax, step, repeats)
 
 
+def _triton_flat(batches, repeats, tag, Rd, L, steps):
+    """Flatten the plane instead of tiling it in two dimensions.
+
+    The 2-D kernel used a 64x64 index grid over a 39x39 plane: 4096 lanes for
+    1521 active sites, so 62.9% of lanes were masked and still executed, which
+    is 2.69x the lane work and the main reason it lost by 26% once launch
+    overhead was amortised away.
+
+    Flattening fixes exactly that. The 1521 sites of a plane become a single
+    index of length 2048, the next power of two, so only 25.7% of lanes are
+    wasted -- half the waste of the square grid. The site index p carries y
+    and x through p = y*N + x, the neighbours are computed from those, and the
+    same mask handles the overhang.
+
+    Timed with K steps inside one call, because a single step of this kernel
+    is dispatch-bound: a call costs about 122 us whatever the grid, and the
+    earlier single-step numbers were half overhead, which is what faked a
+    Triton win that amortisation reversed.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        from jax.experimental import pallas as pl
+        import jax.experimental.pallas.triton as pltriton
+    except Exception as e:
+        print(f"TRITON NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    N, Lz = int(geo["N"]), int(geo["L"])
+    S2 = N * N
+    P = 1 << (S2 - 1).bit_length()          # next power of two above N*N
+    T = 1 << (N - 1).bit_length()           # the square grid, for reference
+    K = int(steps)
+    print(f"Rd={Rd} L={Lz} N={N}", flush=True)
+    print(f"  aplanado : {S2} sitios -> {P} carriles  "
+          f"desperdicio {100*(1-S2/P):.1f}%", flush=True)
+    print(f"  rejilla 2D: {S2} sitios -> {T*T} carriles  "
+          f"desperdicio {100*(1-S2/(T*T)):.1f}%", flush=True)
+    print(f"  -> el aplanado hace {(T*T)/P:.2f}x menos trabajo de carril",
+          flush=True)
+    print(f"  {K} pasos por llamada", flush=True)
+
+    def jax_step(sp):
+        xp = jnp.roll(sp, -1, 3); xm = jnp.roll(sp, 1, 3)
+        yp = jnp.roll(sp, -1, 2); ym = jnp.roll(sp, 1, 2)
+        zp = jnp.roll(sp, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp, 1, 1).at[:, 0].set(0.0)
+        e = sp + 0.1 * (xp + xm + yp + ym + zp + zm)
+        return e / jnp.sqrt(jnp.sum(e * e, -1, keepdims=True) + 1e-20)
+
+    def make_kernel(n_lanes, flat):
+        def kernel(s_ref, o_ref):
+            b = pl.program_id(0)
+            z = pl.program_id(1)
+            if flat:
+                p = jax.lax.broadcasted_iota(jnp.int32, (n_lanes,), 0)
+                m = p < S2
+                pc = jnp.minimum(p, S2 - 1)
+                y = pc // N
+                x = pc - y * N
+            else:
+                iy = jax.lax.broadcasted_iota(jnp.int32, (n_lanes, n_lanes), 0)
+                ix = jax.lax.broadcasted_iota(jnp.int32, (n_lanes, n_lanes), 1)
+                m = (iy < N) & (ix < N)
+                y, x = jnp.minimum(iy, N - 1), jnp.minimum(ix, N - 1)
+            ypi = jnp.where(y + 1 >= N, 0, y + 1)
+            ymi = jnp.where(y - 1 < 0, N - 1, y - 1)
+            xpi = jnp.where(x + 1 >= N, 0, x + 1)
+            xmi = jnp.where(x - 1 < 0, N - 1, x - 1)
+            zlo, zhi = jnp.maximum(z - 1, 0), jnp.minimum(z + 1, Lz - 1)
+            has_lo = (z > 0).astype(jnp.float32)
+            has_hi = (z < Lz - 1).astype(jnp.float32)
+            e = []
+            for c in range(3):
+                ld = lambda zz, yy, xx: pltriton.load(
+                    s_ref.at[b, zz, yy, xx, c], mask=m)
+                e.append(ld(z, y, x) + 0.1 * (
+                    ld(z, ypi, x) + ld(z, ymi, x) + ld(z, y, xpi) + ld(z, y, xmi)
+                    + has_hi * ld(zhi, y, x) + has_lo * ld(zlo, y, x)))
+            inv = 1.0 / jnp.sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2] + 1e-20)
+            for c in range(3):
+                pltriton.store(o_ref.at[b, z, y, x, c], e[c] * inv, mask=m)
+        return kernel
+
+    def make_step(n_lanes, flat):
+        kern = make_kernel(n_lanes, flat)
+        def f(sp):
+            return pl.pallas_call(
+                kern, grid=(sp.shape[0], Lz),
+                in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+                out_specs=pl.BlockSpec(memory_space=pl.ANY),
+                out_shape=jax.ShapeDtypeStruct(sp.shape, sp.dtype),
+                compiler_params=pltriton.CompilerParams(),
+            )(sp)
+        return f
+
+    flat_step = make_step(P, True)
+    sq_step = make_step(T, False)
+
+    # ---- the gate: equivalence on ONE step ------------------------------
+    sp0 = S.init_spins(jax.random.PRNGKey(5), geo, 8)
+    ref = jax.jit(jax_step)(sp0); ref.block_until_ready()
+    res = dict(available=True, N=N, L=Lz, sites=S2, flat_lanes=P,
+               square_lanes=T * T,
+               flat_waste_pct=round(100 * (1 - S2 / P), 1),
+               square_waste_pct=round(100 * (1 - S2 / (T * T)), 1),
+               lane_work_ratio=round((T * T) / P, 2), steps=K,
+               device=device_identity())
+    variants = {}
+    for lab, fn in (("aplanado", flat_step), ("rejilla 2D", sq_step)):
+        try:
+            got = jax.jit(fn)(sp0); got.block_until_ready()
+            rel = float(jnp.max(jnp.abs(ref - got))) / max(
+                float(jnp.max(jnp.abs(ref))), 1e-30)
+            ok = rel < 1e-5
+            print(f"\n  {lab}: COMPILA  error relativo {rel:.3e}  "
+                  f"{'OK' if ok else 'MISMATCH'}", flush=True)
+            res[f"equiv_{lab.replace(' ', '_')}"] = dict(rel=rel, ok=bool(ok))
+            if ok:
+                variants[lab] = fn
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            print(f"\n  {lab}: {msg[:300]}", flush=True)
+            res[f"equiv_{lab.replace(' ', '_')}"] = dict(error=msg[:300])
+    if "aplanado" not in variants:
+        res["error"] = "el aplanado no compilo o no verifico"
+        with open(f"/out/{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        return res
+
+    def loop_of(fn):
+        return lambda sp: jax.lax.fori_loop(0, K, lambda i, x: fn(x), sp)
+
+    rows = []
+    print(f"\n{'B':>5}{'jax us/rep':>12}{'aplanado':>11}{'vs jax':>9}"
+          f"{'rejilla2D':>12}{'vs jax':>9}{'aplan vs 2D':>13}", flush=True)
+    for B in batches:
+        sp = S.init_spins(jax.random.PRNGKey(7 + B), geo, B)
+        fj = jax.jit(loop_of(jax_step)).lower(sp).compile()
+        ff = jax.jit(loop_of(variants["aplanado"])).lower(sp).compile()
+        fs = (jax.jit(loop_of(variants["rejilla 2D"])).lower(sp).compile()
+              if "rejilla 2D" in variants else None)
+        fns = [fj, ff] + ([fs] if fs else [])
+        for f in fns:
+            jax.block_until_ready(f(sp))
+        acc = [[] for _ in fns]
+        for _ in range(int(repeats)):
+            for i, f in enumerate(fns):
+                t0 = time.perf_counter(); jax.block_until_ready(f(sp))
+                acc[i].append(time.perf_counter() - t0)
+        med = [float(np.median(a)) / K for a in acc]
+        mj, mf = med[0], med[1]
+        ms = med[2] if fs else float("nan")
+        rows.append(dict(B=B, jax_us_per_replica=1e6 * mj / B,
+                         flat_us_per_replica=1e6 * mf / B,
+                         square_us_per_replica=(1e6 * ms / B if fs else None),
+                         flat_vs_jax_pct=100 * (mf / mj - 1),
+                         square_vs_jax_pct=(100 * (ms / mj - 1) if fs else None),
+                         flat_vs_square_pct=(100 * (mf / ms - 1) if fs else None)))
+        r = rows[-1]
+        print(f"{B:>5}{r['jax_us_per_replica']:>12.3f}"
+              f"{r['flat_us_per_replica']:>11.3f}{r['flat_vs_jax_pct']:>+8.1f}%"
+              f"{(r['square_us_per_replica'] or 0):>12.3f}"
+              f"{(r['square_vs_jax_pct'] or 0):>+8.1f}%"
+              f"{(r['flat_vs_square_pct'] or 0):>+12.1f}%", flush=True)
+    res["timing"] = rows
+    if rows:
+        import statistics as stx
+        fv = [r["flat_vs_jax_pct"] for r in rows]
+        sv = [r["square_vs_jax_pct"] for r in rows if r["square_vs_jax_pct"]]
+        fs2 = [r["flat_vs_square_pct"] for r in rows if r["flat_vs_square_pct"]]
+        res["summary"] = dict(
+            flat_vs_jax_mean=round(stx.mean(fv), 1),
+            flat_vs_jax_best=round(min(fv), 1),
+            flat_wins=sum(1 for x in fv if x < 0), n=len(fv),
+            square_vs_jax_mean=(round(stx.mean(sv), 1) if sv else None),
+            flat_vs_square_mean=(round(stx.mean(fs2), 1) if fs2 else None))
+        print(f"\n=== resumen ===", flush=True)
+        print(f"  aplanado contra JAX : media {stx.mean(fv):+.1f}%  "
+              f"gana {sum(1 for x in fv if x<0)}/{len(fv)}  "
+              f"mejor {min(fv):+.1f}%", flush=True)
+        if sv:
+            print(f"  rejilla 2D contra JAX: media {stx.mean(sv):+.1f}%", flush=True)
+            print(f"  aplanado contra rejilla 2D: media {stx.mean(fs2):+.1f}%  "
+                  f"(predicho por carriles: {100/((T*T)/P)-100:+.0f}% si el "
+                  f"trabajo de carril lo dominara todo)", flush=True)
+        def disp(key):
+            xs = [r[key] for r in rows if r[key]]
+            return 100 * (max(xs) / min(xs) - 1) if xs else None
+        res["dispersion_pct"] = dict(jax=disp("jax_us_per_replica"),
+                                     flat=disp("flat_us_per_replica"),
+                                     square=disp("square_us_per_replica"))
+        print(f"\n  dispersion de us/replica: JAX "
+              f"{disp('jax_us_per_replica'):.1f}%, aplanado "
+              f"{disp('flat_us_per_replica'):.1f}%", flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=pallas_image, timeout=60 * 60,
+              volumes={"/out": vol})
+def triton_flat_h100(b, rep, tag, Rd, L, steps):
+    return _triton_flat(b, rep, tag, Rd, L, steps)
+
+
+@app.local_entrypoint()
+def triton_flat(batches: str = "63,65,66,96,99,100,128,129", repeats: int = 7,
+                rd: float = 18.30, layers: int = 5, steps: int = 200,
+                tag: str = "triton_flat"):
+    """Flatten the plane to the next power of two instead of a square grid."""
+    triton_flat_h100.remote([int(x) for x in batches.split(",") if x], repeats,
+                            tag, rd, layers, steps)
+
+
 def _ptx_probe(batches, tag, Rd, L, n_temps, n_therm, n_meas):
     """What LOADS does XLA actually emit, and does it ever prefetch?
 

@@ -1799,6 +1799,77 @@ en vez de tejar en 2-D</b> — los 1521 sitios activos padeados a <b>2048</b>
 desperdician <b>25.7 %</b> de carriles en vez de 62.9 %, la mitad del
 desperdicio actual. Sin probar.</div>
 
+<h2>Aplanar a 2048: funciona, y refuta mi diagnóstico</h2>
+
+<p>La idea era quitarle desperdicio de carriles al kernel de Triton. En vez de
+una rejilla 64×64 sobre un plano de 39×39, aplanar los <b>1521 sitios</b> a un
+índice de <b>2048</b>, la siguiente potencia de 2.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>variante</th><th>carriles</th><th>desperdicio</th></tr></thead>
+  <tbody>
+    <tr><td>rejilla 2-D 64×64</td><td class="n">4096</td><td class="bad">62.9 %</td></tr>
+    <tr class="best"><td><b>aplanado a 2048</b></td><td class="n">2048</td>
+        <td class="n">25.7 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Compila, es exacto (<code>1.788e−07</code> relativo) y <b>sí ayuda</b>. Pero
+mucho menos de lo que la aritmética predecía:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>B</th><th>JAX µs/rép</th><th>aplanado</th><th>vs JAX</th>
+    <th>rejilla 2-D</th><th>aplan. vs 2-D</th></tr></thead>
+  <tbody>
+    <tr><td class="n">63</td><td class="n">0.230</td><td class="n">0.301</td>
+        <td class="bad">+30.9 %</td><td class="n">0.319</td>
+        <td class="best">−5.5 %</td></tr>
+    <tr><td class="n">99</td><td class="n">0.202</td><td class="n">0.243</td>
+        <td class="bad">+20.1 %</td><td class="n">0.248</td>
+        <td class="best">−1.9 %</td></tr>
+    <tr><td class="n">129</td><td class="n">0.190</td><td class="n">0.224</td>
+        <td class="bad">+17.9 %</td><td class="n">0.228</td>
+        <td class="best">−1.4 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note bad"><strong>Y aquí se cae mi explicación.</strong> Yo había
+dicho que el <b>62.9 % de carriles enmascarados pero ejecutados</b> era
+<b>2.69× el trabajo de carril</b> y la razón principal de que el kernel 2-D
+perdiera por 26 %. Si eso fuera cierto, <b>partir los carriles a la mitad
+debería dar −50 %</b>. <b>Medido: −2.9 %</b> (entre −1.4 % y −5.5 %).</div>
+
+<div class="key">
+  <p><b>El tiempo es casi independiente de los carriles totales.</b></p>
+  <p>Los carriles enmascarados cuestan <b>~3 %</b>, no el 169 % que yo afirmé.
+  La máscara <b>sí suprime el acceso a memoria</b>, así que salen casi gratis.
+  Era una hipótesis razonable y la medición la mató.</p>
+</div>
+
+<h3>Entonces el costo está en las cargas dispersas</h3>
+<div class="key"><p>Quedan <b>1521 sitios útiles × 7 vecinos × 3 componentes =
+31 941 direcciones calculadas por carril</b>, contra <b>siete lecturas de
+arreglo contiguas y coalescidas</b> en la ruta JAX. Y un <i>gather</i> escala
+con los carriles <b>útiles</b>, que son los mismos 1521 en las dos variantes —
+<b>por eso aplanar no ayuda</b>.</p></div>
+
+<h3>Veredicto de la ruta Triton</h3>
+<div class="note bad"><strong>El aplanado sigue siendo +21.0 % más lento que
+JAX y gana 0 de 8.</strong> La ruta Triton <b>por gathers no puede ganarle a
+rolls contiguos</b> en este stencil. Para ganar harían falta <b>cargas
+coalescidas</b>, o sea el halo residente en SRAM — que es exactamente el diseño
+que <code>mosaic_gpu</code> rechazó de ocho formas y que
+<b>Pallas-Triton tampoco puede expresar</b>, porque no tiene
+<code>slice</code> ni <code>concatenate</code>. <b>Las dos puertas dan al mismo
+sitio.</b></div>
+
+<div class="note"><strong>Y una nota sobre el dentado, por completitud.</strong>
+Con el sobrecoste amortizado el residuo σ es <b>1.7 % (JAX), 0.9 % (aplanado),
+1.5 % (rejilla 2-D)</b>. La dispersión cruda de 23–34 % que imprimí es la
+tendencia <code>a/B</code>, no dentado. <b>Ninguna de las tres variantes del
+stencil tiene dentado</b> — consistente con que el del programa completo viva
+en la fusión del <code>_where</code>, el núcleo del Metropolis.</div>
+
 <h2>Lo que el diagrama deja ver</h2>
 <div class="key">
   <p><b>El exceso no está repartido: está concentrado.</b> El 91 % cae en las
