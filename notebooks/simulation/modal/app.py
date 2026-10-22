@@ -8468,3 +8468,129 @@ def triton_ladder4(total: int = 400, n_temps: int = 60,
     """The four-GPU ladder: kernel against the split protocol."""
     triton_ladder4_h100.remote(tag, rd, layers, total, n_temps, n_therm,
                                n_meas, split, by, warps)
+
+
+def _triton_width(tag, Rd, layers, batches, repeats, steps, by, warps):
+    """Does the width rule still bite the hand-written kernel?
+
+    The rule was `penalty iff v2(B) + v2(L) >= 2`, and it came from XLA
+    deciding how to vectorise the loop it was handed. This kernel hands it no
+    such loop: the block shape is fixed by me, and the layer count only sets
+    how many blocks there are along z. So the mechanism should be gone for
+    BOTH axes -- but only B was ever measured. This measures L too.
+
+    Each layer count is its own column: changing L changes the work per
+    sweep, so the comparison is production against the kernel WITHIN a fixed
+    L, never across.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        import triton_halo as TH
+    except Exception as e:
+        print(f"TRITON NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    kB = 0.086173404
+    beta = 1.0 / (kB * 5.0)
+    K = int(steps)
+    raw = json.load(open("/root/theta4.json"))
+    t0p = list(raw.values())[0]
+    res = dict(available=True, gpu=device_identity(), rows=[],
+               steps_per_call=K, repeats=int(repeats))
+    print(f"{'L':>3}{'v2(L)':>7}{'B':>6}{'v2(B)':>7}{'suma':>6}"
+          f"{'produccion':>13}{'halo':>10}{'cambio':>9}", flush=True)
+    v2 = lambda n: (n & -n).bit_length() - 1
+
+    for L in layers:
+        geo = S.build_geometry(Rd=float(Rd), L=int(L))
+        eng = S.build_engine(geo)
+        surf_j = jnp.asarray(geo["surface"][None, ...])
+        even_j = jnp.asarray(geo["even"][None, ..., None])
+        odd_j = jnp.asarray(geo["odd"][None, ..., None])
+        for B in batches:
+            c = lambda v: jnp.full((B, 1, 1, 1), float(v), jnp.float32)
+            P = dict(Jex=c(1.0), Kan1=c(t0p["Kan1"]), Kan2=c(0.0),
+                     KanS=c(t0p["KanS"]), Hex=c(t0p["Hex"]),
+                     KDM=c(t0p["KDM"]), g=c(float(np.deg2rad(90.0))))
+            k1 = jnp.where(surf_j, P["KanS"], P["Kan1"])
+            par = TH.pack_params(P, B)
+            sp = S.init_spins(jax.random.PRNGKey(5 + B + L), geo, B)
+            spP = TH.planar(sp)
+            sub = TH.build(geo, BY=int(by), num_warps=int(warps))
+
+            def prod(s):
+                def body(i, v):
+                    st, k = v
+                    k, ka, kb = jax.random.split(k, 3)
+                    st = eng["substep"](st, ka, beta, even_j, P, k1)
+                    st = eng["substep"](st, kb, beta, odd_j, P, k1)
+                    return st, k
+                return jax.lax.fori_loop(0, K, body,
+                                         (s, jax.random.PRNGKey(0)))[0]
+
+            f1 = jax.jit(prod).lower(sp).compile()
+            f2 = jax.jit(TH.sweeps(sub, k1, par, beta, K)).lower(spP).compile()
+            jax.block_until_ready(f1(sp)); jax.block_until_ready(f2(spP))
+            a1, a2 = [], []
+            for _ in range(int(repeats)):          # interleaved
+                t = time.perf_counter(); jax.block_until_ready(f1(sp))
+                a1.append(time.perf_counter() - t)
+                t = time.perf_counter(); jax.block_until_ready(f2(spP))
+                a2.append(time.perf_counter() - t)
+            m1, m2 = float(np.median(a1)), float(np.median(a2))
+            row = dict(L=int(L), B=int(B), v2L=v2(L), v2B=v2(B),
+                       suma=v2(L) + v2(B),
+                       prod_us=1e6 * m1 / (K * B),
+                       halo_us=1e6 * m2 / (K * B),
+                       change_pct=100 * (m2 / m1 - 1))
+            res["rows"].append(row)
+            print(f"{L:>3}{row['v2L']:>7}{B:>6}{row['v2B']:>7}"
+                  f"{row['suma']:>6}{row['prod_us']:>13.3f}"
+                  f"{row['halo_us']:>10.3f}{row['change_pct']:>+8.1f}%",
+                  flush=True)
+
+    # The rule's own prediction: a penalty exactly when v2(B)+v2(L) >= 2.
+    # Scored separately for each engine, within each L.
+    print(f"\n=== la regla del ancho, por motor ===", flush=True)
+    summ = {}
+    for L in layers:
+        rs = [r for r in res["rows"] if r["L"] == L]
+        if len(rs) < 2:
+            continue
+        hit = [r for r in rs if r["suma"] >= 2]
+        miss = [r for r in rs if r["suma"] < 2]
+        if not hit or not miss:
+            continue
+        for eng_k, lab in (("prod_us", "produccion"), ("halo_us", "halo")):
+            h = float(np.mean([r[eng_k] for r in hit]))
+            m = float(np.mean([r[eng_k] for r in miss]))
+            pen = 100 * (h / m - 1)
+            summ[f"L{L}_{lab}"] = pen
+            print(f"  L={L}  {lab:>11}: castigo por v2>=2  {pen:+6.1f}%",
+                  flush=True)
+    res["penalty"] = summ
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=triton_image, timeout=60 * 60,
+              volumes={"/out": vol})
+def triton_width_h100(tag, Rd, layers, batches, repeats, steps, by, warps):
+    return _triton_width(tag, Rd, layers, batches, repeats, steps, by, warps)
+
+
+@app.local_entrypoint()
+def triton_width(layers: str = "4,5,6,8", batches: str = "64,65,100,101",
+                 repeats: int = 7, steps: int = 200, rd: float = 18.30,
+                 by: int = 4, warps: int = 4, tag: str = "triton_width"):
+    """Does v2(B)+v2(L)>=2 still cost anything with the hand-written kernel?"""
+    triton_width_h100.remote(tag, rd, [int(x) for x in layers.split(",") if x],
+                             [int(x) for x in batches.split(",") if x],
+                             repeats, steps, by, warps)

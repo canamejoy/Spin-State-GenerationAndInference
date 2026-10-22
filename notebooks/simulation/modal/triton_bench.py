@@ -1,0 +1,317 @@
+"""Does the hand-written kernel travel? One self-contained benchmark.
+
+The whole Triton result was measured on H100s rented by the hour. That leaves
+two things unknown. Whether the kernel even COMPILES elsewhere -- Triton wants
+compute capability 7.0 or better, so Kaggle's P100 (6.0) should refuse it
+while its T4 (7.5) should not. And whether the gain is an H100 property: the
+H100 has 132 SMs and enormous L2, and a stencil that lives in registers might
+behave very differently on a 40-SM T4.
+
+So this module runs, in order:
+
+  1. the environment, including compute capability, because a refusal there is
+     a result and not a failure;
+  2. exactness -- the stencil against `sim_core.substep` on IDENTICAL
+     randomness, which must give zero differing spins;
+  3. physics -- both engines to equilibrium with their own randomness, whose
+     energies must agree within the spread the run itself reports;
+  4. the substep rate, production against the kernel, over a grid of layer
+     counts and batches, which also scores the width rule SEPARATELY for each
+     engine;
+  5. a short ladder, so the figure quoted is the full anneal and not a step.
+
+Nothing is timed before the physics agrees, and every arm is interleaved so a
+GPU that warms up spreads its drift across both.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+
+import numpy as np
+
+
+def _v2(n):
+    return (n & -n).bit_length() - 1
+
+
+def environment():
+    import subprocess
+    import sys
+    out = {}
+    try:
+        out["smi"] = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total,clocks.max.sm,"
+             "driver_version", "--format=csv,noheader"],
+            capture_output=True, text=True).stdout.strip()
+    except Exception as e:
+        out["smi"] = f"nvidia-smi no disponible: {e}"
+    try:
+        import jax
+        out["jax"] = jax.__version__
+        out["devices"] = [str(d) for d in jax.devices()]
+        d = jax.devices()[0]
+        # Compute capability decides whether Triton will emit anything at all.
+        cc = getattr(d, "compute_capability", None)
+        out["compute_capability"] = str(cc) if cc else "desconocida"
+        out["device_kind"] = getattr(d, "device_kind", "?")
+    except Exception as e:
+        out["jax_error"] = f"{type(e).__name__}: {e}"
+    for mod in ("triton", "jax_triton"):
+        try:
+            m = __import__(mod)
+            out[mod] = getattr(m, "__version__", "?")
+        except Exception as e:
+            out[f"{mod}_error"] = f"{type(e).__name__}: {e}"
+    out["python"] = sys.version.split()[0]
+    return out
+
+
+def run(batches=(64, 65, 100, 101), layers=(5,), repeats=5, steps=200,
+        Rd=18.30, by=4, warps=4, replicas=50, n_temps=20, n_therm=300,
+        n_meas=150, seed=11, out=None, label="kaggle"):
+    import jax
+    import jax.numpy as jnp
+    import sim_core as S
+
+    res = dict(label=label, env=environment(), rows=[], ok=False)
+    print("=== entorno ===", flush=True)
+    for k in ("smi", "device_kind", "compute_capability", "jax", "triton",
+              "jax_triton", "python"):
+        if k in res["env"]:
+            print(f"  {k:<20} {res['env'][k]}", flush=True)
+    cc = res["env"].get("compute_capability", "")
+    if cc and cc.replace(".", "").isdigit() and float(
+            cc if "." in cc else f"{cc[0]}.{cc[1:]}") < 7.0:
+        print(f"\n  AVISO: capacidad de computo {cc} < 7.0. Triton exige 7.0+,"
+              f" asi que lo mas probable es que se niegue a compilar. Eso es"
+              f" un resultado, no un fallo: elige el acelerador T4 (7.5).",
+              flush=True)
+
+    try:
+        import triton_halo as TH
+    except Exception as e:
+        res["error"] = f"{type(e).__name__}: {e}"
+        print(f"\nTRITON NO DISPONIBLE: {res['error']}", flush=True)
+        if out:
+            json.dump(res, open(out, "w"), indent=1)
+        return res
+
+    kB = 0.086173404
+    beta = 1.0 / (kB * 5.0)
+    K = int(steps)
+    P0 = dict(Jex=1.0, Kan1=0.177, Kan2=0.0, KanS=0.139, Hex=0.483,
+              KDM=0.880, g=float(np.deg2rad(90.0)))
+
+    def params(b):
+        c = lambda v: jnp.full((b, 1, 1, 1), float(v), jnp.float32)
+        return {k: c(v) for k, v in P0.items()}
+
+    # ---------------------------------------------------- 2. exactness
+    print("\n=== exactitud: el stencil contra sim_core.substep ===",
+          flush=True)
+    geo = S.build_geometry(Rd=float(Rd), L=int(layers[0]))
+    eng = S.build_engine(geo)
+    surf = jnp.asarray(geo["surface"][None, ...])
+    ev = jnp.asarray(geo["even"][None, ..., None])
+    od = jnp.asarray(geo["odd"][None, ..., None])
+    Bv = 8
+    P = params(Bv)
+    k1 = jnp.where(surf, P["KanS"], P["Kan1"])
+    sp0 = S.init_spins(jax.random.PRNGKey(3), geo, Bv)
+    kt, ka = jax.random.split(jax.random.PRNGKey(101))
+    tr = jax.random.normal(kt, sp0.shape)
+    tr = tr / jnp.linalg.norm(tr, axis=-1, keepdims=True)
+    ru = jax.random.uniform(ka, sp0.shape[:-1])
+    sub = TH.build(geo, BY=int(by), num_warps=int(warps))
+    par = TH.pack_params(P, Bv)
+    spP = TH.planar(sp0)
+    trP = TH.planar(tr)
+    ex = []
+    for parity, mask, nm in ((0, ev, "par"), (1, od, "impar")):
+        # `substep` draws its own randomness, so the reference is rebuilt here
+        # from the SAME tr/ru the kernel is given -- otherwise this compares
+        # two different chains and proves nothing.
+        trm = jnp.where(mask, tr, sp0)
+        dS = trm - sp0
+        xp = jnp.roll(sp0, -1, 3); xm = jnp.roll(sp0, 1, 3)
+        yp = jnp.roll(sp0, -1, 2); ym = jnp.roll(sp0, 1, 2)
+        zp = jnp.roll(sp0, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp0, 1, 1).at[:, 0].set(0.0)
+        dE = -P["Jex"] * jnp.sum(dS * (xp + xm + yp + ym + zp + zm), -1)
+        an = lambda s: (k1 * ((s[..., 0] * s[..., 1]) ** 2
+                              + (s[..., 0] * s[..., 2]) ** 2
+                              + (s[..., 1] * s[..., 2]) ** 2)
+                        + P["Kan2"] * (s[..., 0] * s[..., 1] * s[..., 2]) ** 2)
+        dE = dE + an(trm) - an(sp0)
+        dE = dE - P["KDM"] * (dS[..., 1] * (xp[..., 2] - xm[..., 2])
+                              - dS[..., 2] * (xp[..., 1] - xm[..., 1])
+                              + dS[..., 2] * (yp[..., 0] - ym[..., 0])
+                              - dS[..., 0] * (yp[..., 2] - ym[..., 2]))
+        dE = dE - P["Hex"] * (dS[..., 0] * jnp.cos(P["g"])
+                              + dS[..., 2] * jnp.sin(P["g"]))
+        acc = ((dE < 0) | (ru < jnp.exp(-dE * beta)))[..., None] & mask
+        ref = jnp.where(acc, trm, sp0)
+        got, dE_t = sub(spP, k1, par, beta, 0, parity, trP, ru, want_de=True)
+        sel = np.broadcast_to(np.asarray(mask[..., 0]), dE.shape)
+        mad = float(np.max(np.abs(np.asarray(dE)[sel]
+                                  - np.asarray(dE_t)[sel])))
+        bad = int(np.sum(np.asarray(ref) != np.asarray(TH.unplanar(got))))
+        ex.append(dict(sublattice=nm, dE_max_abs=mad, spin_mismatch=bad,
+                       spin_total=int(np.asarray(ref).size)))
+        print(f"  {nm:>5}: dE max |dif| {mad:.3e}   espines distintos "
+              f"{bad}/{np.asarray(ref).size}", flush=True)
+    res["exactness"] = ex
+    res["exact_ok"] = all(r["spin_mismatch"] == 0 for r in ex)
+
+    # ------------------------------------------------------ 3. physics
+    print("\n=== fisica: las dos cadenas a equilibrio, cada una con su RNG ===",
+          flush=True)
+    Bp = 16
+    Pp = params(Bp)
+    k1p = jnp.where(surf, Pp["KanS"], Pp["Kan1"])
+    parp = TH.pack_params(Pp, Bp)
+    spE = S.init_spins(jax.random.PRNGKey(11), geo, Bp)
+    subp = TH.build(geo, BY=int(by), num_warps=int(warps))
+    n_act = float(geo["n_active"])
+    ph = []
+    for T in (20.0, 5.0, 1.0):
+        bT = 1.0 / (kB * T)
+        n_eq = 400
+
+        def jx(s):
+            def body(i, v):
+                st, k = v
+                k, a, b = jax.random.split(k, 3)
+                st = eng["substep"](st, a, bT, ev, Pp, k1p)
+                st = eng["substep"](st, b, bT, od, Pp, k1p)
+                return st, k
+            return jax.lax.fori_loop(0, n_eq, body,
+                                     (s, jax.random.PRNGKey(77)))[0]
+
+        sj = jax.block_until_ready(jax.jit(jx)(spE))
+        st = TH.unplanar(jax.block_until_ready(jax.jit(
+            TH.sweeps(subp, k1p, parp, bT, n_eq))(TH.planar(spE))))
+        ej = float(jnp.mean(eng["energy"](sj, Pp, k1p)) / n_act)
+        et = float(jnp.mean(eng["energy"](st, Pp, k1p)) / n_act)
+        sd = float(jnp.std(eng["energy"](sj, Pp, k1p)) / n_act)
+        row = dict(T=T, E_prod=ej, E_halo=et, E_sd=sd,
+                   sigma=abs(et - ej) / (sd + 1e-30),
+                   M_prod=float(jnp.mean(eng["magnetization"](sj)[0])),
+                   M_halo=float(jnp.mean(eng["magnetization"](st)[0])))
+        ph.append(row)
+        print(f"  T={T:>5.1f}  E/sitio {ej:+9.5f} / {et:+9.5f}  "
+              f"({row['sigma']:.2f} sigma)   |M| {row['M_prod']:.4f} / "
+              f"{row['M_halo']:.4f}", flush=True)
+    res["physics"] = ph
+    res["physics_ok"] = all(r["sigma"] < 3.0 for r in ph)
+    if not (res["exact_ok"] and res["physics_ok"]):
+        print("\n  AVISO: la fisica NO coincide. Los tiempos de abajo no son "
+              "comparables.", flush=True)
+
+    # ------------------------------- 4. the substep rate, and the width rule
+    print(f"\n=== ritmo del paso, {K} barridos por llamada, "
+          f"{repeats} repeticiones intercaladas ===", flush=True)
+    print(f"{'L':>3}{'B':>6}{'v2(B)+v2(L)':>13}{'produccion':>13}"
+          f"{'kernel':>10}{'cambio':>9}", flush=True)
+    for L in layers:
+        g = S.build_geometry(Rd=float(Rd), L=int(L))
+        e2 = S.build_engine(g)
+        s2 = jnp.asarray(g["surface"][None, ...])
+        v2e = jnp.asarray(g["even"][None, ..., None])
+        v2o = jnp.asarray(g["odd"][None, ..., None])
+        for B in batches:
+            Pb = params(B)
+            k1b = jnp.where(s2, Pb["KanS"], Pb["Kan1"])
+            parb = TH.pack_params(Pb, B)
+            spb = S.init_spins(jax.random.PRNGKey(seed + B + L), g, B)
+            spbP = TH.planar(spb)
+            sb = TH.build(g, BY=int(by), num_warps=int(warps))
+
+            def prod(s):
+                def body(i, v):
+                    st, k = v
+                    k, a, b = jax.random.split(k, 3)
+                    st = e2["substep"](st, a, beta, v2e, Pb, k1b)
+                    st = e2["substep"](st, b, beta, v2o, Pb, k1b)
+                    return st, k
+                return jax.lax.fori_loop(0, K, body,
+                                         (s, jax.random.PRNGKey(0)))[0]
+
+            f1 = jax.jit(prod).lower(spb).compile()
+            f2 = jax.jit(TH.sweeps(sb, k1b, parb, beta, K)
+                         ).lower(spbP).compile()
+            jax.block_until_ready(f1(spb)); jax.block_until_ready(f2(spbP))
+            a1, a2 = [], []
+            for _ in range(int(repeats)):
+                t = time.perf_counter(); jax.block_until_ready(f1(spb))
+                a1.append(time.perf_counter() - t)
+                t = time.perf_counter(); jax.block_until_ready(f2(spbP))
+                a2.append(time.perf_counter() - t)
+            m1, m2 = float(np.median(a1)), float(np.median(a2))
+            row = dict(L=int(L), B=int(B), suma=_v2(L) + _v2(B),
+                       prod_us=1e6 * m1 / (K * B),
+                       halo_us=1e6 * m2 / (K * B),
+                       change_pct=100 * (m2 / m1 - 1))
+            res["rows"].append(row)
+            print(f"{L:>3}{B:>6}{row['suma']:>13}{row['prod_us']:>13.3f}"
+                  f"{row['halo_us']:>10.3f}{row['change_pct']:>+8.1f}%",
+                  flush=True)
+
+    pen = {}
+    for L in layers:
+        rs = [r for r in res["rows"] if r["L"] == L]
+        hit = [r for r in rs if r["suma"] >= 2]
+        miss = [r for r in rs if r["suma"] < 2]
+        if hit and miss:
+            for key, lab in (("prod_us", "produccion"), ("halo_us", "kernel")):
+                p = 100 * (float(np.mean([r[key] for r in hit]))
+                           / float(np.mean([r[key] for r in miss])) - 1)
+                pen[f"L{L}_{lab}"] = p
+    if pen:
+        print(f"\n=== la regla del ancho: castigo por v2(B)+v2(L) >= 2 ===",
+              flush=True)
+        for k, v in pen.items():
+            print(f"  {k:<22}{v:+7.1f}%", flush=True)
+    res["penalty"] = pen
+
+    # ------------------------------------------------- 5. the short ladder
+    print(f"\n=== escalera corta: {n_temps}T x {n_therm}+{n_meas}, "
+          f"{replicas} replicas ===", flush=True)
+    Bl = int(replicas)
+    Pl = params(Bl)
+    k1l = jnp.where(surf, Pl["KanS"], Pl["Kan1"])
+    parl = TH.pack_params(Pl, Bl)
+    Tl = np.linspace(20.0, 0.1, int(n_temps))
+    btl = jnp.asarray(1.0 / (kB * Tl), jnp.float32)
+    spl = S.init_spins(jax.random.PRNGKey(5), geo, Bl)
+    annF = TH.build_anneal_full(geo, BY=int(by), num_warps=int(warps))
+    tot = int(n_temps) * (int(n_therm) + int(n_meas))
+    lad = {}
+    for nm, fn, a0 in (
+            ("produccion", lambda s: eng["anneal"](
+                s, jax.random.PRNGKey(42), btl, Pl, int(n_therm),
+                int(n_meas)), spl),
+            ("kernel", lambda s: annF(s, 42, btl, parl, k1l, int(n_therm),
+                                      int(n_meas)), TH.planar(spl))):
+        f = jax.jit(fn).lower(a0).compile()
+        t0 = time.perf_counter()
+        o = jax.block_until_ready(f(a0))
+        dt = time.perf_counter() - t0
+        lad[nm] = dict(wall_s=dt, us_per_replica_sweep=1e6 * dt / (tot * Bl))
+        print(f"  {nm:>11}: {dt:7.2f} s   "
+              f"{lad[nm]['us_per_replica_sweep']:7.3f} us/replica-barrido",
+              flush=True)
+        del o
+    lad["change_pct"] = 100 * (lad["kernel"]["wall_s"]
+                               / lad["produccion"]["wall_s"] - 1)
+    res["ladder"] = dict(n_temps=int(n_temps), n_therm=int(n_therm),
+                         n_meas=int(n_meas), replicas=Bl, total_sweeps=tot,
+                         arms=lad)
+    print(f"\n  la escalera completa: {lad['change_pct']:+.1f}%", flush=True)
+    res["ok"] = bool(res["exact_ok"] and res["physics_ok"])
+    if out:
+        json.dump(res, open(out, "w"), indent=1)
+        print(f"\n  guardado {out}", flush=True)
+    return res
