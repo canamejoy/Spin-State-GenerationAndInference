@@ -141,19 +141,24 @@ def _substep_kernel(
     # ---- the trial spin: a uniform point on the sphere.
     if HAS_RNG:
         off = ((b * LZ + z) * N + yc[:, None]) * N + xc[None, :]
-        # Four single-tensor draws rather than one `randn4x`: the 4-tuple form
-        # needs tuple unpacking, and four consecutive seeds are independent
-        # Philox streams anyway. Still far cheaper than Threefry, which HLO
-        # charges 17.1% of the anneal.
-        sd = tl.load(step_ptr) * 4
-        g0 = tl.randn(sd + 0, off)
-        g1 = tl.randn(sd + 1, off)
-        g2 = tl.randn(sd + 2, off)
+        # One key, four distinct COUNTERS -- the textbook use of a
+        # counter-based generator. An earlier version varied the KEY instead
+        # (`sd+0..3` at a shared counter) and the engine then accepted 1.1%
+        # less than production, systematically across five temperatures,
+        # while its proposals were provably isotropic and unit-norm. That
+        # leaves the uniform: adjacent keys at one counter let `ru` correlate
+        # with the proposed direction, hence with dE, which biases the
+        # Metropolis test. Separating the counters removes the shared input.
+        sd = tl.load(step_ptr)
+        o4 = off * 4
+        g0 = tl.randn(sd, o4 + 0)
+        g1 = tl.randn(sd, o4 + 1)
+        g2 = tl.randn(sd, o4 + 2)
         nrm = tl.sqrt(g0 * g0 + g1 * g1 + g2 * g2) + 1e-30
         t0 = g0 / nrm * SO
         t1 = g1 / nrm * SO
         t2 = g2 / nrm * SO
-        ru = tl.rand(sd + 3, off)
+        ru = tl.rand(sd, o4 + 3)
     else:
         trb = tr_ptr + b * sb
         t0 = tl.load(trb + 0 * sc + z * NN + o_c, mask=live, other=0.0)
@@ -503,4 +508,277 @@ def build_anneal(geo, BY=4, num_warps=4, So=1.0):
         return all_obs, s, snaps
 
     anneal.meta = dict(sub.meta)
+    return anneal
+
+
+# ------------------------------------------- the observables, also in Triton
+#
+# The ladder measurement put a number on what the substep could NOT reach:
+# the bare substep ran 66.6% faster, the full ladder only 59.3%, and those
+# seven points are the measurement loop, which recomputes the energy, the
+# magnetisation and the topological charge in JAX on every measured sweep.
+# These two kernels are that ceiling.
+#
+# Both emit PER-BLOCK PARTIALS rather than accumulating with atomics. Atomic
+# float adds would make the result depend on block completion order, so two
+# runs of the same state would disagree in the last bits and the exactness
+# test below would have nothing to stand on. The partial array is tiny
+# (B x LZ*n_strip x 4), so the final sum costs nothing in JAX.
+
+@triton.jit
+def _eM_kernel(
+    sp_ptr,          # (B, 3, LZ, N, N)  f32
+    k1_ptr,          # (B, LZ, N, N)     f32
+    par_ptr,         # (B, 6)            f32
+    disk_ptr,        # (N, N)            f32
+    out_ptr,         # (B, LZ*n_strip, 4) f32  -> E, Mx, My, Mz
+    N: tl.constexpr,
+    LZ: tl.constexpr,
+    BY: tl.constexpr,
+    BX: tl.constexpr,
+    NSTRIP: tl.constexpr,
+    SO: tl.constexpr,
+):
+    b = tl.program_id(0)
+    z = tl.program_id(1)
+    ty = tl.program_id(2)
+
+    NN = N * N
+    sb = 3 * LZ * NN
+    sc = LZ * NN
+
+    ys = ty * BY + tl.arange(0, BY)
+    xs = tl.arange(0, BX)
+    live = (ys < N)[:, None] & (xs < N)[None, :]
+    yc = tl.where(ys < N, ys, 0)
+    xc = tl.where(xs < N, xs, 0)
+
+    # Each bond counted once: the +x, +y and +z shifts only.
+    ypi = tl.where(yc + 1 >= N, 0, yc + 1)
+    xpi = tl.where(xc + 1 >= N, 0, xc + 1)
+    o_c = yc[:, None] * N + xc[None, :]
+    o_yp = ypi[:, None] * N + xc[None, :]
+    o_xp = yc[:, None] * N + xpi[None, :]
+    zp = tl.minimum(z + 1, LZ - 1)
+    gp = tl.where(z < LZ - 1, 1.0, 0.0)
+
+    msk = live & (tl.load(disk_ptr + o_c, mask=live, other=0.0) > 0.5)
+    w = tl.where(msk, 1.0, 0.0)
+
+    Jex = tl.load(par_ptr + b * 6 + 0)
+    Kan2 = tl.load(par_ptr + b * 6 + 1)
+    Hex = tl.load(par_ptr + b * 6 + 2)
+    KDM = tl.load(par_ptr + b * 6 + 3)
+    cosg = tl.load(par_ptr + b * 6 + 4)
+    sing = tl.load(par_ptr + b * 6 + 5)
+
+    sca = sp_ptr + b * sb
+    k1 = tl.load(k1_ptr + b * LZ * NN + z * NN + o_c, mask=live, other=0.0)
+
+    p0 = sca + 0 * sc; p1 = sca + 1 * sc; p2 = sca + 2 * sc
+    s0 = tl.load(p0 + z * NN + o_c, mask=live, other=0.0)
+    s1 = tl.load(p1 + z * NN + o_c, mask=live, other=0.0)
+    s2 = tl.load(p2 + z * NN + o_c, mask=live, other=0.0)
+    x0 = tl.load(p0 + z * NN + o_xp, mask=live, other=0.0)
+    x1 = tl.load(p1 + z * NN + o_xp, mask=live, other=0.0)
+    x2 = tl.load(p2 + z * NN + o_xp, mask=live, other=0.0)
+    y0 = tl.load(p0 + z * NN + o_yp, mask=live, other=0.0)
+    y1 = tl.load(p1 + z * NN + o_yp, mask=live, other=0.0)
+    y2 = tl.load(p2 + z * NN + o_yp, mask=live, other=0.0)
+    z0 = gp * tl.load(p0 + zp * NN + o_c, mask=live, other=0.0)
+    z1 = gp * tl.load(p1 + zp * NN + o_c, mask=live, other=0.0)
+    z2 = gp * tl.load(p2 + zp * NN + o_c, mask=live, other=0.0)
+
+    E = -Jex * (s0 * (x0 + y0 + z0) + s1 * (x1 + y1 + z1)
+                + s2 * (x2 + y2 + z2))
+    i4 = 1.0 / (SO * SO * SO * SO)
+    i6 = i4 / (SO * SO)
+    E += (k1 * i4 * ((s0 * s1) * (s0 * s1) + (s0 * s2) * (s0 * s2)
+                     + (s1 * s2) * (s1 * s2))
+          + Kan2 * i6 * (s0 * s1 * s2) * (s0 * s1 * s2))
+    E -= KDM * (s1 * x2 - s2 * x1 + s2 * y0 - s0 * y2)
+    E -= Hex * (s0 * cosg + s2 * sing)
+
+    ob = out_ptr + b * (LZ * NSTRIP) * 4 + (z * NSTRIP + ty) * 4
+    tl.store(ob + 0, tl.sum(E * w))
+    tl.store(ob + 1, tl.sum(s0 * w))
+    tl.store(ob + 2, tl.sum(s1 * w))
+    tl.store(ob + 3, tl.sum(s2 * w))
+
+
+@triton.jit
+def _topo_kernel(
+    sp_ptr,          # (B, 3, LZ, N, N)  f32
+    out_ptr,         # (B, 4, N-1, N-1)  f32  -> n1, d1, n2, d2
+    N: tl.constexpr,
+    LZ: tl.constexpr,
+    ZMID: tl.constexpr,
+    BY: tl.constexpr,
+    BX: tl.constexpr,
+):
+    """The plaquette terms of the Berg-Luscher charge, middle layer only.
+
+    It emits the four arguments of the two `atan2` rather than the angle:
+    Triton 3.8 has no `atan2` outside libdevice, and the branch matters here
+    because the denominator `1 + a.b + b.c + c.a` can go negative on a
+    frustrated plaquette, so `atan(n/d)` is not a substitute. The twelve
+    loads and the cross products -- the expensive part -- stay in the kernel
+    and JAX finishes with one cheap elementwise pass over 38x38.
+
+    One z plane, because that is the only layer `anneal` reads, so the
+    plaquettes are not evaluated five times over.
+    """
+    b = tl.program_id(0)
+    ty = tl.program_id(1)
+    tx = tl.program_id(2)
+
+    NN = N * N
+    sb = 3 * LZ * NN
+    sc = LZ * NN
+    M = N - 1                      # the plaquette grid
+
+    ys = ty * BY + tl.arange(0, BY)
+    xs = tx * BX + tl.arange(0, BX)
+    # Spans y..y+1 and x..x+1 with NO wrap, matching `spins[..., :-1, :-1, :]`.
+    live = (ys < M)[:, None] & (xs < M)[None, :]
+    yc = tl.where(ys < M, ys, 0)
+    xc = tl.where(xs < M, xs, 0)
+
+    o00 = yc[:, None] * N + xc[None, :]
+    o10 = yc[:, None] * N + (xc + 1)[None, :]
+    o01 = (yc + 1)[:, None] * N + xc[None, :]
+    o11 = (yc + 1)[:, None] * N + (xc + 1)[None, :]
+
+    base = sp_ptr + b * sb + ZMID * NN
+    a0 = tl.load(base + 0 * sc + o00, mask=live, other=0.0)
+    a1 = tl.load(base + 1 * sc + o00, mask=live, other=0.0)
+    a2 = tl.load(base + 2 * sc + o00, mask=live, other=0.0)
+    u0 = tl.load(base + 0 * sc + o10, mask=live, other=0.0)
+    u1 = tl.load(base + 1 * sc + o10, mask=live, other=0.0)
+    u2 = tl.load(base + 2 * sc + o10, mask=live, other=0.0)
+    c0 = tl.load(base + 0 * sc + o01, mask=live, other=0.0)
+    c1 = tl.load(base + 1 * sc + o01, mask=live, other=0.0)
+    c2 = tl.load(base + 2 * sc + o01, mask=live, other=0.0)
+    e0 = tl.load(base + 0 * sc + o11, mask=live, other=0.0)
+    e1 = tl.load(base + 1 * sc + o11, mask=live, other=0.0)
+    e2 = tl.load(base + 2 * sc + o11, mask=live, other=0.0)
+
+    # omega(a, u, v) = 2 atan2( a . (u x v), 1 + a.u + u.v + v.a )
+    n1 = (a0 * (u1 * e2 - u2 * e1) + a1 * (u2 * e0 - u0 * e2)
+          + a2 * (u0 * e1 - u1 * e0))
+    d1 = (1.0 + (a0 * u0 + a1 * u1 + a2 * u2)
+          + (u0 * e0 + u1 * e1 + u2 * e2)
+          + (e0 * a0 + e1 * a1 + e2 * a2))
+    n2 = (a0 * (e1 * c2 - e2 * c1) + a1 * (e2 * c0 - e0 * c2)
+          + a2 * (e0 * c1 - e1 * c0))
+    d2 = (1.0 + (a0 * e0 + a1 * e1 + a2 * e2)
+          + (e0 * c0 + e1 * c1 + e2 * c2)
+          + (c0 * a0 + c1 * a1 + c2 * a2))
+
+    off = yc[:, None] * M + xc[None, :]
+    ob = out_ptr + b * 4 * M * M
+    tl.store(ob + 0 * M * M + off, n1, mask=live)
+    tl.store(ob + 1 * M * M + off, d1, mask=live)
+    tl.store(ob + 2 * M * M + off, n2, mask=live)
+    tl.store(ob + 3 * M * M + off, d2, mask=live)
+
+
+def build_obs_triton(geo, BY=4, BX=None, num_warps=4, So=1.0):
+    """E, M and Q from two Triton kernels plus one tiny JAX reduction."""
+    import jax
+    import jax.numpy as jnp
+    import jax_triton as jt
+
+    N, LZ = int(geo["N"]), int(geo["L"])
+    BX = int(BX) if BX else 1 << (N - 1).bit_length()
+    BY = int(BY)
+    nst = -(-N // BY)
+    M = N - 1
+    nqy, nqx = -(-M // BY), -(-M // BX)
+    disk = jnp.asarray(geo["disk2d"].astype(np.float32))
+    d2d = geo["disk2d"]
+    qvalid = jnp.asarray((d2d[:-1, :-1] & d2d[:-1, 1:]
+                          & d2d[1:, :-1] & d2d[1:, 1:]))
+    n_act = float(geo["n_active"])
+    four_pi = 4.0 * float(np.pi)
+
+    def eM(sp, par, k1):
+        B = sp.shape[0]
+        part = jt.triton_call(
+            sp, k1, par, disk,
+            kernel=_eM_kernel,
+            out_shape=jax.ShapeDtypeStruct((B, LZ * nst, 4), jnp.float32),
+            grid=(B, LZ, nst),
+            num_warps=int(num_warps),
+            N=N, LZ=LZ, BY=BY, BX=BX, NSTRIP=nst, SO=float(So))
+        tot = jnp.sum(part, axis=1)
+        M = tot[:, 1:4] / n_act
+        return tot[:, 0], jnp.linalg.norm(M, axis=1), M[:, 2]
+
+    def topo_mid(sp):
+        B = sp.shape[0]
+        t = jt.triton_call(
+            sp,
+            kernel=_topo_kernel,
+            out_shape=jax.ShapeDtypeStruct((B, 4, M, M), jnp.float32),
+            grid=(B, nqy, nqx),
+            num_warps=int(num_warps),
+            N=N, LZ=LZ, ZMID=LZ // 2, BY=BY, BX=BX)
+        w = 2.0 * (jnp.arctan2(t[:, 0], t[:, 1])
+                   + jnp.arctan2(t[:, 2], t[:, 3]))
+        return jnp.sum(jnp.where(qvalid, w, 0.0), axis=(1, 2)) / four_pi
+
+    return dict(eM=eM, topo_mid=topo_mid, n_active=n_act,
+                meta=dict(BY=BY, BX=BX, n_strip=nst, q_grid=(nqy, nqx)))
+
+
+def build_anneal_full(geo, BY=4, num_warps=4, So=1.0):
+    """The anneal with BOTH the substep and the observables in Triton."""
+    import jax
+    import jax.numpy as jnp
+
+    sub = build(geo, BY=BY, num_warps=num_warps, So=So)
+    O = build_obs_triton(geo, BY=BY, num_warps=num_warps, So=So)
+    LZ = int(geo["L"])
+
+    def anneal(sp, seed, betas, par, k1, n_therm, n_meas):
+        n_therm, n_meas = int(n_therm), int(n_meas)
+
+        def pair(s, c, bt):
+            s = sub(s, k1, par, bt, c, 0)
+            return sub(s, k1, par, bt, c + 1, 1), c + 2
+
+        def per_T(carry, bt):
+            s, c = carry
+
+            def therm(_, v):
+                s, c = v
+                return pair(s, c, bt)
+            s, c = jax.lax.fori_loop(0, n_therm, therm, (s, c))
+
+            E_ref, M_ref, _ = O["eM"](s, par, k1)
+            z0 = jnp.zeros(s.shape[0], jnp.float32)
+
+            def meas(_, v):
+                s, c, sE, sE2, sM, sM2, sMz, sQ = v
+                s, c = pair(s, c, bt)
+                E, M, Mz = O["eM"](s, par, k1)
+                dE = E - E_ref
+                dM = M - M_ref
+                Q = O["topo_mid"](s)
+                return (s, c, sE + dE, sE2 + dE * dE, sM + dM,
+                        sM2 + dM * dM, sMz + Mz, sQ + Q)
+
+            s, c, sE, sE2, sM, sM2, sMz, sQ = jax.lax.fori_loop(
+                0, n_meas, meas, (s, c, z0, z0, z0, z0, z0, z0))
+            out = jnp.stack([sE / n_meas, sE2 / n_meas,
+                             sM / n_meas, sM2 / n_meas,
+                             sMz / n_meas, sQ / n_meas, E_ref, M_ref])
+            return (s, c), (out, s[0, 2, LZ // 2])
+
+        c0 = jnp.asarray(int(seed), jnp.int32) * jnp.int32(1000003)
+        (s, _), (all_obs, snaps) = jax.lax.scan(per_T, (sp, c0), betas)
+        return all_obs, s, snaps
+
+    anneal.meta = dict(sub.meta, **O["meta"])
     return anneal

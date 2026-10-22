@@ -117,8 +117,11 @@ respecto.</p>
   su grupo, porque paga ancho 4.</p>
   <p><b>Y una salida de fondo.</b> Las dos causas son <b>decisiones del
   compilador</b> sobre un bucle que el kernel de producción le entrega. Un
-  kernel escrito a mano que no entrega ese bucle no paga ninguna de las dos:
-  <b>−66.6 %</b> y el dentado de 39 % a 12 %. Está en la <b>sección 8</b>.</p>
+  kernel escrito a mano que no entrega ese bucle no paga ninguna de las dos, y
+  entonces los dos pasos de arriba dejan de hacer falta: la escalera completa
+  baja <b>−62.8 %</b> en una GPU y <b>−75.2 %</b> en cuatro, con el dentado de
+  39 % a 12 %. Contra el protocolo —la mejor opción sin tocar el kernel— gana
+  <b>−66.0 %</b>. Está en la <b>sección 8</b>.</p>
 </div>
 
 <h2>1 · El ancho de vector</h2>
@@ -818,10 +821,10 @@ desempaquetado falla, además de una constante de semilla que desborda
 
 <p>Un paso suelto no es la simulación. El bucle de medición recalcula la
 energía, la magnetización y la carga topológica <b>en cada barrido medido</b>,
-en JAX y en los dos brazos, así que la ganancia de la escalera tenía que ser
-menor que la del paso. Integrarlo exigió reescribir esos tres observables
-contra el nuevo diseño: transponer una vez por barrido medido copia la red
-tantas veces como la toca el propio paso.</p>
+así que la ganancia de la escalera tenía que ser menor que la del paso.
+Integrarlo exigió reescribir esos tres observables contra el nuevo diseño
+—transponer una vez por barrido medido copia la red tantas veces como la toca
+el propio paso— y después <b>llevarlos también a Triton</b>.</p>
 
 <p>Escalera de producción: <b>200 temperaturas</b> de 20.0 a 0.1 K,
 <b>10 000 + 5 000</b> barridos, <b>3 000 000</b> en total, 50 réplicas,
@@ -829,65 +832,122 @@ un H100, <b>compilación fuera del cronómetro</b>.</p>
 
 <div class="tw"><table>
   <thead><tr><th>motor</th><th>reloj</th><th>µs/réplica-barrido</th>
-    <th>ms/barrido</th></tr></thead>
+    <th>vs producción</th></tr></thead>
   <tbody>
-    <tr><td>producción</td><td class="n">6.05 min</td><td class="n">2.422</td>
-        <td class="n">0.121</td></tr>
-    <tr><td><b>anneal con Triton</b></td><td class="best"><b>2.46 min</b></td>
-        <td class="best"><b>0.985</b></td><td class="n">0.049</td></tr>
+    <tr><td>producción</td><td class="n">6.05 min</td><td class="n">2.420</td>
+        <td class="n">—</td></tr>
+    <tr><td>paso en Triton, observables en JAX</td><td class="n">2.52 min</td>
+        <td class="n">1.009</td><td class="n">−58.3 %</td></tr>
+    <tr><td><b>todo en Triton</b></td><td class="best"><b>2.25 min</b></td>
+        <td class="best"><b>0.901</b></td><td class="best"><b>−62.8 %</b></td></tr>
   </tbody>
 </table></div>
 
-<div class="key"><p><b>−59.3 %</b> en la escalera entera, contra −66.6 % del
-paso desnudo. Esos siete puntos de diferencia <b>son</b> el bucle de medición,
-que sigue en JAX en los dos brazos — es el techo de esta vía, y dice dónde
-estaría el siguiente kernel.</p></div>
+<p>Los kernels de observables son <b>exactos</b>: E a 1.2·10⁻⁷ relativo,
+<code>|M|</code> a 2.0·10⁻⁷, y Q a 8.4·10⁻⁸ absoluto sobre un Q ≈ 0.05.</p>
+
+<div class="note bad"><strong>Y aquí me equivoqué, conviene dejarlo escrito.</strong>
+Dije que los ocho puntos entre el paso (−66.6 %) y la escalera eran el bucle de
+medición. Los kernels de observables recuperan <b>4.5</b> de esos ocho, no los
+ocho. El resto está en la aritmética de los ocho acumuladores, en el
+<code>scan</code> sobre 200 temperaturas, y en que la escalera corre con lote 50
+mientras el banco del paso corría entre 64 y 128.
+<br><br>Peor: una primera prueba con <b>4 temperaturas</b> dijo que los
+observables recuperaban <b>+0.8</b> puntos, y con ese número habría descartado
+el kernel por inútil. La escalera real dice +4.5. <b>Una ventana demasiado
+corta no resuelve el efecto que quieres medir</b> — el mismo error que el piso
+de resolución de la sección 4.3.</div>
 
 <div class="note"><strong>No contradice los 13.96 min de la sección 6.</strong>
 Aquella medición fue <b>4 GPU y 400 cadenas</b> a 2.792 µs/réplica-barrido con
 la compilación <b>dentro</b> del cronómetro; esta es <b>1 GPU y 50 réplicas</b>
-a 2.422 con ella fuera. Las tasas concuerdan; los totales difieren porque el
-trabajo difiere. Y el factor <b>no se extrapola</b> a cuatro GPU sin medirlo:
-el ancho depende del lote <b>por dispositivo</b>.</div>
+a 2.420 con ella fuera. Las tasas concuerdan; los totales difieren porque el
+trabajo difiere.</div>
 
-<h3>8.6 · El susto de la validación, y el control que lo resolvió</h3>
+<h3>8.6 · El susto de la validación, su causa y su arreglo</h3>
 
-<p>La primera comprobación de la escalera marcó <b>4.94 σ</b> en una
-temperatura. Eso es o un sesgo real del kernel o una barra de error demasiado
-pequeña. La forma de separarlo no es discutirlo: es correr <b>producción contra
-sí misma</b> con otra semilla y medirla con la misma vara. Producción no puede
-estar en desacuerdo consigo misma sobre la física, así que lo que marque ese
-control <b>es el ruido de la vara</b>.</p>
+<p>La primera comprobación marcó <b>4.94 σ</b> en una temperatura. Eso es o un
+sesgo real del kernel o una barra de error demasiado pequeña, y la forma de
+separarlo no es discutirlo: es correr <b>producción contra sí misma</b> con otra
+semilla y medirla con la misma vara. Producción no puede estar en desacuerdo
+consigo misma sobre la física, así que lo que marque ese control <b>es el ruido
+de la vara</b>.</p>
+
+<p>El control dejó el problema acotado a la ventana corta, y de ahí salió la
+causa. Midiendo la <b>tasa de aceptación</b>, el kernel aceptaba ~1.1 % menos
+que producción, y las <b>cinco</b> temperaturas caían del mismo lado. Un
+diagnóstico a β→0 —donde toda propuesta se acepta, así que la salida <i>es</i>
+la propuesta— descartó la propuesta: media por componente dentro de 1 σ de
+cero y <code>|s| = 1.000000</code>. Quedaba el uniforme.</p>
+
+<div class="key"><p><b>La causa era mía.</b> Sorteaba los tres gaussianos y el
+uniforme con <b>claves Philox adyacentes</b> (<code>sd+0</code> … <code>sd+3</code>)
+sobre un <b>contador compartido</b>. Eso le da al uniforme una entrada común
+con la dirección propuesta, así que correlaciona con <code>dE</code> y sesga el
+test de Metropolis a la baja. El patrón correcto de un generador por contador
+es el inverso: <b>una clave, contadores distintos</b>
+(<code>off·4 + j</code>).</p></div>
 
 <div class="tw"><table>
   <thead><tr><th>ventana</th><th>control prod/prod<br>
     <span style="opacity:.7">media / máximo</span></th>
-    <th>prueba prod/halo<br><span style="opacity:.7">media / máximo</span></th>
-    <th></th></tr></thead>
+    <th>halo <b>antes</b></th><th>halo <b>después</b></th></tr></thead>
   <tbody>
     <tr><td class="n">600 + 300</td><td class="n">0.87 / 2.53</td>
-        <td class="bad">1.45 / 4.94</td><td class="bad">el halo se desvía
-        más</td></tr>
-    <tr><td class="n">3 000 + 1 500</td><td class="n">1.07 / 3.13</td>
-        <td class="n">1.10 / 2.91</td><td class="best">igual</td></tr>
-    <tr><td class="n"><b>10 000 + 5 000</b><br>
-        <span style="opacity:.7">producción</span></td>
-        <td class="n">0.86 / 1.96</td><td class="n">0.91 / 3.29</td>
-        <td class="best">igual en la media</td></tr>
+        <td class="bad">1.45 / 4.94</td>
+        <td class="best"><b>0.99 / 1.90</b></td></tr>
+    <tr><td class="n">10 000 + 5 000</td><td class="n">0.86 / 1.96</td>
+        <td class="n">0.91 / 3.29</td>
+        <td class="best">1.02 / 3.29</td></tr>
   </tbody>
 </table></div>
 
-<div class="key"><p><b>En la ventana de producción el motor nuevo está sobre el
-propio ruido de semilla de producción</b> (0.91 σ contra 0.86), y
-<code>|M|</code> coincide a <b>0.0001</b>, lo mismo que el control. Los 4.94 σ
-eran la ventana de 600+300, no el kernel.</p></div>
+<div class="key"><p><b>El límite quedó cerrado en las dos ventanas.</b> Tras el
+arreglo el motor está sobre el ruido de semilla de producción incluso en
+600+300, donde su máximo (1.90) cae <b>por debajo</b> del propio control
+(2.53), y <code>|M|</code> coincide a 0.0005 y 0.0001 respectivamente — los
+mismos valores que el control. Las razones de aceptación pasaron de caer las
+cinco por debajo de 1 a repartirse a los dos lados
+(0.996, 0.998, 0.994, 1.029, 0.997), todas dentro de 1 σ.</p></div>
 
-<div class="note bad"><strong>Y un límite que hay que decir.</strong> En
-600+300 el halo <b>sí</b> se desvía más que el control (1.45 contra 0.87 de
-media). Así que este motor queda validado para <b>corridas de longitud de
-equilibrio</b> y <b>no</b> todavía para corridas cortas fuera de equilibrio.
-Quien lo use para un barrido exploratorio corto necesita repetir este control
-en esa ventana.</div>
+<div class="note"><strong>Una enmienda sobre la estadística.</strong> Al
+principio afirmé que el déficit de 1.1 % era «2 a 6 σ». Está mal: el error
+relativo de una razón es √2·√((1−p)/(N·p)) y depende fuerte de la propia tasa
+de aceptación — 0.47 % a T = 20 pero <b>3.4 %</b> a T = 1. Las desviaciones
+individuales eran de 1.6 σ hacia abajo, no de 6. Lo que de verdad señalaba algo
+no era la magnitud sino que <b>las cinco cayeran del mismo lado</b> (prueba de
+signos, p ≈ 3 %), y lo que lo confirmó fue el control de ventana corta.</div>
+
+<h3>8.7 · Cuatro GPU: el kernel contra el protocolo</h3>
+
+<p>El factor de una GPU <b>no se extrapola</b> a cuatro —el ancho depende del
+lote por dispositivo, y este estudio ya cometió ese error una vez— así que los
+tres brazos se corrieron en la escalera real de cuatro dispositivos:
+400 cadenas, 100 por GPU, 60 temperaturas × 10 000 + 5 000.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>brazo</th><th>reloj</th><th>µs/réplica-barrido</th>
+    <th>vs A</th></tr></thead>
+  <tbody>
+    <tr><td><b>A</b> producción, 1 ola de 100</td><td class="n">4.73 min</td>
+        <td class="n">0.788</td><td class="n">—</td></tr>
+    <tr><td><b>B</b> producción, protocolo 53 + 47</td>
+        <td class="n">3.45 min</td><td class="n">0.576</td>
+        <td class="n">−27.0 %</td></tr>
+    <tr><td><b>C</b> todo en Triton, 1 ola de 100</td>
+        <td class="best"><b>1.17 min</b></td><td class="best"><b>0.195</b></td>
+        <td class="best"><b>−75.2 %</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>El protocolo se sostiene en la escalera completa:</b> −27.0 % con
+  observables incluidos, contra el −26.8 % que había medido solo con el paso.
+  Es la mejor cosa que puedes hacer <b>sin tocar el kernel</b>.</p>
+  <p><b>Y el kernel le gana a esa barra por −66.0 %</b>, con <b>una sola ola</b>
+  — porque no tiene que esquivar nada: no paga el ancho. Compara las dos vías
+  en su forma final: 3.45 min contra <b>1.17 min</b>.</p>
+</div>
 
 <h2>9 · La convención de barridos y réplicas</h2>
 

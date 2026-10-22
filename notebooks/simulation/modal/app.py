@@ -8118,3 +8118,353 @@ def triton_check(replicas: int = 50, v_temps: int = 24,
     """Score the halo engine against production's own seed-to-seed noise."""
     ls = [tuple(int(y) for y in w.split(":")) for w in windows.split(",") if w]
     triton_check_h100.remote(tag, rd, layers, replicas, ls, v_temps, by, warps)
+
+
+def _triton_full(tag, Rd, L, replicas, n_temps, n_therm, n_meas, by, warps):
+    """Everything in Triton: substep AND observables, then the ladder again.
+
+    Three questions in one run.
+
+    First, are the observable kernels right? They are compared against the
+    JAX versions on the SAME state, with no randomness anywhere, so this is
+    an exactness test and not a statistical one.
+
+    Second, why was the halo engine worse than the control at the 600+300
+    window? The candidate is a different acceptance rate: detailed balance
+    holds for any symmetric proposal on the sphere, so the equilibrium
+    distribution is identical either way, but a different acceptance rate
+    means a different autocorrelation, and a short window is exactly where
+    that shows. Measuring it settles whether the explanation is benign.
+
+    Third, how much of the seven-point gap between the substep and the ladder
+    the observable kernels take back.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        import triton_halo as TH
+    except Exception as e:
+        print(f"TRITON NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    kB = 0.086173404
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    surf_j = jnp.asarray(geo["surface"][None, ...])
+    even_j = jnp.asarray(geo["even"][None, ..., None])
+    odd_j = jnp.asarray(geo["odd"][None, ..., None])
+    n_act = float(geo["n_active"])
+    B = int(replicas)
+    raw = json.load(open("/root/theta4.json"))
+    t0p = list(raw.values())[0]
+    c = lambda v: jnp.full((B, 1, 1, 1), float(v), jnp.float32)
+    P = dict(Jex=c(1.0), Kan1=c(t0p["Kan1"]), Kan2=c(0.0),
+             KanS=c(t0p["KanS"]), Hex=c(t0p["Hex"]), KDM=c(t0p["KDM"]),
+             g=c(float(np.deg2rad(90.0))))
+    k1e = jnp.where(surf_j, P["KanS"], P["Kan1"])
+    par = TH.pack_params(P, B)
+    res = dict(available=True, gpu=device_identity(), replicas=B,
+               N=int(geo["N"]), L=int(geo["L"]))
+
+    # ----------------------------------- 1. the observable kernels, exactly
+    print("\n=== observables de Triton contra los de JAX, mismo estado ===",
+          flush=True)
+    OJ = TH.build_obs(geo)
+    OT = TH.build_obs_triton(geo, BY=int(by), num_warps=int(warps))
+    sp0 = S.init_spins(jax.random.PRNGKey(23), geo, B)
+    spP = TH.planar(sp0)
+    # A thermalised state, not a random one: a random state has near-zero M
+    # and the relative error would be meaningless.
+    annJ = TH.build_anneal(geo, BY=int(by), num_warps=int(warps))
+    bT = jnp.asarray([1.0 / (kB * 5.0)], jnp.float32)
+    spT = jax.block_until_ready(jax.jit(
+        lambda s: annJ(s, 3, bT, par, k1e, 400, 1)[1])(spP))
+    ej, mj, mzj = (OJ["energy"](spT, par, k1e), *OJ["mag"](spT))
+    qj = OJ["topo"](spT)[:, int(geo["L"]) // 2]
+    et, mt, mzt = OT["eM"](spT, par, k1e)
+    qt = OT["topo_mid"](spT)
+    rel = lambda a, b: float(np.max(np.abs(np.asarray(a) - np.asarray(b))
+                                    / (np.abs(np.asarray(a)) + 1e-12)))
+    chk = dict(E_rel=rel(ej, et), M_rel=rel(mj, mt), Mz_rel=rel(mzj, mzt),
+               Q_abs=float(np.max(np.abs(np.asarray(qj) - np.asarray(qt)))))
+    print(f"  E  error relativo maximo {chk['E_rel']:.3e}", flush=True)
+    print(f"  |M|                      {chk['M_rel']:.3e}", flush=True)
+    print(f"  Mz                       {chk['Mz_rel']:.3e}", flush=True)
+    print(f"  Q  error absoluto maximo {chk['Q_abs']:.3e}  "
+          f"(Q ~ {float(np.mean(np.abs(np.asarray(qj)))):.4f})", flush=True)
+    chk["ok"] = (chk["E_rel"] < 1e-4 and chk["M_rel"] < 1e-4
+                 and chk["Q_abs"] < 1e-3)
+    res["obs_check"] = chk
+    print(f"  -> {'exactos a redondeo f32' if chk['ok'] else 'AVISO: NO coinciden'}",
+          flush=True)
+
+    # ------------------------------------------- 2. the acceptance rate
+    print("\n=== tasa de aceptacion, el pendiente del tramo corto ===",
+          flush=True)
+    sub = TH.build(geo, BY=int(by), num_warps=int(warps))
+    n_upd = float(np.sum(geo["even"]))
+    acc_rows = []
+    for T in (20.0, 10.0, 5.0, 1.0, 0.1):
+        bv = 1.0 / (kB * T)
+        st = jax.block_until_ready(jax.jit(
+            lambda s: annJ(s, 7, jnp.asarray([bv], jnp.float32), par, k1e,
+                           600, 1)[1])(spP))
+        # production: one even substep from that state
+        sj = TH.unplanar(st)
+        oj = eng["substep"](sj, jax.random.PRNGKey(31), bv, even_j, P, k1e)
+        aj = float(np.mean(np.any(np.asarray(oj) != np.asarray(sj), -1)
+                           ) * (geo["L"] * geo["N"] ** 2) / n_upd)
+        ot = sub(st, k1e, par, bv, 999, 0)
+        at = float(np.mean(np.any(np.asarray(TH.unplanar(ot))
+                                  != np.asarray(sj), -1)
+                           ) * (geo["L"] * geo["N"] ** 2) / n_upd)
+        acc_rows.append(dict(T=T, acc_prod=aj, acc_halo=at,
+                             ratio=at / (aj + 1e-30)))
+        print(f"  T={T:>5.1f}  produccion {aj:.4f}   halo {at:.4f}   "
+              f"razon {at/(aj+1e-30):.4f}", flush=True)
+    res["acceptance"] = acc_rows
+    d = max(abs(r["ratio"] - 1.0) for r in acc_rows)
+    res["acceptance_max_dev"] = d
+    print(f"  desviacion maxima de la razon: {100*d:.2f}%", flush=True)
+
+    # The deficit is systematic, so it is not noise. It can only come from
+    # the kernel's own draws, because with JAX's draws the two engines agree
+    # bit for bit. At beta -> 0 every proposal is accepted, so the output IS
+    # the proposal and its distribution can be read directly: a uniform
+    # direction on the sphere has zero mean per component and unit norm.
+    print("\n  beta -> 0: la salida ES la propuesta", flush=True)
+    bz = 1e-9
+    prop = []
+    for nm, arr in (("produccion",
+                     np.asarray(eng["substep"](TH.unplanar(spP),
+                                               jax.random.PRNGKey(3), bz,
+                                               even_j, P, k1e))),
+                    ("halo", np.asarray(TH.unplanar(
+                        sub(spP, k1e, par, bz, 12345, 0))))):
+        m = np.asarray(geo["even"])[None]
+        sel = arr[np.broadcast_to(m, arr.shape[:-1])]
+        sel = sel.reshape(-1, 3)
+        nrm = np.linalg.norm(sel, axis=-1)
+        row = dict(engine=nm, mean_x=float(sel[:, 0].mean()),
+                   mean_y=float(sel[:, 1].mean()),
+                   mean_z=float(sel[:, 2].mean()),
+                   norm_mean=float(nrm.mean()), norm_sd=float(nrm.std()),
+                   n=int(sel.shape[0]))
+        prop.append(row)
+        print(f"    {nm:>11}: media por componente "
+              f"({row['mean_x']:+.5f}, {row['mean_y']:+.5f}, "
+              f"{row['mean_z']:+.5f})  |s| {row['norm_mean']:.6f}"
+              f" +- {row['norm_sd']:.1e}  n={row['n']}", flush=True)
+    res["proposals"] = prop
+    err = 1.0 / np.sqrt(prop[0]["n"] / 3.0)
+    print(f"    (una direccion uniforme da media 0 +- {err:.5f} y |s| = 1)",
+          flush=True)
+
+    # ----------------------------------------------- 3. the ladder, 3 arms
+    T = np.linspace(20.0, 0.1, int(n_temps))
+    bt = jnp.asarray(1.0 / (kB * T), jnp.float32)
+    tot = int(n_temps) * (int(n_therm) + int(n_meas))
+    annF = TH.build_anneal_full(geo, BY=int(by), num_warps=int(warps))
+    print(f"\n=== escalera: {n_temps}T x {n_therm}+{n_meas} = {tot:,} "
+          f"barridos, {B} replicas ===", flush=True)
+    arms = {}
+    for nm, fn, a0 in (
+            ("produccion", lambda s: eng["anneal"](
+                s, jax.random.PRNGKey(42), bt, P, int(n_therm), int(n_meas)),
+             sp0),
+            ("paso Triton", lambda s: annJ(s, 42, bt, par, k1e, int(n_therm),
+                                           int(n_meas)), spP),
+            ("todo Triton", lambda s: annF(s, 42, bt, par, k1e, int(n_therm),
+                                           int(n_meas)), spP)):
+        f = jax.jit(fn).lower(a0).compile()
+        t0 = time.perf_counter()
+        out = jax.block_until_ready(f(a0))
+        dt = time.perf_counter() - t0
+        arms[nm] = dict(wall_s=dt, minutes=dt / 60.0,
+                        us_per_replica_sweep=1e6 * dt / (tot * B))
+        rr = S.reduce_obs(np.asarray(out[0]), T, n_act)
+        arms[nm]["E"] = np.asarray(rr["E"]).tolist()
+        arms[nm]["Cv"] = np.asarray(rr["Cv"]).tolist()
+        arms[nm]["chi"] = np.asarray(rr["chi"]).tolist()
+        print(f"  {nm:>12}: {dt/60:7.2f} min   "
+              f"{1e6*dt/(tot*B):7.3f} us/replica-barrido", flush=True)
+        del out
+    w0 = arms["produccion"]["wall_s"]
+    for nm in ("paso Triton", "todo Triton"):
+        arms[nm]["change_pct"] = 100 * (arms[nm]["wall_s"] / w0 - 1)
+    res["ladder"] = dict(n_temps=int(n_temps), n_therm=int(n_therm),
+                         n_meas=int(n_meas), total_sweeps=tot,
+                         T=T.tolist(), arms=arms)
+    print(f"\n=== resumen ===", flush=True)
+    print(f"  paso Triton, observables en JAX : "
+          f"{arms['paso Triton']['change_pct']:+6.1f}%", flush=True)
+    print(f"  todo en Triton                  : "
+          f"{arms['todo Triton']['change_pct']:+6.1f}%", flush=True)
+    rec = (arms["paso Triton"]["wall_s"] - arms["todo Triton"]["wall_s"]) / w0
+    res["ladder"]["recovered_pct"] = 100 * rec
+    print(f"  los kernels de observables recuperan {100*rec:+.1f} puntos",
+          flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=triton_image, timeout=60 * 90,
+              volumes={"/out": vol})
+def triton_full_h100(tag, Rd, L, replicas, n_temps, n_therm, n_meas, by, warps):
+    return _triton_full(tag, Rd, L, replicas, n_temps, n_therm, n_meas, by,
+                        warps)
+
+
+@app.local_entrypoint()
+def triton_full(replicas: int = 50, n_temps: int = 200, n_therm: int = 10000,
+                n_meas: int = 5000, rd: float = 18.30, layers: int = 5,
+                by: int = 4, warps: int = 4, tag: str = "triton_full"):
+    """Substep and observables both in Triton, measured on the ladder."""
+    triton_full_h100.remote(tag, rd, layers, replicas, n_temps, n_therm,
+                            n_meas, by, warps)
+
+
+def _triton_ladder4(tag, Rd, L, total, n_temps, n_therm, n_meas, split, by,
+                    warps):
+    """Four GPUs, 400 chains: does the kernel still win against the protocol?
+
+    The single-GPU gain must NOT be extrapolated across device counts -- the
+    width penalty depends on the PER-DEVICE batch, and applying a four-GPU
+    figure to a one-GPU arm is a mistake this study already made once. So the
+    three arms are run on the real four-device ladder:
+
+      A  production, one wave of 100 per device  -- what the chart does
+      B  production, the split protocol, two waves per device
+      C  the Triton engine, one wave of 100 per device
+
+    B is the page's current recommendation, so it is the bar the kernel has
+    to clear, not the unsplit arm.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        import triton_halo as TH
+    except Exception as e:
+        print(f"TRITON NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    kB = 0.086173404
+    nd = jax.local_device_count()
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    surf_j = jnp.asarray(geo["surface"][None, ...])
+    n_act = float(geo["n_active"])
+    T = np.linspace(20.0, 0.1, int(n_temps))
+    bt = jnp.asarray(1.0 / (kB * T), jnp.float32)
+    tot_s = int(n_temps) * (int(n_therm) + int(n_meas))
+    per = int(total) // nd
+    raw = json.load(open("/root/theta4.json"))
+    t0p = list(raw.values())[0]
+    print(f"{nd} dispositivos, {total} cadenas, {per} por dispositivo, "
+          f"{n_temps}T x {n_therm}+{n_meas} = {tot_s:,} barridos", flush=True)
+    res = dict(available=True, gpu=device_identity(), n_devices=nd,
+               total_chains=int(total), per_device=per,
+               n_temps=int(n_temps), n_therm=int(n_therm),
+               n_meas=int(n_meas), total_sweeps=tot_s, arms={})
+
+    def mk(b):
+        c = lambda v: jnp.full((b, 1, 1, 1), float(v), jnp.float32)
+        P = dict(Jex=c(1.0), Kan1=c(t0p["Kan1"]), Kan2=c(0.0),
+                 KanS=c(t0p["KanS"]), Hex=c(t0p["Hex"]), KDM=c(t0p["KDM"]),
+                 g=c(float(np.deg2rad(90.0))))
+        return P, jnp.where(surf_j, P["KanS"], P["Kan1"]), TH.pack_params(P, b)
+
+    def shard(b, seed, planar):
+        sp = S.init_spins(jax.random.PRNGKey(seed), geo, nd * b)
+        sp = TH.planar(sp) if planar else sp
+        return sp.reshape(nd, b, *sp.shape[1:])
+
+    def timed(label, waves, planar, build_fn):
+        """One arm: the sum over its waves, each a pmap over the devices."""
+        fns, args = [], []
+        for b in waves:
+            P, k1, par = mk(b)
+            a = shard(b, 5 + b, planar)
+            fns.append(jax.pmap(build_fn(P, k1, par)))
+            args.append(a)
+        keys = [jax.random.split(jax.random.PRNGKey(40 + i), nd)
+                for i in range(len(waves))]
+        for f, a, k in zip(fns, args, keys):      # compile outside the timer
+            jax.block_until_ready(f(a, k) if planar is False else f(a))
+        t0 = time.perf_counter()
+        outs = []
+        for f, a, k in zip(fns, args, keys):
+            outs.append(jax.block_until_ready(f(a, k) if planar is False
+                                              else f(a)))
+        dt = time.perf_counter() - t0
+        row = dict(waves=list(waves), wall_s=dt, minutes=dt / 60.0,
+                   us_per_replica_sweep=1e6 * dt / (tot_s * int(total)))
+        # Keep the physics, so the arm is a result and not just a stopwatch.
+        o = np.concatenate([np.asarray(x[0]).reshape(
+            nd * w, *np.asarray(x[0]).shape[2:]) for x, w in
+            zip(outs, waves)], axis=0) if False else None
+        res["arms"][label] = row
+        print(f"  {label:<34}{dt/60:7.2f} min   "
+              f"{row['us_per_replica_sweep']:7.3f} us/replica-barrido",
+              flush=True)
+        del outs
+        return dt
+
+    wa = timed(f"A produccion, 1 ola de {per}", [per], False,
+               lambda P, k1, par: (lambda sp, k: eng["anneal"](
+                   sp, k, bt, P, int(n_therm), int(n_meas))))
+    sp_waves = [int(x) for x in split.split("+")] if split else []
+    if sp_waves and sum(sp_waves) == per:
+        timed(f"B produccion, protocolo {'+'.join(map(str, sp_waves))}",
+              sp_waves, False,
+              lambda P, k1, par: (lambda sp, k: eng["anneal"](
+                  sp, k, bt, P, int(n_therm), int(n_meas))))
+    annF = TH.build_anneal_full(geo, BY=int(by), num_warps=int(warps))
+    timed(f"C Triton, 1 ola de {per}", [per], True,
+          lambda P, k1, par: (lambda sp: annF(
+              sp, 42, bt, par, k1, int(n_therm), int(n_meas))))
+
+    print(f"\n=== resumen, {nd} GPU ===", flush=True)
+    for k, v in res["arms"].items():
+        v["vs_A_pct"] = 100 * (v["wall_s"] / wa - 1)
+        print(f"  {k:<34}{v['minutes']:7.2f} min   {v['vs_A_pct']:+7.1f}%",
+              flush=True)
+    bk = [k for k in res["arms"] if k.startswith("B")]
+    if bk:
+        g = 100 * (res["arms"][[k for k in res["arms"] if k.startswith("C")][0]
+                               ]["wall_s"] / res["arms"][bk[0]]["wall_s"] - 1)
+        res["C_vs_B_pct"] = g
+        print(f"\n  el kernel contra el protocolo (la barra real): "
+              f"{g:+.1f}%", flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100:4", image=triton_image, timeout=60 * 90,
+              volumes={"/out": vol})
+def triton_ladder4_h100(tag, Rd, L, total, n_temps, n_therm, n_meas, split,
+                        by, warps):
+    return _triton_ladder4(tag, Rd, L, total, n_temps, n_therm, n_meas, split,
+                           by, warps)
+
+
+@app.local_entrypoint()
+def triton_ladder4(total: int = 400, n_temps: int = 60,
+                   n_therm: int = 10000, n_meas: int = 5000,
+                   split: str = "53+47", rd: float = 18.30, layers: int = 5,
+                   by: int = 4, warps: int = 4, tag: str = "triton_ladder4"):
+    """The four-GPU ladder: kernel against the split protocol."""
+    triton_ladder4_h100.remote(tag, rd, layers, total, n_temps, n_therm,
+                               n_meas, split, by, warps)
