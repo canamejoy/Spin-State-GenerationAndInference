@@ -7841,3 +7841,165 @@ def triton_halo(batches: str = "64,65,75,100,101,128", repeats: int = 7,
     triton_halo_h100.remote(
         [int(x) for x in batches.split(",") if x], repeats, tag, rd, layers,
         steps, [int(x) for x in tiles.split(",") if x], warps)
+
+
+def _triton_ladder(tag, Rd, L, replicas, n_temps, n_therm, n_meas,
+                   v_temps, v_therm, v_meas, by, warps):
+    """The Triton substep inside the full anneal, then the production ladder.
+
+    The substep benchmark left the measurement loop out, and that loop is
+    where the ladder actually lives: it recomputes the energy, the
+    magnetisation and the topological charge on every measured sweep, in JAX,
+    in both arms. So the ladder gain has to be smaller than the substep gain,
+    and the only honest way to know by how much is to run the ladder.
+
+    Validation first, on a short ladder: the two engines draw from different
+    random streams, so the test is that the reduced observables agree within
+    the error bars the run itself reports, not that they match bit for bit.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        import triton, jax_triton as jt
+        import triton_halo as TH
+    except Exception as e:
+        print(f"TRITON CRUDO NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+    print(f"  jax {jax.__version__}  triton {triton.__version__}  "
+          f"jax_triton {getattr(jt, '__version__', '?')}", flush=True)
+
+    kB = 0.086173404
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    surf_j = jnp.asarray(geo["surface"][None, ...])
+    even_j = jnp.asarray(geo["even"][None, ..., None])
+    odd_j = jnp.asarray(geo["odd"][None, ..., None])
+    n_act = float(geo["n_active"])
+    B = int(replicas)
+    raw = json.load(open("/root/theta4.json"))
+    t0p = list(raw.values())[0]
+    c = lambda v: jnp.full((B, 1, 1, 1), float(v), jnp.float32)
+    P = dict(Jex=c(1.0), Kan1=c(t0p["Kan1"]), Kan2=c(0.0),
+             KanS=c(t0p["KanS"]), Hex=c(t0p["Hex"]), KDM=c(t0p["KDM"]),
+             g=c(float(np.deg2rad(90.0))))
+    k1e = jnp.where(surf_j, P["KanS"], P["Kan1"])
+    par = TH.pack_params(P, B)
+    ann_t = TH.build_anneal(geo, BY=int(by), num_warps=int(warps))
+    res = dict(available=True, gpu=device_identity(), replicas=B,
+               N=int(geo["N"]), L=int(geo["L"]), Rd=float(Rd),
+               tile=ann_t.meta, n_active=n_act)
+    print(f"Rd={Rd} L={geo['L']} N={geo['N']}  {B} replicas  "
+          f"bloque BY={by} warps={warps}", flush=True)
+
+    # ------------------------------------------------------ validation
+    print(f"\n=== validacion: escalera corta {v_temps}T x "
+          f"{v_therm}+{v_meas} ===", flush=True)
+    Tv = np.linspace(20.0, 0.1, int(v_temps))
+    bv = jnp.asarray(1.0 / (kB * Tv), jnp.float32)
+    sp0 = S.init_spins(jax.random.PRNGKey(19), geo, B)
+    oj = jax.block_until_ready(jax.jit(
+        lambda s: eng["anneal"](s, jax.random.PRNGKey(5), bv, P,
+                                int(v_therm), int(v_meas)))(sp0))[0]
+    ot = jax.block_until_ready(jax.jit(
+        lambda s: ann_t(s, 5, bv, par, k1e, int(v_therm), int(v_meas))
+    )(TH.planar(sp0)))[0]
+    rj = S.reduce_obs(np.asarray(oj), Tv, n_act)
+    rt = S.reduce_obs(np.asarray(ot), Tv, n_act)
+    err = np.sqrt(np.asarray(rj["E_sd"]) ** 2 + 1e-12) / np.sqrt(B)
+    sig = np.abs(np.asarray(rj["E"]) - np.asarray(rt["E"])) / (err + 1e-30)
+    dM = np.max(np.abs(np.asarray(rj["M"]) - np.asarray(rt["M"])))
+    print(f"  {'T':>6}{'E/sitio prod':>14}{'E/sitio halo':>14}{'sigma':>8}"
+          f"{'|M| prod':>10}{'|M| halo':>10}", flush=True)
+    for i in range(0, int(v_temps), max(1, int(v_temps) // 8)):
+        print(f"  {Tv[i]:>6.2f}{rj['E'][i]:>14.5f}{rt['E'][i]:>14.5f}"
+              f"{sig[i]:>8.2f}{rj['M'][i]:>10.4f}{rt['M'][i]:>10.4f}",
+              flush=True)
+    res["validation"] = dict(
+        n_temps=int(v_temps), n_therm=int(v_therm), n_meas=int(v_meas),
+        T=Tv.tolist(), E_prod=np.asarray(rj["E"]).tolist(),
+        E_halo=np.asarray(rt["E"]).tolist(),
+        M_prod=np.asarray(rj["M"]).tolist(),
+        M_halo=np.asarray(rt["M"]).tolist(),
+        Cv_prod=np.asarray(rj["Cv"]).tolist(),
+        Cv_halo=np.asarray(rt["Cv"]).tolist(),
+        chi_prod=np.asarray(rj["chi"]).tolist(),
+        chi_halo=np.asarray(rt["chi"]).tolist(),
+        E_sigma_max=float(np.max(sig)), E_sigma_mean=float(np.mean(sig)),
+        M_max_abs_diff=float(dM))
+    ok = float(np.max(sig)) < 4.0 and dM < 0.05
+    res["validation"]["ok"] = bool(ok)
+    print(f"  E: desvio maximo {np.max(sig):.2f} sigma, medio "
+          f"{np.mean(sig):.2f} sigma   |M|: max |dif| {dM:.4f}", flush=True)
+    print(f"  -> {'las dos escaleras coinciden' if ok else 'AVISO: NO coinciden'}",
+          flush=True)
+
+    # --------------------------------------------------- the real ladder
+    T = np.linspace(20.0, 0.1, int(n_temps))
+    bt = jnp.asarray(1.0 / (kB * T), jnp.float32)
+    tot = int(n_temps) * (int(n_therm) + int(n_meas))
+    print(f"\n=== escalera de produccion: {n_temps}T x {n_therm}+{n_meas} "
+          f"= {tot:,} barridos, {B} replicas ===", flush=True)
+    arms = {}
+    for nm, fn, a0 in (
+            ("produccion", lambda s: eng["anneal"](
+                s, jax.random.PRNGKey(42), bt, P, int(n_therm), int(n_meas)),
+             sp0),
+            ("halo", lambda s: ann_t(s, 42, bt, par, k1e, int(n_therm),
+                                     int(n_meas)), TH.planar(sp0))):
+        t0 = time.perf_counter()
+        f = jax.jit(fn).lower(a0).compile()
+        tc = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        out = jax.block_until_ready(f(a0))
+        dt = time.perf_counter() - t0
+        arms[nm] = dict(compile_s=tc, wall_s=dt, minutes=dt / 60.0,
+                        us_per_replica_sweep=1e6 * dt / (tot * B),
+                        ms_per_sweep=1e3 * dt / tot)
+        print(f"  {nm:>11}: {dt/60:7.2f} min   "
+              f"{1e6*dt/(tot*B):7.3f} us/replica-barrido   "
+              f"{1e3*dt/tot:7.3f} ms/barrido   (compilar {tc:.1f} s)",
+              flush=True)
+        # Keep the reduced curve, so the ladder is a result and not only a
+        # stopwatch reading.
+        rr = S.reduce_obs(np.asarray(out[0]), T, n_act)
+        arms[nm]["E"] = np.asarray(rr["E"]).tolist()
+        arms[nm]["Cv"] = np.asarray(rr["Cv"]).tolist()
+        arms[nm]["chi"] = np.asarray(rr["chi"]).tolist()
+        arms[nm]["M"] = np.asarray(rr["M"]).tolist()
+        del out
+    g = 100 * (arms["halo"]["wall_s"] / arms["produccion"]["wall_s"] - 1)
+    res["ladder"] = dict(n_temps=int(n_temps), n_therm=int(n_therm),
+                         n_meas=int(n_meas), total_sweeps=tot, T=T.tolist(),
+                         arms=arms, change_pct=g)
+    print(f"\n=== resumen ===", flush=True)
+    print(f"  escalera completa: {arms['produccion']['minutes']:.2f} min -> "
+          f"{arms['halo']['minutes']:.2f} min   {g:+.1f}%", flush=True)
+    print(f"  (el paso suelto daba -66.6%; la diferencia es el bucle de "
+          f"medicion, que sigue en JAX en los dos brazos)", flush=True)
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=triton_image, timeout=60 * 90,
+              volumes={"/out": vol})
+def triton_ladder_h100(tag, Rd, L, replicas, n_temps, n_therm, n_meas,
+                       v_temps, v_therm, v_meas, by, warps):
+    return _triton_ladder(tag, Rd, L, replicas, n_temps, n_therm, n_meas,
+                          v_temps, v_therm, v_meas, by, warps)
+
+
+@app.local_entrypoint()
+def triton_ladder(replicas: int = 50, n_temps: int = 200,
+                  n_therm: int = 10000, n_meas: int = 5000,
+                  v_temps: int = 24, v_therm: int = 600, v_meas: int = 300,
+                  rd: float = 18.30, layers: int = 5, by: int = 4,
+                  warps: int = 4, tag: str = "triton_ladder"):
+    """The Triton substep inside the full anneal, on the production ladder."""
+    triton_ladder_h100.remote(tag, rd, layers, replicas, n_temps, n_therm,
+                              n_meas, v_temps, v_therm, v_meas, by, warps)

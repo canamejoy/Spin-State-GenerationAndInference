@@ -372,3 +372,135 @@ def sweeps_extrng(substep, k1, par, beta, n, shape, base_step=0, So=1.0):
         return jax.lax.fori_loop(0, int(n), body,
                                  (sp, jax.random.PRNGKey(base_step)))[0]
     return run
+
+
+# ------------------------------------------- observables, component-planar
+#
+# These exist because of where the measurement loop spends its time. The
+# kernel works on `(B, 3, L, N, N)` while `sim_core`'s observables expect
+# `(B, L, N, N, 3)`, and transposing once per measured sweep would copy the
+# whole lattice as often as the substep touches it -- enough to eat the win.
+# So the observables are rewritten against the component axis at position 1.
+# Every formula is the one in `sim_core`, term for term; only the axes move.
+
+def build_obs(geo):
+    import jax.numpy as jnp
+
+    LZ, N = int(geo["L"]), int(geo["N"])
+    disco = jnp.asarray(geo["disco"].astype(np.float32))          # (L, N, N)
+    disk2d = jnp.asarray(geo["disk2d"])
+    n_act = float(geo["n_active"])
+
+    def c4(par, k):
+        """One per-chain scalar, shaped to broadcast against (B, L, N, N)."""
+        return par[:, k].reshape(-1, 1, 1, 1)
+
+    def energy(sp, par, k1):
+        # Each bond counted once, via the +x, +y, +z shifts only.
+        xp = jnp.roll(sp, -1, 4)
+        yp = jnp.roll(sp, -1, 3)
+        zp = jnp.roll(sp, -1, 2).at[:, :, -1].set(0.0)
+        E = -c4(par, 0) * jnp.sum(sp * (xp + yp + zp), axis=1)
+        sx, sy, sz = sp[:, 0], sp[:, 1], sp[:, 2]
+        E = E + (k1 * ((sx * sy) ** 2 + (sx * sz) ** 2 + (sy * sz) ** 2)
+                 + c4(par, 1) * (sx * sy * sz) ** 2)
+        E = E - c4(par, 3) * (sy * xp[:, 2] - sz * xp[:, 1]
+                              + sz * yp[:, 0] - sx * yp[:, 2])
+        E = E - c4(par, 2) * (sx * par[:, 4].reshape(-1, 1, 1, 1)
+                              + sz * par[:, 5].reshape(-1, 1, 1, 1))
+        return jnp.sum(E * disco[None], axis=(-3, -2, -1))
+
+    def mag(sp):
+        M = jnp.sum(sp * disco[None, None], axis=(2, 3, 4)) / n_act   # (B, 3)
+        return jnp.linalg.norm(M, axis=1), M[:, 2]
+
+    def _omega(a, b, c):
+        num = jnp.sum(a * jnp.cross(b, c, axis=1), axis=1)
+        den = (1.0 + jnp.sum(a * b, 1) + jnp.sum(b * c, 1)
+               + jnp.sum(c * a, 1))
+        return 2.0 * jnp.arctan2(num, den)
+
+    valid = (disk2d[:-1, :-1] & disk2d[:-1, 1:]
+             & disk2d[1:, :-1] & disk2d[1:, 1:])
+
+    def topo(sp):
+        """Berg-Luscher charge per layer: quantised, unlike a difference."""
+        s00 = sp[:, :, :, :-1, :-1]; s10 = sp[:, :, :, :-1, 1:]
+        s01 = sp[:, :, :, 1:, :-1];  s11 = sp[:, :, :, 1:, 1:]
+        w = _omega(s00, s10, s11) + _omega(s00, s11, s01)
+        return jnp.sum(jnp.where(valid, w, 0.0), axis=(-2, -1)) / (
+            4.0 * jnp.pi)
+
+    return dict(energy=energy, mag=mag, topo=topo, n_active=n_act)
+
+
+def build_anneal(geo, BY=4, num_warps=4, So=1.0):
+    """The full temperature scan, with the Triton substep inside.
+
+    Structurally identical to `sim_core.build_engine`'s `anneal`: a `lax.scan`
+    over betas, a thermalisation `fori_loop`, then a measurement `fori_loop`
+    accumulating the SAME eight quantities in the SAME order, so the result
+    feeds `sim_core.reduce_obs` unchanged.
+
+    The one difference is the random stream. `sim_core` splits a Threefry key
+    down the loop; the kernel is counter-based, so a step counter rides the
+    carry and every substep gets its own Philox offset. That makes the chain
+    reproducible from `seed` without carrying key state through the scan.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    sub = build(geo, BY=BY, num_warps=num_warps, So=So)
+    O = build_obs(geo)
+    LZ = int(geo["L"])
+
+    def anneal(sp, seed, betas, par, k1, n_therm, n_meas):
+        n_therm, n_meas = int(n_therm), int(n_meas)
+
+        def pair(s, c, bt):
+            s = sub(s, k1, par, bt, c, 0)
+            return sub(s, k1, par, bt, c + 1, 1), c + 2
+
+        def per_T(carry, bt):
+            s, c = carry
+
+            def therm(_, v):
+                s, c = v
+                return pair(s, c, bt)
+            s, c = jax.lax.fori_loop(0, n_therm, therm, (s, c))
+
+            # Fluctuations are taken about a reference fixed once per
+            # temperature. Accumulating raw E and E^2 in float32 destroys the
+            # variance by cancellation -- one ulp of <E^2> can exceed the
+            # variance itself, and Cv comes out negative. A constant shift
+            # leaves the variance unchanged, so this is exact.
+            E_ref = O["energy"](s, par, k1)
+            M_ref, _ = O["mag"](s)
+            z0 = jnp.zeros(s.shape[0], jnp.float32)
+
+            def meas(_, v):
+                s, c, sE, sE2, sM, sM2, sMz, sQ = v
+                s, c = pair(s, c, bt)
+                dE = O["energy"](s, par, k1) - E_ref
+                M, Mz = O["mag"](s)
+                dM = M - M_ref
+                Q = O["topo"](s)[:, LZ // 2]
+                return (s, c, sE + dE, sE2 + dE * dE, sM + dM,
+                        sM2 + dM * dM, sMz + Mz, sQ + Q)
+
+            s, c, sE, sE2, sM, sM2, sMz, sQ = jax.lax.fori_loop(
+                0, n_meas, meas, (s, c, z0, z0, z0, z0, z0, z0))
+            out = jnp.stack([sE / n_meas, sE2 / n_meas,
+                             sM / n_meas, sM2 / n_meas,
+                             sMz / n_meas, sQ / n_meas, E_ref, M_ref])
+            # Replica 0, middle layer, z component -- the same snapshot
+            # `sim_core` takes, read off the planar layout.
+            snap = s[0, 2, LZ // 2]
+            return (s, c), (out, snap)
+
+        c0 = jnp.asarray(int(seed), jnp.int32) * jnp.int32(1000003)
+        (s, _), (all_obs, snaps) = jax.lax.scan(per_T, (sp, c0), betas)
+        return all_obs, s, snaps
+
+    anneal.meta = dict(sub.meta)
+    return anneal
