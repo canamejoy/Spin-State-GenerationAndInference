@@ -8003,3 +8003,118 @@ def triton_ladder(replicas: int = 50, n_temps: int = 200,
     """The Triton substep inside the full anneal, on the production ladder."""
     triton_ladder_h100.remote(tag, rd, layers, replicas, n_temps, n_therm,
                               n_meas, v_temps, v_therm, v_meas, by, warps)
+
+
+def _triton_check(tag, Rd, L, replicas, lengths, v_temps, by, warps):
+    """Is the 4.94-sigma outlier the kernel, or the yardstick?
+
+    The ladder validation compared production against the halo engine using
+    an error bar taken as the across-replica spread over sqrt(B). One
+    temperature came out at 4.94 sigma, which is either a real bias in the
+    kernel's proposals or an error bar that is too small because a short
+    measurement window leaves every replica correlated with the shared start.
+
+    The test that separates those two is a CONTROL: run PRODUCTION twice with
+    different seeds and score it on the same yardstick. Production cannot
+    disagree with itself about physics, so whatever that control shows is the
+    yardstick's own noise floor. If the halo comparison sits at the same
+    level, the kernel is clean and the threshold was wrong. Repeated at two
+    ladder lengths, because the explanation predicts the spread shrinks with
+    a longer window and a real bias does not.
+    """
+    import sys, json
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        import triton_halo as TH
+    except Exception as e:
+        print(f"TRITON NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    kB = 0.086173404
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    surf_j = jnp.asarray(geo["surface"][None, ...])
+    n_act = float(geo["n_active"])
+    B = int(replicas)
+    raw = json.load(open("/root/theta4.json"))
+    t0p = list(raw.values())[0]
+    c = lambda v: jnp.full((B, 1, 1, 1), float(v), jnp.float32)
+    P = dict(Jex=c(1.0), Kan1=c(t0p["Kan1"]), Kan2=c(0.0),
+             KanS=c(t0p["KanS"]), Hex=c(t0p["Hex"]), KDM=c(t0p["KDM"]),
+             g=c(float(np.deg2rad(90.0))))
+    k1e = jnp.where(surf_j, P["KanS"], P["Kan1"])
+    par = TH.pack_params(P, B)
+    ann_t = TH.build_anneal(geo, BY=int(by), num_warps=int(warps))
+    T = np.linspace(20.0, 0.1, int(v_temps))
+    bt = jnp.asarray(1.0 / (kB * T), jnp.float32)
+    sp0 = S.init_spins(jax.random.PRNGKey(19), geo, B)
+    spP = TH.planar(sp0)
+    res = dict(available=True, gpu=device_identity(), replicas=B,
+               n_temps=int(v_temps), T=T.tolist(), rows=[])
+
+    def z_of(a, b, sd):
+        err = np.asarray(sd) / np.sqrt(B) + 1e-30
+        return np.abs(np.asarray(a) - np.asarray(b)) / err
+
+    print(f"\n{'ventana':>14}{'control prod/prod':>22}"
+          f"{'prueba prod/halo':>22}", flush=True)
+    print(f"{'':>14}{'media':>9}{'maximo':>13}{'media':>9}{'maximo':>13}",
+          flush=True)
+    for nt, nm_ in lengths:
+        rp = lambda sd: S.reduce_obs(np.asarray(jax.block_until_ready(jax.jit(
+            lambda s: eng["anneal"](s, jax.random.PRNGKey(sd), bt, P,
+                                    int(nt), int(nm_)))(sp0))[0]), T, n_act)
+        rA, rB = rp(5), rp(6)
+        rH = S.reduce_obs(np.asarray(jax.block_until_ready(jax.jit(
+            lambda s: ann_t(s, 5, bt, par, k1e, int(nt), int(nm_)))(spP))[0]),
+            T, n_act)
+        zc = z_of(rA["E"], rB["E"], rA["E_sd"])
+        zh = z_of(rA["E"], rH["E"], rA["E_sd"])
+        row = dict(n_therm=int(nt), n_meas=int(nm_),
+                   control_mean=float(np.mean(zc)),
+                   control_max=float(np.max(zc)),
+                   halo_mean=float(np.mean(zh)), halo_max=float(np.max(zh)),
+                   M_max_abs_diff=float(np.max(np.abs(
+                       np.asarray(rA["M"]) - np.asarray(rH["M"])))),
+                   M_control_max_abs_diff=float(np.max(np.abs(
+                       np.asarray(rA["M"]) - np.asarray(rB["M"])))))
+        res["rows"].append(row)
+        print(f"{nt:>8}+{nm_:<5}{row['control_mean']:>9.2f}"
+              f"{row['control_max']:>13.2f}{row['halo_mean']:>9.2f}"
+              f"{row['halo_max']:>13.2f}", flush=True)
+    print(f"\n=== lectura ===", flush=True)
+    for r in res["rows"]:
+        v = "igual que el control" if (
+            r["halo_mean"] <= 1.5 * r["control_mean"] + 0.3
+            and r["halo_max"] <= 1.5 * r["control_max"] + 1.0) else "PEOR"
+        print(f"  {r['n_therm']}+{r['n_meas']}: halo {v}   "
+              f"|M| control {r['M_control_max_abs_diff']:.4f} vs halo "
+              f"{r['M_max_abs_diff']:.4f}", flush=True)
+    res["verdict_halo_matches_control"] = all(
+        r["halo_mean"] <= 1.5 * r["control_mean"] + 0.3
+        and r["halo_max"] <= 1.5 * r["control_max"] + 1.0
+        for r in res["rows"])
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=triton_image, timeout=60 * 60,
+              volumes={"/out": vol})
+def triton_check_h100(tag, Rd, L, replicas, lengths, v_temps, by, warps):
+    return _triton_check(tag, Rd, L, replicas, lengths, v_temps, by, warps)
+
+
+@app.local_entrypoint()
+def triton_check(replicas: int = 50, v_temps: int = 24,
+                 windows: str = "600:300,3000:1500,10000:5000",
+                 rd: float = 18.30, layers: int = 5, by: int = 4,
+                 warps: int = 4, tag: str = "triton_check"):
+    """Score the halo engine against production's own seed-to-seed noise."""
+    ls = [tuple(int(y) for y in w.split(":")) for w in windows.split(",") if w]
+    triton_check_h100.remote(tag, rd, layers, replicas, ls, v_temps, by, warps)

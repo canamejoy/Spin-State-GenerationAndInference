@@ -814,6 +814,81 @@ desempaquetado falla, además de una constante de semilla que desborda
 <code>int32</code>; cuatro sorteos de un solo tensor
 (<code>tl.randn</code>/<code>tl.rand</code>) son seguros.</div>
 
+<h3>8.5 · La escalera completa</h3>
+
+<p>Un paso suelto no es la simulación. El bucle de medición recalcula la
+energía, la magnetización y la carga topológica <b>en cada barrido medido</b>,
+en JAX y en los dos brazos, así que la ganancia de la escalera tenía que ser
+menor que la del paso. Integrarlo exigió reescribir esos tres observables
+contra el nuevo diseño: transponer una vez por barrido medido copia la red
+tantas veces como la toca el propio paso.</p>
+
+<p>Escalera de producción: <b>200 temperaturas</b> de 20.0 a 0.1 K,
+<b>10 000 + 5 000</b> barridos, <b>3 000 000</b> en total, 50 réplicas,
+un H100, <b>compilación fuera del cronómetro</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>motor</th><th>reloj</th><th>µs/réplica-barrido</th>
+    <th>ms/barrido</th></tr></thead>
+  <tbody>
+    <tr><td>producción</td><td class="n">6.05 min</td><td class="n">2.422</td>
+        <td class="n">0.121</td></tr>
+    <tr><td><b>anneal con Triton</b></td><td class="best"><b>2.46 min</b></td>
+        <td class="best"><b>0.985</b></td><td class="n">0.049</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>−59.3 %</b> en la escalera entera, contra −66.6 % del
+paso desnudo. Esos siete puntos de diferencia <b>son</b> el bucle de medición,
+que sigue en JAX en los dos brazos — es el techo de esta vía, y dice dónde
+estaría el siguiente kernel.</p></div>
+
+<div class="note"><strong>No contradice los 13.96 min de la sección 6.</strong>
+Aquella medición fue <b>4 GPU y 400 cadenas</b> a 2.792 µs/réplica-barrido con
+la compilación <b>dentro</b> del cronómetro; esta es <b>1 GPU y 50 réplicas</b>
+a 2.422 con ella fuera. Las tasas concuerdan; los totales difieren porque el
+trabajo difiere. Y el factor <b>no se extrapola</b> a cuatro GPU sin medirlo:
+el ancho depende del lote <b>por dispositivo</b>.</div>
+
+<h3>8.6 · El susto de la validación, y el control que lo resolvió</h3>
+
+<p>La primera comprobación de la escalera marcó <b>4.94 σ</b> en una
+temperatura. Eso es o un sesgo real del kernel o una barra de error demasiado
+pequeña. La forma de separarlo no es discutirlo: es correr <b>producción contra
+sí misma</b> con otra semilla y medirla con la misma vara. Producción no puede
+estar en desacuerdo consigo misma sobre la física, así que lo que marque ese
+control <b>es el ruido de la vara</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>ventana</th><th>control prod/prod<br>
+    <span style="opacity:.7">media / máximo</span></th>
+    <th>prueba prod/halo<br><span style="opacity:.7">media / máximo</span></th>
+    <th></th></tr></thead>
+  <tbody>
+    <tr><td class="n">600 + 300</td><td class="n">0.87 / 2.53</td>
+        <td class="bad">1.45 / 4.94</td><td class="bad">el halo se desvía
+        más</td></tr>
+    <tr><td class="n">3 000 + 1 500</td><td class="n">1.07 / 3.13</td>
+        <td class="n">1.10 / 2.91</td><td class="best">igual</td></tr>
+    <tr><td class="n"><b>10 000 + 5 000</b><br>
+        <span style="opacity:.7">producción</span></td>
+        <td class="n">0.86 / 1.96</td><td class="n">0.91 / 3.29</td>
+        <td class="best">igual en la media</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>En la ventana de producción el motor nuevo está sobre el
+propio ruido de semilla de producción</b> (0.91 σ contra 0.86), y
+<code>|M|</code> coincide a <b>0.0001</b>, lo mismo que el control. Los 4.94 σ
+eran la ventana de 600+300, no el kernel.</p></div>
+
+<div class="note bad"><strong>Y un límite que hay que decir.</strong> En
+600+300 el halo <b>sí</b> se desvía más que el control (1.45 contra 0.87 de
+media). Así que este motor queda validado para <b>corridas de longitud de
+equilibrio</b> y <b>no</b> todavía para corridas cortas fuera de equilibrio.
+Quien lo use para un barrido exploratorio corto necesita repetir este control
+en esa ventana.</div>
+
 <h2>9 · La convención de barridos y réplicas</h2>
 
 <div class="note bad"><strong>No existe un estándar.</strong> Los estudios
