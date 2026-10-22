@@ -29,6 +29,11 @@ NBMETA = {"kernelspec": {"display_name": "Python 3", "language": "python",
           "accelerator": "GPU"}
 
 def write(path, cells):
+    # nbformat_minor 5 requires an id per cell; without one Kaggle logs
+    # MissingIDFieldWarning and warns it will become a hard error. The ids are
+    # deterministic so regenerating does not churn the diff.
+    for i, c in enumerate(cells):
+        c["id"] = f"c{i:02d}"
     json.dump({"cells": cells, "metadata": NBMETA, "nbformat": 4,
                "nbformat_minor": 5}, io.open(path, "w", encoding="utf-8"),
               indent=1, ensure_ascii=False)
