@@ -5,6 +5,72 @@ MOD = f"{ROOT}/notebooks/simulation/modal"
 OUT = f"{ROOT}/notebooks/simulation"
 CUR = f"{MOD}/../results/curves"
 
+PTXAS_CELL = r'''import glob, os, re, subprocess
+
+def ver(p):
+    try:
+        o = subprocess.run([p, "--version"], capture_output=True,
+                           text=True).stdout
+        m = re.search(r"release (\d+)\.(\d+)", o)
+        return tuple(map(int, m.groups())) if m else (0, 0)
+    except Exception:
+        return (0, 0)
+
+pats = ["/usr/local/lib/python3*/dist-packages/nvidia/cuda_nvcc/bin/ptxas",
+        "/usr/local/lib/python3*/site-packages/nvidia/cuda_nvcc/bin/ptxas",
+        "/opt/conda/lib/python3*/site-packages/nvidia/cuda_nvcc/bin/ptxas",
+        "/usr/local/lib/python3*/dist-packages/triton/backends/nvidia/bin/ptxas",
+        "/opt/conda/lib/python3*/site-packages/triton/backends/nvidia/bin/ptxas",
+        "/usr/local/cuda*/bin/ptxas"]
+found = sorted({p for q in pats for p in glob.glob(q)})
+rows = [(ver(p), p) for p in found]
+print("ptxas encontrados:")
+for v, p in sorted(rows):
+    tag = "   <- el de triton" if "triton" in p else ""
+    print("  CUDA %d.%-3d %s%s" % (v[0], v[1], p, tag))
+
+xla = [(v, p) for v, p in rows if "triton" not in p and v > (0, 0)]
+if xla:
+    # XLA's is the limiting half, so Triton gets pinned to it.
+    v, p = min(xla)
+    os.environ["TRITON_PTXAS_PATH"] = p
+    print("\nTRITON_PTXAS_PATH -> CUDA %d.%d  %s" % (v[0], v[1], p))
+else:
+    print("\nAVISO: no se hallo un ptxas fuera de triton; se deja como esta.")
+'''
+
+SMOKE_CELL = r'''import sys
+for m in [k for k in list(sys.modules) if k.split(".")[0] in
+          ("jax", "jaxlib", "triton", "jax_triton")]:
+    del sys.modules[m]
+import jax, jax.numpy as jnp
+print("jax", jax.__version__, jax.devices())
+try:
+    import triton, triton.language as tl, jax_triton as jt
+    print("triton", triton.__version__,
+          "| jax_triton", getattr(jt, "__version__", "?"))
+except Exception as e:
+    print("FALTA:", type(e).__name__, e)
+    raise SystemExit
+
+# One tiny kernel, so a toolchain failure shows HERE and not buried forty
+# minutes into the benchmark.
+@triton.jit
+def _add1(x_ptr, o_ptr, N: tl.constexpr):
+    i = tl.arange(0, N)
+    tl.store(o_ptr + i, tl.load(x_ptr + i) + 1.0)
+
+try:
+    x = jnp.arange(8, dtype=jnp.float32)
+    y = jt.triton_call(x, kernel=_add1, grid=(1,), N=8,
+                       out_shape=jax.ShapeDtypeStruct((8,), jnp.float32))
+    ok = bool((y == x + 1).all())
+    print("\nprueba minima de Triton:", "PASA" if ok else "FALLA", "->", y)
+except Exception as e:
+    print("\nprueba minima de Triton: FALLA  %s: %s"
+          % (type(e).__name__, str(e)[:500]))
+'''
+
 Q = chr(39) * 3   # triple quote, built so it never nests in this file
 
 def md(s):  return {"cell_type": "markdown", "metadata": {}, "source": s.splitlines(True)}
@@ -73,28 +139,34 @@ coincida:
 print(subprocess.run(["nvidia-smi",
   "--query-gpu=name,memory.total,clocks.max.sm,driver_version",
   "--format=csv,noheader"], capture_output=True, text=True).stdout.strip())"""),
- md("""## Instalación
+ md("""## Instalación, y el `ptxas` que hace fallar esto
 
-`jax-triton` trae su propio `triton` y arrastra una versión de `jax`
-compatible. En la H100 la combinación que funcionó fue
-`jax 0.10.2 / triton 3.8.0 / jax_triton 0.3.1`; aquí se deja que pip resuelva
-y se imprime lo que quedó, porque una discrepancia de versiones es la causa
-más probable de que esto no arranque.
+La primera corrida en T4 murió aquí, y vale la pena dejarlo escrito, porque
+**no era la GPU ni el kernel**:
+
+```
+ptxas fatal : Unsupported .version 8.8; current version is '8.7'
+```
+
+Triton **trae su propio `ptxas`** (CUDA 12.9, ISA 8.8) y emite PTX para esa
+versión. El `ptxas` que usa XLA para ensamblar el módulo es el de la rueda
+`nvidia-cuda-nvcc-cu12` (CUDA 12.8, ISA 8.7), y no entiende 8.8. Una versión
+menor de diferencia, y nada compila.
+
+La T4 es capacidad **7.5**, de sobra para Triton. El arreglo es que **las dos
+mitades de la cadena usen el mismo `ptxas`**: se inventarían todos los que
+haya y se le fija a Triton el de XLA con `TRITON_PTXAS_PATH`. Bajar el ISA no
+cuesta nada para este kernel.
+
+Tiene que pasar **antes de importar `jax`**, porque el backend fija su cadena
+al inicializarse.
 """),
- code("""import sys, subprocess
-subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                "jax[cuda12]", "jax-triton"], check=False)
-for m in [k for k in list(sys.modules) if k.split(".")[0] in
-          ("jax", "jaxlib", "triton", "jax_triton")]:
-    del sys.modules[m]
-import jax
-print("jax", jax.__version__, jax.devices())
-try:
-    import triton, jax_triton as jt
-    print("triton", triton.__version__,
-          "| jax_triton", getattr(jt, "__version__", "?"))
-except Exception as e:
-    print("FALTA:", type(e).__name__, e)"""),
+ code("import sys, subprocess\n"
+      "subprocess.run([sys.executable, '-m', 'pip', 'install', '-q',\n"
+      "                'jax[cuda12]', 'jax-triton'], check=False)\n"
+      "print('instalado')\n"),
+ code(PTXAS_CELL),
+ code(SMOKE_CELL),
  embed("sim_core.py"),
  embed("triton_halo.py"),
  embed("triton_bench.py"),
