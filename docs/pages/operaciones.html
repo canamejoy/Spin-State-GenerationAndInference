@@ -949,6 +949,57 @@ tres brazos se corrieron en la escalera real de cuatro dispositivos:
   en su forma final: 3.45 min contra <b>1.17 min</b>.</p>
 </div>
 
+<h3>8.8 · ¿Es esto una propiedad de la H100?</h3>
+
+<p>Todo lo anterior se midió en H100 alquiladas por hora, y eso dejaba una
+duda razonable: la H100 tiene <b>132</b> multiprocesadores y una L2 enorme, y
+un <i>stencil</i> que vive en registros podría comportarse muy distinto en otra
+arquitectura. Así que el mismo cuadernillo se corrió en una <b>T4 de Kaggle</b>
+— 40 multiprocesadores, capacidad de cómputo 7.5.</p>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>T4</th><th>H100</th></tr></thead>
+  <tbody>
+    <tr><td>el paso, kernel contra producción</td>
+        <td class="best"><b>−64.3 %</b></td><td class="n">−66.6 %</td></tr>
+    <tr><td>la escalera completa</td>
+        <td class="best"><b>−56.0 %</b></td><td class="n">−62.8 %</td></tr>
+    <tr><td>castigo del ancho, <b>producción</b></td>
+        <td class="bad"><b>+49.9 %</b></td><td class="n">+17.8 %</td></tr>
+    <tr><td>castigo del ancho, <b>el kernel</b></td>
+        <td class="best"><b>+0.8 %</b></td><td class="best">+0.3 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>No es una propiedad de la H100.</b> Dos arquitecturas, 40
+  multiprocesadores contra 132, y la ganancia del paso se diferencia en dos
+  puntos.</p>
+  <p><b>Y sale mejor de lo esperado:</b> el castigo que el kernel elimina es
+  <b>tres veces mayor</b> en la T4 (+65.6 % a L=5, +34.3 % a L=6). En una
+  tarjeta más débil el kernel vale <b>más</b>, no menos — consistente con que
+  el castigo escale con el número de multiprocesadores, que es lo que midió la
+  sección 1.</p>
+  <p>Exacto también allí: <b>0 de 182 520</b> espines distintos contra
+  <code>sim_core.substep</code>, y las dos cadenas a <b>0.09–0.23 σ</b>.</p>
+</div>
+
+<div class="note bad"><strong>El obstáculo fue la cadena de herramientas, no
+el hardware.</strong> La primera corrida murió con
+<code>ptxas fatal : Unsupported .version 8.8; current version is '8.7'</code>.
+Triton <b>trae su propio <code>ptxas</code></b> (CUDA 12.9, ISA 8.8) y emite
+PTX para esa versión, mientras XLA ensambla con el de la rueda
+<code>nvidia-cuda-nvcc-cu12</code> (CUDA 12.8). Una versión menor de
+diferencia y no compila nada. El arreglo es inventariar todos los
+<code>ptxas</code> y fijarle a Triton el de XLA con
+<code>TRITON_PTXAS_PATH</code>, <b>antes de importar <code>jax</code></b>.
+En Modal nunca apareció porque allí quedó <code>jax 0.10.2</code>; Kaggle
+resuelve <code>0.11.1</code>.
+<br><br>La lección, aplicada: el cuadernillo ahora corre una <b>prueba mínima
+de un kernel justo después de los imports</b>, así un fallo de cadena sale en
+segundos y no enterrado a mitad del banco. Esa omisión costó una corrida de
+GPU entera.</div>
+
 <h2>9 · La convención de barridos y réplicas</h2>
 
 <div class="note bad"><strong>No existe un estándar.</strong> Los estudios
