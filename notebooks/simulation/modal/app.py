@@ -8594,3 +8594,149 @@ def triton_width(layers: str = "4,5,6,8", batches: str = "64,65,100,101",
     triton_width_h100.remote(tag, rd, [int(x) for x in layers.split(",") if x],
                              [int(x) for x in batches.split(",") if x],
                              repeats, steps, by, warps)
+
+
+def _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps):
+    """One state, the 20k-sweep convention, across however many GPUs we have.
+
+    The project's schedule is 20 000 sweeps per temperature, not the 15 000 the
+    earlier ladders used, so this re-measures on the real convention. The split
+    is the repository's own two thirds / one third.
+
+    One arithmetic fact decides the shape of this table: `pmap` needs equal
+    shards, and 50 replicas DO NOT divide by four. So the four-device arm
+    brackets it with 48 and 52 instead of pretending, and every arm also
+    reports us per replica-sweep, which normalises the differing work.
+
+    The interesting quantity is not the wall clock but whether more devices
+    still help: at 50 replicas over four GPUs the per-device batch falls to
+    about a dozen, and the launch cost `a/B` was already measured to dominate
+    down there.
+    """
+    import sys, json, time
+    sys.path.insert(0, "/root")
+    import numpy as np, jax, jax.numpy as jnp
+    import sim_core as S
+
+    print(f"gpu={device_identity()}", flush=True)
+    try:
+        import triton_halo as TH
+    except Exception as e:
+        print(f"TRITON NO DISPONIBLE: {type(e).__name__}: {e}", flush=True)
+        return dict(available=False, error=f"{type(e).__name__}: {e}")
+
+    kB = 0.086173404
+    nd = jax.local_device_count()
+    n_therm = int(sweeps) * 2 // 3
+    n_meas = int(sweeps) - n_therm
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    surf = jnp.asarray(geo["surface"][None, ...])
+    n_act = float(geo["n_active"])
+    T = np.linspace(20.0, 0.1, int(n_temps))
+    bt = jnp.asarray(1.0 / (kB * T), jnp.float32)
+    tot = int(n_temps) * (n_therm + n_meas)
+    raw = json.load(open("/root/theta4.json"))
+    t0p = list(raw.values())[0]
+    print(f"{nd} dispositivo(s)  |  1 estado, {n_temps}T x "
+          f"{n_therm}+{n_meas} = {tot:,} barridos por replica", flush=True)
+    res = dict(available=True, gpu=device_identity(), n_devices=nd,
+               n_temps=int(n_temps), sweeps=int(sweeps), n_therm=n_therm,
+               n_meas=n_meas, total_sweeps=tot, rows=[])
+
+    annF = TH.build_anneal_full(geo, BY=int(by), num_warps=int(warps))
+
+    for R in reps:
+        if R % nd:
+            print(f"  {R} replicas no divide entre {nd}: se omite", flush=True)
+            continue
+        per = R // nd
+        c = lambda v: jnp.full((per, 1, 1, 1), float(v), jnp.float32)
+        P = dict(Jex=c(1.0), Kan1=c(t0p["Kan1"]), Kan2=c(0.0),
+                 KanS=c(t0p["KanS"]), Hex=c(t0p["Hex"]), KDM=c(t0p["KDM"]),
+                 g=c(float(np.deg2rad(90.0))))
+        k1 = jnp.where(surf, P["KanS"], P["Kan1"])
+        par = TH.pack_params(P, per)
+        sp = S.init_spins(jax.random.PRNGKey(7), geo, R)
+        spP = TH.planar(sp)
+        if nd > 1:
+            sp = sp.reshape(nd, per, *sp.shape[1:])
+            spP = spP.reshape(nd, per, *spP.shape[1:])
+            keys = jax.random.split(jax.random.PRNGKey(42), nd)
+
+        def arm(name):
+            if name == "produccion":
+                if nd == 1:
+                    f = jax.jit(lambda s: eng["anneal"](
+                        s, jax.random.PRNGKey(42), bt, P, n_therm, n_meas))
+                    a = (sp,)
+                else:
+                    f = jax.pmap(lambda s, k: eng["anneal"](
+                        s, k, bt, P, n_therm, n_meas))
+                    a = (sp, keys)
+            else:
+                g = lambda s: annF(s, 42, bt, par, k1, n_therm, n_meas)
+                f = jax.jit(g) if nd == 1 else jax.pmap(g)
+                a = (spP,)
+            jax.block_until_ready(f(*a))          # compile outside the timer
+            t0 = time.perf_counter()
+            o = jax.block_until_ready(f(*a))
+            dt = time.perf_counter() - t0
+            del o
+            return dt
+
+        row = dict(replicas=int(R), per_device=per)
+        for nm in ("produccion", "kernel"):
+            dt = arm(nm)
+            row[nm] = dict(wall_s=dt, minutes=dt / 60.0,
+                           us_per_replica_sweep=1e6 * dt / (tot * R))
+        row["change_pct"] = 100 * (row["kernel"]["wall_s"]
+                                   / row["produccion"]["wall_s"] - 1)
+        res["rows"].append(row)
+        print(f"  {R:>3} replicas ({per:>2}/disp):  produccion "
+              f"{row['produccion']['minutes']:6.2f} min "
+              f"({row['produccion']['us_per_replica_sweep']:6.3f} us)   "
+              f"kernel {row['kernel']['minutes']:6.2f} min "
+              f"({row['kernel']['us_per_replica_sweep']:6.3f} us)   "
+              f"{row['change_pct']:+6.1f}%", flush=True)
+
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"\n  guardado /out/{tag}.json", flush=True)
+    return res
+
+
+@app.function(gpu="H100", image=triton_image, timeout=60 * 90,
+              volumes={"/out": vol})
+def state_ladder_1(tag, Rd, L, reps, n_temps, sweeps, by, warps):
+    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps)
+
+
+@app.function(gpu="H100:2", image=triton_image, timeout=60 * 90,
+              volumes={"/out": vol})
+def state_ladder_2(tag, Rd, L, reps, n_temps, sweeps, by, warps):
+    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps)
+
+
+@app.function(gpu="H100:4", image=triton_image, timeout=60 * 90,
+              volumes={"/out": vol})
+def state_ladder_4(tag, Rd, L, reps, n_temps, sweeps, by, warps):
+    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps)
+
+
+@app.local_entrypoint()
+def state_ladder(n_temps: int = 200, sweeps: int = 20000, rd: float = 18.30,
+                 layers: int = 5, by: int = 4, warps: int = 4,
+                 tag: str = "state_ladder"):
+    """One state, 20k sweeps, 50 replicas, on one, two and four GPUs.
+
+    Fifty replicas cannot be sharded four ways, so the four-device call gets
+    48 and 52 -- the two nearest counts that can -- and the per-replica rate
+    makes them comparable to the fifty.
+    """
+    for nd, fn, reps in ((1, state_ladder_1, [50]),
+                         (2, state_ladder_2, [50]),
+                         (4, state_ladder_4, [48, 52])):
+        print(f"\n########## {nd} GPU ##########", flush=True)
+        fn.remote(f"{tag}_{nd}gpu", rd, layers, reps, n_temps, sweeps, by,
+                  warps)

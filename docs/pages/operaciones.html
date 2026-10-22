@@ -1000,6 +1000,79 @@ de un kernel justo después de los imports</b>, así un fallo de cadena sale en
 segundos y no enterrado a mitad del banco. Esa omisión costó una corrida de
 GPU entera.</div>
 
+<h3>8.9 · Un estado, 20 000 barridos, y cuántas GPU necesita de verdad</h3>
+
+<p>Las escaleras anteriores corrieron a 10 000 + 5 000, y la convención del
+proyecto es <b>20 000</b> por temperatura. Rehecha sobre la convención real
+—200 T × (13 333 + 6 667) = <b>4 000 000</b> de barridos, <b>un estado</b>,
+50 réplicas— y repartida entre una, dos y cuatro GPU.</p>
+
+<div class="note"><strong>50 no divide entre 4.</strong> <code>pmap</code>
+exige partes iguales y 50/4 = 12.5, así que el brazo de cuatro dispositivos
+acota con <b>48 y 52</b> en vez de fingir. Las dos filas concuerdan, de modo
+que lo que habrían dado las 50 queda encerrado entre ellas.</div>
+
+<div class="tw"><table>
+  <thead><tr><th>GPU</th><th>répl.</th><th>por disp.</th>
+    <th>producción</th><th>kernel</th><th>cambio</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td class="n">50</td><td class="n">50</td>
+        <td class="n">8.05 min</td><td class="best"><b>2.91 min</b></td>
+        <td class="best"><b>−63.9 %</b></td></tr>
+    <tr><td class="n">2</td><td class="n">50</td><td class="n">25</td>
+        <td class="n">4.85 min</td><td class="n">2.64 min</td>
+        <td class="n">−45.5 %</td></tr>
+    <tr><td class="n">4</td><td class="n">48</td><td class="n">12</td>
+        <td class="n">3.45 min</td><td class="bad">5.10 min</td>
+        <td class="bad"><b>+47.7 %</b></td></tr>
+    <tr><td class="n">4</td><td class="n">52</td><td class="n">13</td>
+        <td class="n">3.47 min</td><td class="bad">5.36 min</td>
+        <td class="bad"><b>+54.7 %</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>El kernel tiene un piso de lote por dispositivo, y está por encima de
+  doce.</b> Con 12 o 13 réplicas por GPU <b>pierde contra producción</b>, por
+  medio punto. No es ruido de celda corta: son cuatro millones de barridos y
+  los dos conteos coinciden.</p>
+  <p>La razón es que está construido para lotes anchos. Con 12 réplicas su
+  rejilla baja a unos 600 bloques de 128 hilos —unos 77 000 hilos para una
+  tarjeta que quiere mucho más— mientras los kernels que emite XLA usan bloques
+  mayores y aprovechan mejor ese caso flaco.</p>
+</div>
+
+<h4>Añadir GPU a un solo estado no sirve</h4>
+
+<div class="tw"><table>
+  <thead><tr><th>de 1 a 2 GPU</th><th>reloj</th><th>aceleración</th></tr></thead>
+  <tbody>
+    <tr><td>producción</td><td class="n">8.05 → 4.85 min</td>
+        <td class="n">1.66×</td></tr>
+    <tr><td><b>kernel</b></td><td class="n">2.91 → 2.64 min</td>
+        <td class="bad"><b>1.10×</b></td></tr>
+  </tbody>
+</table></div>
+
+<p>Duplicar el hardware le compra a producción un <b>40 %</b> y al kernel un
+<b>9 %</b>. El kernel ya está prácticamente en su piso con 50 réplicas en una
+sola tarjeta: lo que queda del reloj ya no es trabajo paralelizable, es la
+estructura serial del barrido de 200 temperaturas.</p>
+
+<div class="key">
+  <p><b>Las GPU extra se pagan con estados, no partiendo uno.</b> Un estado por
+  tarjeta es paralelo trivial —sin <code>pmap</code>, sin repartos, sin lotes
+  flacos— y mantiene los 2.91 min por estado:</p>
+  <ul>
+    <li><b>4 estados</b>: 2.91 min en 4 GPU, contra 11.6 min secuenciales en una</li>
+    <li><b>10 estados</b>: 2.91 min en 10 GPU, contra 29.1 min secuenciales en una</li>
+  </ul>
+  <p>Y esto <b>invierte</b> la recomendación de la sección 6 para el caso de un
+  solo estado: allí el reparto por réplicas ganaba porque producción escala
+  bien con dispositivos. Con el kernel, lo que escala es el <b>eje de
+  estados</b>.</p>
+</div>
+
 <h2>9 · La convención de barridos y réplicas</h2>
 
 <div class="note bad"><strong>No existe un estándar.</strong> Los estudios
