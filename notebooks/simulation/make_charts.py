@@ -143,19 +143,24 @@ def chart(rows, title, sub, log, w=1000, h=470):
         bw = min(58.0, (gw - 24) / len(bars))
         span = bw * len(bars) + 7 * (len(bars) - 1)
         x0 = gx + (gw - span) / 2
-        for bi, (name, v, measured) in enumerate(bars):
+        for bi, (name, v, fac) in enumerate(bars):
             x = x0 + bi * (bw + 7)
             y = yf(v)
-            # Translucent plus a tilde marks an extrapolated bar, so it is
-            # never read as a stopwatch value.
-            op = "" if measured else ' fill-opacity="0.6"'
+            direct = fac == 1
+            # A measured bar is solid. An extrapolated one is translucent AND
+            # carries its factor, so the reader sees how far it was stretched.
+            op = "" if direct else ' fill-opacity="0.6"'
             o.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" '
                      f'height="{max(base - y, 1):.1f}" rx="2.5" '
                      f'fill="{COL[name]}"{op}/>')
-            tag = "" if measured else "\u2248"
             o.append(f'<text x="{x + bw / 2:.1f}" y="{y - 6:.1f}" '
                      f'font-size="11.5" text-anchor="middle" '
-                     f'fill="currentColor">{tag}{fmt(v)}</text>')
+                     f'fill="currentColor">{fmt(v)}</text>')
+            if not direct:
+                lab = fac if isinstance(fac, str) else f"\u00d7{fac}"
+                o.append(f'<text x="{x + bw / 2:.1f}" y="{y - 19:.1f}" '
+                         f'font-size="10" text-anchor="middle" '
+                         f'fill="currentColor" opacity=".55">{lab}</text>')
         o.append(f'<text x="{gx + gw / 2:.1f}" y="{base + 20:.0f}" '
                  f'font-size="13" text-anchor="middle" font-weight="600" '
                  f'fill="currentColor">{label}</text>')
@@ -167,9 +172,17 @@ def chart(rows, title, sub, log, w=1000, h=470):
     return "\n".join(o)
 
 
-# Which cells were timed at the full 200-temperature length and which are a
-# rate scaled up to it. Only the 50-replica H100 arms ran full length.
-MEASURED = {"h100_1_50", "h100_2_50", "h100_4_50"}
+# How far each cell was scaled to reach the 200-temperature ladder. 1 means
+# the stopwatch read it directly. Carrying the FACTOR rather than a boolean
+# matters: a x5 extrapolation on an H100 and a x20 one on a throttling T4
+# deserve very different trust, and a bare tilde hides that.
+FACTOR = {
+    "h100_1_50": 1, "h100_2_50": 1, "h100_4_50": 1,      # 200 T, measured
+    "h100_1_500": 5, "h100_2_500": 5, "h100_4_500": 5,   # 40 T
+    "t4_1_50": 20, "t4_2_50": 20,                        # 10 T
+    "t4_1_500": 20, "t4_2_500": 20,
+}
+CPU_FACTOR = "tasa"      # the CPU bar comes from a rate, not a ladder run
 
 
 def build(d, repl, with_cpu):
@@ -177,7 +190,7 @@ def build(d, repl, with_cpu):
     rows = []
     if with_cpu:
         rows.append((f"CPU, {d['cpu_threads']} hilos",
-                     [("cpu", clock(d["cpu_us"], repl), False)]))
+                     [("cpu", clock(d["cpu_us"], repl), CPU_FACTOR)]))
     for key, label in (("t4_1", "1x T4"), ("t4_2", "2x T4"),
                        ("h100_1", "1x H100"), ("h100_2", "2x H100"),
                        ("h100_4", "4x H100")):
@@ -185,7 +198,7 @@ def build(d, repl, with_cpu):
         if k not in d:
             continue
         e, o = d[k]
-        m = k in MEASURED
+        m = FACTOR.get(k, 1)
         rows.append((label, [("estandar", clock(e, repl), m),
                              ("optimizado", clock(o, repl), m)]))
     return rows
@@ -215,9 +228,11 @@ def main():
     for repl, states in ((50, 1), (500, 10)):
         print(f"\n=== {states} estado(s), {repl} réplicas ===")
         for label, bars in build(d, repl, True):
-            for name, v, m in bars:
-                print(f"  {label:<16}{name:<12}{fmt(v):>9}"
-                      f"{'' if m else '   (extrapolado)'}")
+            for name, v, fac in bars:
+                mark = "" if fac == 1 else (f"   (extrapolado {fac})"
+                                            if isinstance(fac, str)
+                                            else f"   (extrapolado x{fac})")
+                print(f"  {label:<16}{name:<12}{fmt(v):>9}{mark}")
     return out
 
 
