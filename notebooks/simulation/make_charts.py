@@ -70,76 +70,99 @@ def fmt(s):
     return f"{s / 86400:.1f} d"
 
 
-def chart(rows, title, sub, log, w=1000, pad_l=150, pad_r=215):
-    """One horizontal grouped bar chart as inline SVG.
+def chart(rows, title, sub, log, w=1000, h=470):
+    """One grouped VERTICAL bar chart as inline SVG.
 
-    Returns a self-contained <svg>. A log axis is used only when the CPU bar
-    is present, since it is three to four orders of magnitude above the rest
-    and a linear axis would collapse everything else onto the spine.
+    A log axis is used only when the CPU bar is present, since it sits three
+    to four orders of magnitude above the rest and a linear axis would leave
+    everything else as a flat line on the floor. With a log axis the bars grow
+    from the axis minimum rather than from zero, which is the only honest way
+    to draw them.
     """
-    bh, gap, grp = 20, 6, 16
-    y = 58
-    heights = []
-    for label, bars in rows:
-        heights.append(len(bars) * bh + (len(bars) - 1) * gap)
-    h = y + sum(heights) + grp * len(rows) + 46
-    plot_w = w - pad_l - pad_r
+    pad_t, pad_b, pad_l, pad_r = 66, 62, 76, 18
+    ph = h - pad_t - pad_b
+    pw = w - pad_l - pad_r
     vals = [v for _, bars in rows for _, v, _ in bars]
+
     if log:
         lo = 10 ** math.floor(math.log10(min(vals)))
         hi = 10 ** math.ceil(math.log10(max(vals)))
-        xf = lambda v: pad_l + plot_w * (math.log10(v) - math.log10(lo)) / (
-            math.log10(hi) - math.log10(lo))
-        ticks = []
-        t = lo
+        lg = math.log10
+        yf = lambda v: pad_t + ph * (1 - (lg(v) - lg(lo)) / (lg(hi) - lg(lo)))
+        ticks, t = [], lo
         while t <= hi + 1e-9:
             ticks.append(t)
             t *= 10
+        base = pad_t + ph
     else:
-        hi = max(vals) * 1.02
-        xf = lambda v: pad_l + plot_w * v / hi
+        lo, hi = 0.0, max(vals) * 1.12
+        yf = lambda v: pad_t + ph * (1 - v / hi)
         step = 10 ** math.floor(math.log10(hi))
         if hi / step < 2:
             step /= 5
         elif hi / step < 5:
             step /= 2
-        ticks = [i * step for i in range(int(hi / step) + 2) if i * step <= hi]
+        ticks = [i * step for i in range(int(hi / step) + 2)
+                 if i * step <= hi]
+        base = pad_t + ph
 
     COL = {"estandar": "#b00020", "optimizado": "#2e7d32", "cpu": "#9e9e9e"}
+    gw = pw / len(rows)
     o = [f'<svg viewBox="0 0 {w} {h}" width="100%" '
          f'style="max-width:100%;font-family:system-ui,sans-serif" '
          f'role="img" aria-label="{title}">']
     o.append(f'<text x="8" y="22" font-size="17" font-weight="600" '
              f'fill="currentColor">{title}</text>')
-    o.append(f'<text x="8" y="42" font-size="12.5" fill="currentColor" '
+    o.append(f'<text x="8" y="41" font-size="12.5" fill="currentColor" '
              f'opacity=".72">{sub}</text>')
+
+    # legend, top right
+    lx = w - pad_r
+    for name in ("optimizado", "estandar"):
+        if not any(n == name for _, bars in rows for n, _, _ in bars):
+            continue
+        tw = 8 * len(name) + 22
+        lx -= tw
+        o.append(f'<rect x="{lx}" y="48" width="11" height="11" rx="2" '
+                 f'fill="{COL[name]}"/>')
+        o.append(f'<text x="{lx + 16}" y="58" font-size="11.5" '
+                 f'fill="currentColor" opacity=".8">{name}</text>')
+
     for t in ticks:
-        x = xf(t)
-        o.append(f'<line x1="{x:.1f}" y1="{y - 6}" x2="{x:.1f}" y2="{h - 34}" '
-                 f'stroke="currentColor" stroke-opacity=".14"/>')
-        o.append(f'<text x="{x:.1f}" y="{h - 18}" font-size="11.5" '
-                 f'text-anchor="middle" fill="currentColor" opacity=".7">'
-                 f'{fmt(t)}</text>')
-    cy = y
-    for (label, bars), gh in zip(rows, heights):
-        o.append(f'<text x="{pad_l - 10}" y="{cy + gh / 2 + 4:.0f}" '
-                 f'font-size="13" text-anchor="end" font-weight="600" '
-                 f'fill="currentColor">{label}</text>')
-        for name, v, measured in bars:
-            x = xf(v)
-            # An extrapolated bar is drawn translucent and tagged with a
-            # tilde, so a reader never takes one for a stopwatch reading.
+        y = yf(t)
+        o.append(f'<line x1="{pad_l}" y1="{y:.1f}" x2="{w - pad_r}" '
+                 f'y2="{y:.1f}" stroke="currentColor" stroke-opacity=".14"/>')
+        o.append(f'<text x="{pad_l - 9}" y="{y + 4:.1f}" font-size="11.5" '
+                 f'text-anchor="end" fill="currentColor" opacity=".7">'
+                 f'{fmt(t) if t > 0 else "0"}</text>')
+    o.append(f'<line x1="{pad_l}" y1="{base:.1f}" x2="{w - pad_r}" '
+             f'y2="{base:.1f}" stroke="currentColor" stroke-opacity=".45"/>')
+
+    for gi, (label, bars) in enumerate(rows):
+        gx = pad_l + gi * gw
+        bw = min(58.0, (gw - 24) / len(bars))
+        span = bw * len(bars) + 7 * (len(bars) - 1)
+        x0 = gx + (gw - span) / 2
+        for bi, (name, v, measured) in enumerate(bars):
+            x = x0 + bi * (bw + 7)
+            y = yf(v)
+            # Translucent plus a tilde marks an extrapolated bar, so it is
+            # never read as a stopwatch value.
             op = "" if measured else ' fill-opacity="0.6"'
-            o.append(f'<rect x="{pad_l}" y="{cy}" '
-                     f'width="{max(x - pad_l, 1):.1f}" height="{bh}" '
-                     f'rx="2.5" fill="{COL[name]}"{op}/>')
-            tag = "" if measured else " ≈"
-            o.append(f'<text x="{x + 7:.1f}" y="{cy + bh - 5}" font-size="12" '
-                     f'fill="currentColor">{fmt(v)}{tag}'
-                     f'<tspan opacity=".62" font-size="11">  {name}</tspan>'
-                     f'</text>')
-            cy += bh + gap
-        cy += grp - gap
+            o.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" '
+                     f'height="{max(base - y, 1):.1f}" rx="2.5" '
+                     f'fill="{COL[name]}"{op}/>')
+            tag = "" if measured else "\u2248"
+            o.append(f'<text x="{x + bw / 2:.1f}" y="{y - 6:.1f}" '
+                     f'font-size="11.5" text-anchor="middle" '
+                     f'fill="currentColor">{tag}{fmt(v)}</text>')
+        o.append(f'<text x="{gx + gw / 2:.1f}" y="{base + 20:.0f}" '
+                 f'font-size="13" text-anchor="middle" font-weight="600" '
+                 f'fill="currentColor">{label}</text>')
+    o.append(f'<text x="{pad_l}" y="{h - 10}" font-size="11.5" '
+             f'fill="currentColor" opacity=".6">'
+             f'reloj de la escalera completa'
+             f'{" (escala logar\u00edtmica)" if log else ""}</text>')
     o.append('</svg>')
     return "\n".join(o)
 
