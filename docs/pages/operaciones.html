@@ -749,7 +749,7 @@ bloques vecinos se solapan y pegan en L1.</p>
 Microsegundos por réplica-barrido.</p>
 
 <div class="tw"><table>
-  <thead><tr><th>B</th><th>producción<br><span style="opacity:.7">6 rolls +
+  <thead><tr><th>B</th><th>estándar<br><span style="opacity:.7">6 rolls +
     Threefry</span></th><th>solo <i>stencil</i></th><th>vs prod</th>
     <th>+ su RNG</th><th>vs prod</th></tr></thead>
   <tbody>
@@ -793,7 +793,7 @@ sección 1, un <b>+39 %</b> por un solo lote de diferencia. El kernel da
 <div class="tw"><table>
   <thead><tr><th>brazo</th><th>dispersión de µs/réplica (máx/mín)</th></tr></thead>
   <tbody>
-    <tr><td>producción</td><td class="bad">39.3 %</td></tr>
+    <tr><td>estándar</td><td class="bad">39.3 %</td></tr>
     <tr><td>solo <i>stencil</i></td><td class="best">11.7 %</td></tr>
     <tr><td><i>stencil</i> + su RNG</td><td class="best">13.5 %</td></tr>
   </tbody>
@@ -834,7 +834,7 @@ un H100, <b>compilación fuera del cronómetro</b>.</p>
   <thead><tr><th>motor</th><th>reloj</th><th>µs/réplica-barrido</th>
     <th>vs producción</th></tr></thead>
   <tbody>
-    <tr><td>producción</td><td class="n">6.05 min</td><td class="n">2.420</td>
+    <tr><td>estándar</td><td class="n">6.05 min</td><td class="n">2.420</td>
         <td class="n">—</td></tr>
     <tr><td>paso en Triton, observables en JAX</td><td class="n">2.52 min</td>
         <td class="n">1.009</td><td class="n">−58.3 %</td></tr>
@@ -929,9 +929,9 @@ tres brazos se corrieron en la escalera real de cuatro dispositivos:
   <thead><tr><th>brazo</th><th>reloj</th><th>µs/réplica-barrido</th>
     <th>vs A</th></tr></thead>
   <tbody>
-    <tr><td><b>A</b> producción, 1 ola de 100</td><td class="n">4.73 min</td>
+    <tr><td><b>A</b> estándar, 1 ola de 100</td><td class="n">4.73 min</td>
         <td class="n">0.788</td><td class="n">—</td></tr>
-    <tr><td><b>B</b> producción, protocolo 53 + 47</td>
+    <tr><td><b>B</b> estándar, protocolo 53 + 47</td>
         <td class="n">3.45 min</td><td class="n">0.576</td>
         <td class="n">−27.0 %</td></tr>
     <tr><td><b>C</b> todo en Triton, 1 ola de 100</td>
@@ -960,11 +960,11 @@ arquitectura. Así que el mismo cuadernillo se corrió en una <b>T4 de Kaggle</b
 <div class="tw"><table>
   <thead><tr><th></th><th>T4</th><th>H100</th></tr></thead>
   <tbody>
-    <tr><td>el paso, kernel contra producción</td>
+    <tr><td>el paso, optimizado contra estándar</td>
         <td class="best"><b>−64.3 %</b></td><td class="n">−66.6 %</td></tr>
     <tr><td>la escalera completa</td>
         <td class="best"><b>−56.0 %</b></td><td class="n">−62.8 %</td></tr>
-    <tr><td>castigo del ancho, <b>producción</b></td>
+    <tr><td>castigo del ancho, <b>estándar</b></td>
         <td class="bad"><b>+49.9 %</b></td><td class="n">+17.8 %</td></tr>
     <tr><td>castigo del ancho, <b>el kernel</b></td>
         <td class="best"><b>+0.8 %</b></td><td class="best">+0.3 %</td></tr>
@@ -1014,7 +1014,7 @@ que lo que habrían dado las 50 queda encerrado entre ellas.</div>
 
 <div class="tw"><table>
   <thead><tr><th>GPU</th><th>répl.</th><th>por disp.</th>
-    <th>producción</th><th>kernel</th><th>cambio</th></tr></thead>
+    <th>estándar</th><th>optimizado</th><th>cambio</th></tr></thead>
   <tbody>
     <tr><td class="n">1</td><td class="n">50</td><td class="n">50</td>
         <td class="n">8.05 min</td><td class="best"><b>2.91 min</b></td>
@@ -1047,14 +1047,14 @@ que lo que habrían dado las 50 queda encerrado entre ellas.</div>
 <div class="tw"><table>
   <thead><tr><th>de 1 a 2 GPU</th><th>reloj</th><th>aceleración</th></tr></thead>
   <tbody>
-    <tr><td>producción</td><td class="n">8.05 → 4.85 min</td>
+    <tr><td>estándar</td><td class="n">8.05 → 4.85 min</td>
         <td class="n">1.66×</td></tr>
-    <tr><td><b>kernel</b></td><td class="n">2.91 → 2.64 min</td>
+    <tr><td><b>optimizado</b></td><td class="n">2.91 → 2.64 min</td>
         <td class="bad"><b>1.10×</b></td></tr>
   </tbody>
 </table></div>
 
-<p>Duplicar el hardware le compra a producción un <b>40 %</b> y al kernel un
+<p>Duplicar el hardware le compra al estándar un <b>40 %</b> y al optimizado un
 <b>9 %</b>. El kernel ya está prácticamente en su piso con 50 réplicas en una
 sola tarjeta: lo que queda del reloj ya no es trabajo paralelizable, es la
 estructura serial del barrido de 200 temperaturas.</p>
@@ -1080,6 +1080,320 @@ publicados de redes de skyrmiones varían en órdenes de magnitud y cada uno
 declara el suyo: 10⁵ + 10⁵ con <b>3 corridas</b>; 2×10⁵ por espín con la mitad
 descartada; 2000 + 2000×40. <b>No se puede citar un número y llamarlo «el
 estándar».</b></div>
+
+<h2>10 · Las dos vías, lado a lado: CPU, T4 y H100</h2>
+
+<p class="lede">La misma escalera de producción —200 temperaturas × 20 000
+barridos— con los dos motores, sobre cinco configuraciones de hardware y dos
+tamaños de trabajo.</p>
+
+<h3>10.1 · Qué significan «estándar» y «optimizado»</h3>
+
+<div class="tw"><table>
+  <thead><tr><th></th><th>estándar</th><th>optimizado</th></tr></thead>
+  <tbody>
+    <tr><td>qué es</td>
+        <td><code>sim_core.build_engine(...)["anneal"]</code>, el motor que el
+        proyecto ha usado siempre</td>
+        <td><code>triton_halo.build_anneal_full(...)</code>, un
+        <i>stencil</i> escrito a mano en Triton crudo</td></tr>
+    <tr><td>cómo consigue los 6 vecinos</td>
+        <td class="bad">crea <b>seis copias desplazadas</b> de la red con
+        <code>jnp.roll</code> y las suma — seis escrituras y seis lecturas de
+        toda la red en cada medio paso</td>
+        <td class="best">lee <b>su parcela más un borde de un sitio</b> con
+        cargas contiguas; el plano desplazado <b>nunca se materializa</b> y
+        todo ocurre en registros</td></tr>
+    <tr><td>números aleatorios</td>
+        <td>Threefry, en JAX — <b>17.1 %</b> del tiempo según HLO</td>
+        <td class="best">Philox <b>dentro</b> del kernel, por contador</td></tr>
+    <tr><td>observables</td><td>kernels de XLA sobre el diseño
+        <code>(B,L,N,N,3)</code></td>
+        <td class="best">kernels de Triton sobre
+        <code>(B,3,L,N,N)</code>, con la componente como plano</td></tr>
+    <tr><td>castigo del ancho</td>
+        <td class="bad">+17.8 % en H100, <b>+49.9 %</b> en T4</td>
+        <td class="best">+0.3 % y +0.8 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>Misma física, verificada, no supuesta.</b> El
+<i>stencil</i> da <b>0 de 182 520</b> espines distintos contra
+<code>sim_core.substep</code> con la misma aleatoriedad; los observables
+coinciden a <b>1.2·10⁻⁷</b> relativo; y las dos cadenas a equilibrio quedan
+dentro de <b>0.19 σ</b>. El cambio es de <b>implementación</b>, no de
+modelo.</p></div>
+
+<h3>10.2 · Cómo leer las barras</h3>
+
+<p>Toda barra es <code>µs/réplica-barrido × 4 000 000 × réplicas</code>, o sea
+el reloj de la escalera <b>completa</b>, sin importar la longitud de la celda
+que de verdad se cronometró. Esa tasa es lo único comparable entre una CPU,
+una T4 y una H100, y el escalado en barridos es exacto por construcción.</p>
+
+<div class="note"><strong>Las barras translúcidas con <code>≈</code> son
+extrapoladas.</strong> Solo los tres brazos de H100 con 50 réplicas se
+cronometraron a las 200 temperaturas completas; el resto son tasas medidas en
+celdas más cortas (40 T en H100, 10 T en T4) escaladas al largo real. El
+escalado es exacto; el <b>ruido</b> no, y para celdas cortas este proyecto lo
+midió en <b>±2.5 %</b>. La CPU sale de su tasa medida a 100 réplicas.
+<br><br>Las dos gráficas con CPU usan <b>eje logarítmico</b>: con 31 horas
+contra 3 minutos, un eje lineal aplasta todo lo demás contra el margen. Por
+eso cada caso va también <b>sin CPU</b>, en lineal.</div>
+
+<h3>10.3 · Un estado (50 réplicas)</h3>
+
+<svg viewBox="0 0 1000 450" width="100%" style="max-width:100%;font-family:system-ui,sans-serif" role="img" aria-label="1 estado (50 réplicas)">
+<text x="8" y="22" font-size="17" font-weight="600" fill="currentColor">1 estado (50 réplicas)</text>
+<text x="8" y="42" font-size="12.5" fill="currentColor" opacity=".72">1 estado, 50 réplicas, escalera completa de producción (200 T × 20 000 barridos). ≈ = extrapolado desde una celda más corta</text>
+<line x1="150.0" y1="52" x2="150.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="150.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">1.7 min</text>
+<line x1="308.8" y1="52" x2="308.8" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="308.8" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">16.7 min</text>
+<line x1="467.5" y1="52" x2="467.5" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="467.5" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">2.8 h</text>
+<line x1="626.2" y1="52" x2="626.2" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="626.2" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">27.8 h</text>
+<line x1="785.0" y1="52" x2="785.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="785.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">11.6 d</text>
+<text x="140" y="72" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">CPU, 24 hilos</text>
+<rect x="150" y="58" width="484.6" height="20" rx="2.5" fill="#9e9e9e" fill-opacity="0.6"/>
+<text x="641.6" y="73" font-size="12" fill="currentColor">31.4 h ≈<tspan opacity=".62" font-size="11">  cpu</tspan></text>
+<text x="140" y="121" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x T4</text>
+<rect x="150" y="94" width="242.2" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="399.2" y="109" font-size="12" fill="currentColor">55.9 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="120" width="188.7" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="345.7" y="135" font-size="12" fill="currentColor">25.7 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="183" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x T4</text>
+<rect x="150" y="156" width="195.6" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="352.6" y="171" font-size="12" fill="currentColor">28.4 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="182" width="134.6" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="291.6" y="197" font-size="12" fill="currentColor">11.7 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="245" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x H100</text>
+<rect x="150" y="218" width="108.6" height="20" rx="2.5" fill="#b00020"/>
+<text x="265.6" y="233" font-size="12" fill="currentColor">8.1 min<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="244" width="38.4" height="20" rx="2.5" fill="#2e7d32"/>
+<text x="195.4" y="259" font-size="12" fill="currentColor">2.9 min<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="307" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x H100</text>
+<rect x="150" y="280" width="73.6" height="20" rx="2.5" fill="#b00020"/>
+<text x="230.6" y="295" font-size="12" fill="currentColor">4.8 min<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="306" width="31.8" height="20" rx="2.5" fill="#2e7d32"/>
+<text x="188.8" y="321" font-size="12" fill="currentColor">2.6 min<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="369" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">4x H100</text>
+<rect x="150" y="342" width="53.1" height="20" rx="2.5" fill="#b00020"/>
+<text x="210.1" y="357" font-size="12" fill="currentColor">3.6 min<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="368" width="79.9" height="20" rx="2.5" fill="#2e7d32"/>
+<text x="236.9" y="383" font-size="12" fill="currentColor">5.3 min<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+</svg>
+
+<p>Y la misma sin la CPU, en escala lineal:</p>
+
+<svg viewBox="0 0 1000 414" width="100%" style="max-width:100%;font-family:system-ui,sans-serif" role="img" aria-label="1 estado (50 réplicas) — solo GPU">
+<text x="8" y="22" font-size="17" font-weight="600" fill="currentColor">1 estado (50 réplicas) — solo GPU</text>
+<text x="8" y="42" font-size="12.5" fill="currentColor" opacity=".72">1 estado, 50 réplicas, escalera completa de producción (200 T × 20 000 barridos). ≈ = extrapolado desde una celda más corta</text>
+<line x1="150.0" y1="52" x2="150.0" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="150.0" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">0 s</text>
+<line x1="242.7" y1="52" x2="242.7" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="242.7" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">8.3 min</text>
+<line x1="335.5" y1="52" x2="335.5" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="335.5" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">16.7 min</text>
+<line x1="428.2" y1="52" x2="428.2" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="428.2" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">25.0 min</text>
+<line x1="520.9" y1="52" x2="520.9" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="520.9" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">33.3 min</text>
+<line x1="613.7" y1="52" x2="613.7" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="613.7" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">41.7 min</text>
+<line x1="706.4" y1="52" x2="706.4" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="706.4" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">50.0 min</text>
+<text x="140" y="85" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x T4</text>
+<rect x="150" y="58" width="622.5" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="779.5" y="73" font-size="12" fill="currentColor">55.9 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="84" width="286.2" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="443.2" y="99" font-size="12" fill="currentColor">25.7 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="147" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x T4</text>
+<rect x="150" y="120" width="316.6" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="473.6" y="135" font-size="12" fill="currentColor">28.4 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="146" width="130.7" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="287.7" y="161" font-size="12" fill="currentColor">11.7 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="209" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x H100</text>
+<rect x="150" y="182" width="89.6" height="20" rx="2.5" fill="#b00020"/>
+<text x="246.6" y="197" font-size="12" fill="currentColor">8.1 min<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="208" width="32.4" height="20" rx="2.5" fill="#2e7d32"/>
+<text x="189.4" y="223" font-size="12" fill="currentColor">2.9 min<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="271" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x H100</text>
+<rect x="150" y="244" width="53.9" height="20" rx="2.5" fill="#b00020"/>
+<text x="210.9" y="259" font-size="12" fill="currentColor">4.8 min<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="270" width="29.4" height="20" rx="2.5" fill="#2e7d32"/>
+<text x="186.4" y="285" font-size="12" fill="currentColor">2.6 min<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="333" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">4x H100</text>
+<rect x="150" y="306" width="40.0" height="20" rx="2.5" fill="#b00020"/>
+<text x="197.0" y="321" font-size="12" fill="currentColor">3.6 min<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="332" width="59.1" height="20" rx="2.5" fill="#2e7d32"/>
+<text x="216.1" y="347" font-size="12" fill="currentColor">5.3 min<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+</svg>
+
+<div class="key"><p><b>Aquí aparece el límite del motor optimizado.</b> En
+<b>4× H100</b> las 50 réplicas caen a 12 por tarjeta y el optimizado
+<b>pierde</b>: 5.3 min contra 3.6. Su rejilla se queda en unos 600 bloques y
+deja la tarjeta medio vacía. De 1 a 2 GPU solo gana un <b>10 %</b>, mientras el
+estándar gana un 40 % — con un solo estado, el hardware extra <b>no se
+aprovecha</b>.</p></div>
+
+<h3>10.4 · Diez estados (500 réplicas)</h3>
+
+<svg viewBox="0 0 1000 450" width="100%" style="max-width:100%;font-family:system-ui,sans-serif" role="img" aria-label="10 estados (500 réplicas)">
+<text x="8" y="22" font-size="17" font-weight="600" fill="currentColor">10 estados (500 réplicas)</text>
+<text x="8" y="42" font-size="12.5" fill="currentColor" opacity=".72">10 estados, 500 réplicas, escalera completa de producción (200 T × 20 000 barridos). ≈ = extrapolado desde una celda más corta</text>
+<line x1="150.0" y1="52" x2="150.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="150.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">1.7 min</text>
+<line x1="277.0" y1="52" x2="277.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="277.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">16.7 min</text>
+<line x1="404.0" y1="52" x2="404.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="404.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">2.8 h</text>
+<line x1="531.0" y1="52" x2="531.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="531.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">27.8 h</text>
+<line x1="658.0" y1="52" x2="658.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="658.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">11.6 d</text>
+<line x1="785.0" y1="52" x2="785.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="785.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">115.7 d</text>
+<text x="140" y="72" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">CPU, 24 hilos</text>
+<rect x="150" y="58" width="514.7" height="20" rx="2.5" fill="#9e9e9e" fill-opacity="0.6"/>
+<text x="671.7" y="73" font-size="12" fill="currentColor">13.1 d ≈<tspan opacity=".62" font-size="11">  cpu</tspan></text>
+<text x="140" y="121" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x T4</text>
+<rect x="150" y="94" width="336.7" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="493.7" y="109" font-size="12" fill="currentColor">12.4 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="120" width="286.5" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="443.5" y="135" font-size="12" fill="currentColor">5.0 h ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="183" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x T4</text>
+<rect x="150" y="156" width="284.4" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="441.4" y="171" font-size="12" fill="currentColor">4.8 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="182" width="244.7" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="401.7" y="197" font-size="12" fill="currentColor">2.3 h ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="245" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x H100</text>
+<rect x="150" y="218" width="239.0" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="396.0" y="233" font-size="12" fill="currentColor">2.1 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="244" width="143.7" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="300.7" y="259" font-size="12" fill="currentColor">22.6 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="307" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x H100</text>
+<rect x="150" y="280" width="169.2" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="326.2" y="295" font-size="12" fill="currentColor">35.8 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="306" width="108.2" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="265.2" y="321" font-size="12" fill="currentColor">11.8 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="369" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">4x H100</text>
+<rect x="150" y="342" width="133.6" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="290.6" y="357" font-size="12" fill="currentColor">18.8 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="368" width="78.1" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="235.1" y="383" font-size="12" fill="currentColor">6.9 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+</svg>
+
+<p>Y sin la CPU:</p>
+
+<svg viewBox="0 0 1000 414" width="100%" style="max-width:100%;font-family:system-ui,sans-serif" role="img" aria-label="10 estados (500 réplicas) — solo GPU">
+<text x="8" y="22" font-size="17" font-weight="600" fill="currentColor">10 estados (500 réplicas) — solo GPU</text>
+<text x="8" y="42" font-size="12.5" fill="currentColor" opacity=".72">10 estados, 500 réplicas, escalera completa de producción (200 T × 20 000 barridos). ≈ = extrapolado desde una celda más corta</text>
+<line x1="150.0" y1="52" x2="150.0" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="150.0" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">0 s</text>
+<line x1="219.5" y1="52" x2="219.5" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="219.5" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">83.3 min</text>
+<line x1="289.1" y1="52" x2="289.1" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="289.1" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">2.8 h</text>
+<line x1="358.6" y1="52" x2="358.6" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="358.6" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">4.2 h</text>
+<line x1="428.2" y1="52" x2="428.2" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="428.2" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">5.6 h</text>
+<line x1="497.7" y1="52" x2="497.7" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="497.7" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">6.9 h</text>
+<line x1="567.3" y1="52" x2="567.3" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="567.3" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">8.3 h</text>
+<line x1="636.8" y1="52" x2="636.8" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="636.8" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">9.7 h</text>
+<line x1="706.4" y1="52" x2="706.4" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="706.4" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">11.1 h</text>
+<line x1="775.9" y1="52" x2="775.9" y2="380" stroke="currentColor" stroke-opacity=".14"/>
+<text x="775.9" y="396" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">12.5 h</text>
+<text x="140" y="85" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x T4</text>
+<rect x="150" y="58" width="622.5" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="779.5" y="73" font-size="12" fill="currentColor">12.4 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="84" width="250.6" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="407.6" y="99" font-size="12" fill="currentColor">5.0 h ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="147" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x T4</text>
+<rect x="150" y="120" width="241.5" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="398.5" y="135" font-size="12" fill="currentColor">4.8 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="146" width="117.4" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="274.4" y="161" font-size="12" fill="currentColor">2.3 h ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="209" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x H100</text>
+<rect x="150" y="182" width="106.1" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="263.1" y="197" font-size="12" fill="currentColor">2.1 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="208" width="18.8" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="175.8" y="223" font-size="12" fill="currentColor">22.6 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="271" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x H100</text>
+<rect x="150" y="244" width="29.9" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="186.9" y="259" font-size="12" fill="currentColor">35.8 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="270" width="9.9" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="166.9" y="285" font-size="12" fill="currentColor">11.8 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="333" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">4x H100</text>
+<rect x="150" y="306" width="15.7" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="172.7" y="321" font-size="12" fill="currentColor">18.8 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="332" width="5.7" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="162.7" y="347" font-size="12" fill="currentColor">6.9 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+</svg>
+
+<div class="key">
+  <p><b>Con diez estados todo cambia.</b> El optimizado baja
+  <b>22.6 → 11.8 → 6.9 min</b> de una a cuatro H100: un <b>3.29×</b>, contra el
+  1.10× que daba con un solo estado. Ahora sí hay trabajo para llenar las
+  tarjetas.</p>
+  <p>Y la ganancia contra el estándar <b>crece con el ancho del lote</b>, que
+  es la razón de fondo:</p>
+</div>
+
+<div class="tw"><table>
+  <thead><tr><th>réplicas por dispositivo</th><th>cambio en H100</th>
+    <th>cambio en T4</th></tr></thead>
+  <tbody>
+    <tr><td class="n">12</td><td class="bad">+47.7 %</td><td class="n">—</td></tr>
+    <tr><td class="n">13</td><td class="bad">+54.7 %</td><td class="n">—</td></tr>
+    <tr><td class="n">25</td><td class="n">−45.5 %</td><td class="n">−58.7 %</td></tr>
+    <tr><td class="n">50</td><td class="n">−63.9 %</td><td class="n">−54.0 %</td></tr>
+    <tr><td class="n">125</td><td class="n">−63.4 %</td><td class="n">—</td></tr>
+    <tr><td class="n">250</td><td class="n">−66.9 %</td><td class="n">−51.4 %</td></tr>
+    <tr><td class="n">500</td><td class="best">−82.2 %</td><td class="n">−59.8 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>El cruce está entre 13 y 25 réplicas por tarjeta.</b> Por debajo, el
+  optimizado pierde; por encima gana, y la ganancia crece.</p>
+  <p>La T4 <b>no muestra ese derrumbe</b>: con 40 multiprocesadores, 25
+  réplicas ya la llenan razonablemente, mientras una H100 de 132 se queda
+  vacía. Su ganancia es más plana, entre −51 % y −60 %, en todo el rango.</p>
+  <p><b>Una advertencia sobre el −82.2 %:</b> son <b>dos efectos sumados</b>.
+  El optimizado mejoró (0.873 → 0.677 µs por lote más ancho) y el estándar
+  <b>empeoró</b> (2.416 → 3.813), porque <code>v₂(500) = 2</code> y 500
+  réplicas disparan su castigo del ancho. Parte de esa cifra es que 500 es un
+  lote malo <b>para el estándar</b>; el optimizado es inmune.</p>
+</div>
+
+<div class="note"><strong>Y un aviso de lectura sobre el estándar en 10
+estados.</strong> Pasa de 2.1 h en 1 GPU a 35.8 min en 2, un <b>3.55×</b> con
+solo el doble de hardware. Eso es superlineal, o sea imposible: lo que ocurre
+es que <code>v₂(500) = 2</code> lo castigaba con una tarjeta y
+<code>v₂(250) = 1</code> lo libera con dos. <b>No escaló mejor: escapó de su
+propio castigo.</b></div>
+
+<h3>10.5 · La recomendación</h3>
+
+<div class="key">
+  <p><b>Para un estado</b>: una sola H100 con el motor optimizado,
+  <b>2.9 min</b>. Añadir tarjetas no sirve, y cuatro lo empeoran.</p>
+  <p><b>Para varios estados</b>: un estado por tarjeta, o lotes de 125 o más
+  por tarjeta. Diez estados en 4× H100 son <b>6.9 min</b> contra las
+  <b>13.1 días</b> de la CPU y las 18.8 min del estándar.</p>
+  <p><b>Y si no hay H100</b>: dos T4 de Kaggle hacen los diez estados en
+  <b>2.3 h</b>, gratis. El motor optimizado le recupera a una tarjeta gratuita
+  más de la mitad de la distancia contra una de alquiler.</p>
+</div>
+
 
 <p>Lo que sí hay es un <b>criterio</b>:
 <code>τ<sub>int</sub> ≪ N<sub>muestras</sub></code>, con la advertencia de que

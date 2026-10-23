@@ -315,3 +315,108 @@ def run(batches=(64, 65, 100, 101), layers=(5,), repeats=5, steps=200,
         json.dump(res, open(out, "w"), indent=1)
         print(f"\n  guardado {out}", flush=True)
     return res
+
+
+def run_states(reps=(50, 500), devices=(1, 2), n_temps=10, sweeps=20000,
+               Rd=18.30, L=5, by=4, warps=4, out=None, label="kaggle-states"):
+    """One state and ten states, on one card and on two.
+
+    Kaggle hands out two T4s, which is exactly the pair this needs. The
+    one-device arm uses `jax.jit`, which places the whole batch on device 0;
+    the two-device arm uses `pmap`. Both replica counts divide by both device
+    counts (500 -> 500/250, 50 -> 50/25), so nothing has to be approximated
+    the way 50 across four cards did.
+
+    The ladder is SHORTENED on purpose. What this measures is a RATE --
+    microseconds per replica-sweep -- and the full 200-temperature clock is
+    reported as that rate times the real sweep count. A T4 running ten states
+    at full length would take hours, which is why the long cells are
+    extrapolated rather than waited for.
+    """
+    import jax
+    import jax.numpy as jnp
+    import sim_core as S
+
+    import time
+    kB = 0.086173404
+    n_therm = int(sweeps) * 2 // 3
+    n_meas = int(sweeps) - n_therm
+    geo = S.build_geometry(Rd=float(Rd), L=int(L))
+    eng = S.build_engine(geo)
+    surf = jnp.asarray(geo["surface"][None, ...])
+    T = np.linspace(20.0, 0.1, int(n_temps))
+    bt = jnp.asarray(1.0 / (kB * T), jnp.float32)
+    measured = int(n_temps) * (n_therm + n_meas)
+    full = 200 * (n_therm + n_meas)          # the production ladder
+    P0 = dict(Jex=1.0, Kan1=0.177, Kan2=0.0, KanS=0.139, Hex=0.483,
+              KDM=0.880, g=float(np.deg2rad(90.0)))
+
+    import triton_halo as TH
+    annF = TH.build_anneal_full(geo, BY=int(by), num_warps=int(warps))
+    avail = jax.local_device_count()
+    res = dict(label=label, env=environment(), n_temps=int(n_temps),
+               sweeps=int(sweeps), n_therm=n_therm, n_meas=n_meas,
+               measured_sweeps=measured, full_sweeps=full,
+               devices_available=avail, rows=[])
+    print(f"{avail} T4 visibles  |  escalera medida {n_temps}T x "
+          f"{n_therm}+{n_meas} = {measured:,} barridos", flush=True)
+    print(f"  el reloj a 200 T se reporta como tasa x {full:,} barridos",
+          flush=True)
+    print(f"\n{'disp':>5}{'repl':>6}{'/disp':>7}{'estandar':>13}"
+          f"{'optimizado':>13}{'cambio':>9}", flush=True)
+
+    for nd in devices:
+        if nd > avail:
+            print(f"  {nd} dispositivos: solo hay {avail}, se omite", flush=True)
+            continue
+        for R in reps:
+            if R % nd:
+                continue
+            per = R // nd
+            c = lambda v: jnp.full((per, 1, 1, 1), float(v), jnp.float32)
+            P = {k: c(v) for k, v in P0.items()}
+            k1 = jnp.where(surf, P["KanS"], P["Kan1"])
+            par = TH.pack_params(P, per)
+            sp = S.init_spins(jax.random.PRNGKey(7), geo, R)
+            spP = TH.planar(sp)
+            if nd > 1:
+                sp = sp.reshape(nd, per, *sp.shape[1:])
+                spP = spP.reshape(nd, per, *spP.shape[1:])
+                keys = jax.random.split(jax.random.PRNGKey(42), nd)
+
+            row = dict(devices=nd, replicas=int(R), per_device=per)
+            for nm in ("estandar", "optimizado"):
+                if nm == "estandar":
+                    if nd == 1:
+                        f, a = jax.jit(lambda s: eng["anneal"](
+                            s, jax.random.PRNGKey(42), bt, P, n_therm,
+                            n_meas)), (sp,)
+                    else:
+                        f, a = jax.pmap(lambda s, k: eng["anneal"](
+                            s, k, bt, P, n_therm, n_meas)), (sp, keys)
+                else:
+                    g = lambda s: annF(s, 42, bt, par, k1, n_therm, n_meas)
+                    f, a = (jax.jit(g) if nd == 1 else jax.pmap(g)), (spP,)
+                try:                       # compile without executing
+                    f = f.lower(*a).compile()
+                except Exception:
+                    jax.block_until_ready(f(*a))
+                t0 = time.perf_counter()
+                o = jax.block_until_ready(f(*a))
+                dt = time.perf_counter() - t0
+                del o
+                us = 1e6 * dt / (measured * R)
+                row[nm] = dict(wall_s=dt, us_per_replica_sweep=us,
+                               full_ladder_s=us * full * R / 1e6)
+            row["change_pct"] = 100 * (row["optimizado"]["wall_s"]
+                                       / row["estandar"]["wall_s"] - 1)
+            res["rows"].append(row)
+            print(f"{nd:>5}{R:>6}{per:>7}"
+                  f"{row['estandar']['full_ladder_s']/60:>10.1f} min"
+                  f"{row['optimizado']['full_ladder_s']/60:>10.1f} min"
+                  f"{row['change_pct']:>+8.1f}%", flush=True)
+
+    if out:
+        json.dump(res, open(out, "w"), indent=1)
+        print(f"\n  guardado {out}", flush=True)
+    return res

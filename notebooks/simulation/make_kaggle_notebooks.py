@@ -498,3 +498,95 @@ print("scan sobre 200 temperaturas, y en que la escalera corre con lote 50")
 print("mientras el banco del paso corria entre 64 y 128.")"""),
 ]
 write(f"{OUT}/kaggle_triton_h100_results.ipynb", B)
+
+# ------------------------------------------------- C: one state vs ten states
+# Reuses A's setup cells verbatim: install, the ptxas pin, the smoke test and
+# the three checksummed modules. Only the final call differs.
+# A's cells 1..8: smi, install prose, pip, the ptxas pin, the smoke
+# test, and the THREE checksummed modules. Slicing to 8 dropped
+# triton_bench and the notebook died on its import.
+SETUP = A[1:9]
+assert sum(1 for c in SETUP
+           if 'sha256 ok' in ''.join(c['source'])) == 3, \
+    'los tres modulos deben quedar embutidos'
+C = [
+ md("""# Un estado contra diez, en una T4 y en dos
+
+Kaggle reparte **dos T4**, que es justo el par que hace falta aquí. Este
+cuadernillo mide las cuatro celdas que faltaban para las gráficas:
+
+| | 1 estado (50 réplicas) | 10 estados (500 réplicas) |
+|---|---|---|
+| **1× T4** | ✓ | ✓ |
+| **2× T4** | ✓ | ✓ |
+
+Los dos conteos dividen limpio entre los dos conteos de dispositivo —
+500 → 500/250 y 50 → 50/25— así que no hay que aproximar nada, al contrario
+de lo que pasó con 50 réplicas entre cuatro tarjetas.
+
+## Los dos motores
+
+**estándar** es el motor que el proyecto ha usado siempre:
+`sim_core.build_engine(...)["anneal"]`, en JAX. Para cada espín consigue sus
+seis vecinos creando **seis copias desplazadas de la red** con `jnp.roll`, y
+sortea con Threefry.
+
+**optimizado** es el nuevo: un *stencil* escrito a mano en Triton crudo que
+lee su parcela más un borde de un sitio, hace toda la aritmética en registros
+y escribe una vez — las seis copias nunca existen. Los observables también son
+kernels. Sortea con Philox dentro del kernel.
+
+Misma física, verificada: **0 de 182 520** espines distintos contra
+`sim_core.substep` con la misma aleatoriedad.
+
+## La escalera se acorta a propósito
+
+Lo que esto mide es una **tasa** — microsegundos por réplica-barrido — y el
+reloj de las 200 temperaturas se reporta como esa tasa multiplicada por el
+número real de barridos. Una T4 corriendo diez estados a longitud completa
+tardaría horas, así que las celdas largas se **extrapolan** en vez de
+esperarse. El escalado en barridos es exacto por construcción; lo que no es
+exacto es el ruido, que para celdas cortas ronda el ±2.5 %.
+
+> Acelerador: **GPU T4 x2**. Unos 60-70 min.
+"""),
+] + SETUP + [
+ code("import sys, json\n"
+      "sys.path.insert(0, '.')\n"
+      "import triton_bench\n"
+      "\n"
+      "res = triton_bench.run_states(\n"
+      "    reps=(50, 500), devices=(1, 2), n_temps=10, sweeps=20000,\n"
+      "    Rd=18.30, L=5, by=4, warps=4,\n"
+      "    out='/kaggle/working/triton_states_t4.json',\n"
+      "    label='kaggle-t4-states')\n"),
+ md("""## Lectura
+
+La columna que importa es **cambio**: cuánto baja el motor optimizado respecto
+al estándar en cada celda.
+
+En las H100 apareció un **piso de lote por dispositivo**: con 12-13 réplicas
+por tarjeta el motor optimizado *pierde*, porque su rejilla se queda en unos
+600 bloques y deja la tarjeta medio vacía. Aquí las celdas más flacas son
+25 réplicas por T4 (1 estado, 2 tarjetas) y las más anchas 500 (10 estados,
+1 tarjeta), así que la tabla debería mostrar la ganancia **creciendo con el
+ancho del lote** — que es la razón por la que más estados aprovechan mejor el
+hardware.
+"""),
+ code("if not res['rows']:\n"
+      "    print('no hubo filas: revisa la cadena de herramientas arriba')\n"
+      "else:\n"
+      "    print(f\"{'disp':>5}{'repl':>6}{'/disp':>7}{'us/repl-barrido':>32}\")\n"
+      "    print(f\"{'':>18}{'estandar':>14}{'optimizado':>14}{'cambio':>9}\")\n"
+      "    for r in res['rows']:\n"
+      "        print(f\"{r['devices']:>5}{r['replicas']:>6}{r['per_device']:>7}\"\n"
+      "              f\"{r['estandar']['us_per_replica_sweep']:>14.3f}\"\n"
+      "              f\"{r['optimizado']['us_per_replica_sweep']:>14.3f}\"\n"
+      "              f\"{r['change_pct']:>+8.1f}%\")\n"
+      "    print()\n"
+      "    w = sorted(res['rows'], key=lambda r: r['per_device'])\n"
+      "    print('ordenado por replicas por dispositivo:')\n"
+      "    for r in w:\n"
+      "        print(f\"  {r['per_device']:>4} por T4 -> {r['change_pct']:+6.1f}%\")\n"),
+]
+write(f"{OUT}/kaggle_triton_states.ipynb", C)

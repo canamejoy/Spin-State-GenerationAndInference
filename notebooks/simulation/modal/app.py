@@ -8678,7 +8678,13 @@ def _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps):
                 g = lambda s: annF(s, 42, bt, par, k1, n_therm, n_meas)
                 f = jax.jit(g) if nd == 1 else jax.pmap(g)
                 a = (spP,)
-            jax.block_until_ready(f(*a))          # compile outside the timer
+            # Compile WITHOUT executing. The earlier version warmed up with a
+            # real call, which on a four-million-sweep ladder doubles the bill
+            # -- that is what exhausted an account for a table this size.
+            try:
+                f = f.lower(*a).compile()
+            except Exception:
+                jax.block_until_ready(f(*a))
             t0 = time.perf_counter()
             o = jax.block_until_ready(f(*a))
             dt = time.perf_counter() - t0
@@ -8727,16 +8733,18 @@ def state_ladder_4(tag, Rd, L, reps, n_temps, sweeps, by, warps):
 @app.local_entrypoint()
 def state_ladder(n_temps: int = 200, sweeps: int = 20000, rd: float = 18.30,
                  layers: int = 5, by: int = 4, warps: int = 4,
-                 tag: str = "state_ladder"):
+                 reps: str = "", tag: str = "state_ladder"):
     """One state, 20k sweeps, 50 replicas, on one, two and four GPUs.
 
     Fifty replicas cannot be sharded four ways, so the four-device call gets
     48 and 52 -- the two nearest counts that can -- and the per-replica rate
     makes them comparable to the fifty.
     """
-    for nd, fn, reps in ((1, state_ladder_1, [50]),
+    rl = [int(x) for x in str(reps).split(",") if x] if reps else None
+    for nd, fn, dflt in ((1, state_ladder_1, [50]),
                          (2, state_ladder_2, [50]),
                          (4, state_ladder_4, [48, 52])):
+        reps_n = rl if rl else dflt
         print(f"\n########## {nd} GPU ##########", flush=True)
-        fn.remote(f"{tag}_{nd}gpu", rd, layers, reps, n_temps, sweeps, by,
+        fn.remote(f"{tag}_{nd}gpu", rd, layers, reps_n, n_temps, sweeps, by,
                   warps)

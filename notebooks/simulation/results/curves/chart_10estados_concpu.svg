@@ -1,0 +1,44 @@
+<svg viewBox="0 0 1000 450" width="100%" style="max-width:100%;font-family:system-ui,sans-serif" role="img" aria-label="10 estados (500 réplicas)">
+<text x="8" y="22" font-size="17" font-weight="600" fill="currentColor">10 estados (500 réplicas)</text>
+<text x="8" y="42" font-size="12.5" fill="currentColor" opacity=".72">10 estados, 500 réplicas, escalera completa de producción (200 T × 20 000 barridos). ≈ = extrapolado desde una celda más corta</text>
+<line x1="150.0" y1="52" x2="150.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="150.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">1.7 min</text>
+<line x1="277.0" y1="52" x2="277.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="277.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">16.7 min</text>
+<line x1="404.0" y1="52" x2="404.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="404.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">2.8 h</text>
+<line x1="531.0" y1="52" x2="531.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="531.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">27.8 h</text>
+<line x1="658.0" y1="52" x2="658.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="658.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">11.6 d</text>
+<line x1="785.0" y1="52" x2="785.0" y2="416" stroke="currentColor" stroke-opacity=".14"/>
+<text x="785.0" y="432" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".7">115.7 d</text>
+<text x="140" y="72" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">CPU, 24 hilos</text>
+<rect x="150" y="58" width="514.7" height="20" rx="2.5" fill="#9e9e9e" fill-opacity="0.6"/>
+<text x="671.7" y="73" font-size="12" fill="currentColor">13.1 d ≈<tspan opacity=".62" font-size="11">  cpu</tspan></text>
+<text x="140" y="121" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x T4</text>
+<rect x="150" y="94" width="336.7" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="493.7" y="109" font-size="12" fill="currentColor">12.4 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="120" width="286.5" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="443.5" y="135" font-size="12" fill="currentColor">5.0 h ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="183" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x T4</text>
+<rect x="150" y="156" width="284.4" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="441.4" y="171" font-size="12" fill="currentColor">4.8 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="182" width="244.7" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="401.7" y="197" font-size="12" fill="currentColor">2.3 h ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="245" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">1x H100</text>
+<rect x="150" y="218" width="239.0" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="396.0" y="233" font-size="12" fill="currentColor">2.1 h ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="244" width="143.7" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="300.7" y="259" font-size="12" fill="currentColor">22.6 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="307" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">2x H100</text>
+<rect x="150" y="280" width="169.2" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="326.2" y="295" font-size="12" fill="currentColor">35.8 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="306" width="108.2" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="265.2" y="321" font-size="12" fill="currentColor">11.8 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+<text x="140" y="369" font-size="13" text-anchor="end" font-weight="600" fill="currentColor">4x H100</text>
+<rect x="150" y="342" width="133.6" height="20" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="290.6" y="357" font-size="12" fill="currentColor">18.8 min ≈<tspan opacity=".62" font-size="11">  estandar</tspan></text>
+<rect x="150" y="368" width="78.1" height="20" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="235.1" y="383" font-size="12" fill="currentColor">6.9 min ≈<tspan opacity=".62" font-size="11">  optimizado</tspan></text>
+</svg>
