@@ -8596,7 +8596,8 @@ def triton_width(layers: str = "4,5,6,8", batches: str = "64,65,100,101",
                              repeats, steps, by, warps)
 
 
-def _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps):
+def _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps,
+                  only=None):
     """One state, the 20k-sweep convention, across however many GPUs we have.
 
     The project's schedule is 20 000 sweeps per temperature, not the 15 000 the
@@ -8692,19 +8693,25 @@ def _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps):
             return dt
 
         row = dict(replicas=int(R), per_device=per)
-        for nm in ("produccion", "kernel"):
+        # `only` lets an expensive arm be left out when the budget does not
+        # cover it; the omitted cell stays extrapolated and the page says so.
+        want = [x for x in ("produccion", "kernel")
+                if not only or x in only]
+        for nm in want:
             dt = arm(nm)
             row[nm] = dict(wall_s=dt, minutes=dt / 60.0,
                            us_per_replica_sweep=1e6 * dt / (tot * R))
-        row["change_pct"] = 100 * (row["kernel"]["wall_s"]
-                                   / row["produccion"]["wall_s"] - 1)
+        row["change_pct"] = (100 * (row["kernel"]["wall_s"]
+                                    / row["produccion"]["wall_s"] - 1)
+                             if len(want) == 2 else None)
         res["rows"].append(row)
-        print(f"  {R:>3} replicas ({per:>2}/disp):  produccion "
-              f"{row['produccion']['minutes']:6.2f} min "
-              f"({row['produccion']['us_per_replica_sweep']:6.3f} us)   "
-              f"kernel {row['kernel']['minutes']:6.2f} min "
-              f"({row['kernel']['us_per_replica_sweep']:6.3f} us)   "
-              f"{row['change_pct']:+6.1f}%", flush=True)
+        bits = [f"  {R:>3} replicas ({per:>2}/disp):"]
+        for nm in want:
+            bits.append(f"  {nm} {row[nm]['minutes']:7.2f} min "
+                        f"({row[nm]['us_per_replica_sweep']:6.3f} us)")
+        if row["change_pct"] is not None:
+            bits.append(f"   {row['change_pct']:+6.1f}%")
+        print("".join(bits), flush=True)
 
     with open(f"/out/{tag}.json", "w") as f:
         json.dump(res, f, indent=1)
@@ -8714,26 +8721,29 @@ def _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps):
 
 @app.function(gpu="H100", image=triton_image, timeout=60 * 90,
               volumes={"/out": vol})
-def state_ladder_1(tag, Rd, L, reps, n_temps, sweeps, by, warps):
-    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps)
+def state_ladder_1(tag, Rd, L, reps, n_temps, sweeps, by, warps,
+                   only=None):
+    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps, only)
 
 
 @app.function(gpu="H100:2", image=triton_image, timeout=60 * 90,
               volumes={"/out": vol})
-def state_ladder_2(tag, Rd, L, reps, n_temps, sweeps, by, warps):
-    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps)
+def state_ladder_2(tag, Rd, L, reps, n_temps, sweeps, by, warps,
+                   only=None):
+    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps, only)
 
 
 @app.function(gpu="H100:4", image=triton_image, timeout=60 * 90,
               volumes={"/out": vol})
-def state_ladder_4(tag, Rd, L, reps, n_temps, sweeps, by, warps):
-    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps)
+def state_ladder_4(tag, Rd, L, reps, n_temps, sweeps, by, warps,
+                   only=None):
+    return _state_ladder(tag, Rd, L, reps, n_temps, sweeps, by, warps, only)
 
 
 @app.local_entrypoint()
 def state_ladder(n_temps: int = 200, sweeps: int = 20000, rd: float = 18.30,
                  layers: int = 5, by: int = 4, warps: int = 4,
-                 reps: str = "", tag: str = "state_ladder"):
+                 reps: str = "", only1: str = "", tag: str = "state_ladder"):
     """One state, 20k sweeps, 50 replicas, on one, two and four GPUs.
 
     Fifty replicas cannot be sharded four ways, so the four-device call gets
@@ -8746,5 +8756,8 @@ def state_ladder(n_temps: int = 200, sweeps: int = 20000, rd: float = 18.30,
                          (4, state_ladder_4, [48, 52])):
         reps_n = rl if rl else dflt
         print(f"\n########## {nd} GPU ##########", flush=True)
+        # `only1` restricts the ONE-device call, whose standard arm is the
+        # most expensive cell in the table by a wide margin.
+        o = [x for x in only1.split(",") if x] if (nd == 1 and only1) else None
         fn.remote(f"{tag}_{nd}gpu", rd, layers, reps_n, n_temps, sweeps, by,
-                  warps)
+                  warps, o)

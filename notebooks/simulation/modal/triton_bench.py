@@ -352,12 +352,25 @@ def run_states(reps=(50, 500), devices=(1, 2), n_temps=10, sweeps=20000,
               KDM=0.880, g=float(np.deg2rad(90.0)))
 
     import triton_halo as TH
+
+    # Nothing is timed before the physics is proven in THIS run. A clock
+    # nobody checked does not belong on a chart, even when the same file
+    # verified elsewhere and its checksum matches.
+    chk = verify(geo, by=by, warps=warps, So=So)
+    if not chk["ok"]:
+        print("\n  la fisica no coincide: no se cronometra nada", flush=True)
+        if out:
+            json.dump(dict(label=label, env=environment(), verify=chk,
+                           ok=False, rows=[]), open(out, "w"), indent=1)
+        return dict(label=label, verify=chk, ok=False, rows=[])
+    print("", flush=True)
+
     annF = TH.build_anneal_full(geo, BY=int(by), num_warps=int(warps))
     avail = jax.local_device_count()
     res = dict(label=label, env=environment(), n_temps=int(n_temps),
                sweeps=int(sweeps), n_therm=n_therm, n_meas=n_meas,
                measured_sweeps=measured, full_sweeps=full,
-               devices_available=avail, rows=[])
+               devices_available=avail, verify=chk, rows=[])
     print(f"{avail} T4 visibles  |  escalera medida {n_temps}T x "
           f"{n_therm}+{n_meas} = {measured:,} barridos", flush=True)
     print(f"  el reloj a 200 T se reporta como tasa x {full:,} barridos",
@@ -420,3 +433,133 @@ def run_states(reps=(50, 500), devices=(1, 2), n_temps=10, sweeps=20000,
         json.dump(res, open(out, "w"), indent=1)
         print(f"\n  guardado {out}", flush=True)
     return res
+
+
+def verify(geo, by=4, warps=4, So=1.0, batch=8, n_eq=400, temps=(20.0, 5.0, 1.0)):
+    """Prove the physics before any clock is believed, in seconds.
+
+    This exists because `run_states` used to time four cells and report them
+    with no physics evidence of its own: the verification lived in a different
+    run, and the argument reduced to "the same file ran there, and its sha256
+    matches". That is a real chain of evidence but it is not a measurement,
+    and a number nobody checked in the run that produced it should not be on
+    a chart. These checks cost seconds against tens of minutes of stopwatch.
+
+    Two tests, in the order that matters:
+
+      1. the stencil against `sim_core.substep` on IDENTICAL randomness, which
+         must give ZERO differing spins -- an exactness test, no statistics;
+      2. both engines to equilibrium with their OWN randomness, whose energies
+         must agree within the spread the run itself reports, which is what
+         catches a degenerate proposal that accepts everything or nothing.
+    """
+    import jax
+    import jax.numpy as jnp
+    import sim_core as S
+    import triton_halo as TH
+
+    kB = 0.086173404
+    beta = 1.0 / (kB * 5.0)
+    eng = S.build_engine(geo)
+    surf = jnp.asarray(geo["surface"][None, ...])
+    ev = jnp.asarray(geo["even"][None, ..., None])
+    od = jnp.asarray(geo["odd"][None, ..., None])
+    n_act = float(geo["n_active"])
+    P0 = dict(Jex=1.0, Kan1=0.177, Kan2=0.0, KanS=0.139, Hex=0.483,
+              KDM=0.880, g=float(np.deg2rad(90.0)))
+    mk = lambda b: {k: jnp.full((b, 1, 1, 1), float(v), jnp.float32)
+                    for k, v in P0.items()}
+
+    out = dict(exact=[], physics=[])
+    print("=== exactitud: el stencil contra sim_core.substep, "
+          "misma aleatoriedad ===", flush=True)
+    B = int(batch)
+    P = mk(B)
+    k1 = jnp.where(surf, P["KanS"], P["Kan1"])
+    sp = S.init_spins(jax.random.PRNGKey(3), geo, B)
+    kt, ka = jax.random.split(jax.random.PRNGKey(101))
+    tr = jax.random.normal(kt, sp.shape)
+    tr = tr / jnp.linalg.norm(tr, axis=-1, keepdims=True) * So
+    ru = jax.random.uniform(ka, sp.shape[:-1])
+    sub = TH.build(geo, BY=int(by), num_warps=int(warps), So=So)
+    par = TH.pack_params(P, B)
+    spP, trP = TH.planar(sp), TH.planar(tr)
+
+    an = lambda s, kk: (kk * ((s[..., 0] * s[..., 1]) ** 2
+                              + (s[..., 0] * s[..., 2]) ** 2
+                              + (s[..., 1] * s[..., 2]) ** 2)
+                        + P["Kan2"] * (s[..., 0] * s[..., 1] * s[..., 2]) ** 2)
+    for parity, mask, nm in ((0, ev, "par"), (1, od, "impar")):
+        trm = jnp.where(mask, tr, sp)
+        dS = trm - sp
+        xp = jnp.roll(sp, -1, 3); xm = jnp.roll(sp, 1, 3)
+        yp = jnp.roll(sp, -1, 2); ym = jnp.roll(sp, 1, 2)
+        zp = jnp.roll(sp, -1, 1).at[:, -1].set(0.0)
+        zm = jnp.roll(sp, 1, 1).at[:, 0].set(0.0)
+        dE = -P["Jex"] * jnp.sum(dS * (xp + xm + yp + ym + zp + zm), -1)
+        dE = dE + an(trm, k1) - an(sp, k1)
+        dE = dE - P["KDM"] * (dS[..., 1] * (xp[..., 2] - xm[..., 2])
+                              - dS[..., 2] * (xp[..., 1] - xm[..., 1])
+                              + dS[..., 2] * (yp[..., 0] - ym[..., 0])
+                              - dS[..., 0] * (yp[..., 2] - ym[..., 2]))
+        dE = dE - P["Hex"] * (dS[..., 0] * jnp.cos(P["g"])
+                              + dS[..., 2] * jnp.sin(P["g"]))
+        acc = ((dE < 0) | (ru < jnp.exp(-dE * beta)))[..., None] & mask
+        ref = jnp.where(acc, trm, sp)
+        got, dE_t = sub(spP, k1, par, beta, 0, parity, trP, ru, want_de=True)
+        sel = np.broadcast_to(np.asarray(mask[..., 0]), dE.shape)
+        mad = float(np.max(np.abs(np.asarray(dE)[sel]
+                                  - np.asarray(dE_t)[sel])))
+        bad = int(np.sum(np.asarray(ref) != np.asarray(TH.unplanar(got))))
+        tot = int(np.asarray(ref).size)
+        out["exact"].append(dict(sublattice=nm, dE_max_abs=mad,
+                                 spin_mismatch=bad, spin_total=tot))
+        print(f"  {nm:>5}: dE max |dif| {mad:.3e}   espines distintos "
+              f"{bad}/{tot}", flush=True)
+
+    print("\n=== fisica: las dos cadenas a equilibrio, cada una con su RNG ===",
+          flush=True)
+    Bp = 16
+    Pp = mk(Bp)
+    k1p = jnp.where(surf, Pp["KanS"], Pp["Kan1"])
+    parp = TH.pack_params(Pp, Bp)
+    spE = S.init_spins(jax.random.PRNGKey(11), geo, Bp)
+    subp = TH.build(geo, BY=int(by), num_warps=int(warps), So=So)
+    for T in temps:
+        bT = 1.0 / (kB * T)
+
+        def jx(s):
+            def body(i, v):
+                st, k = v
+                k, a, b = jax.random.split(k, 3)
+                st = eng["substep"](st, a, bT, ev, Pp, k1p)
+                st = eng["substep"](st, b, bT, od, Pp, k1p)
+                return st, k
+            return jax.lax.fori_loop(0, int(n_eq), body,
+                                     (s, jax.random.PRNGKey(77)))[0]
+
+        sj = jax.block_until_ready(jax.jit(jx)(spE))
+        st = TH.unplanar(jax.block_until_ready(jax.jit(
+            TH.sweeps(subp, k1p, parp, bT, int(n_eq)))(TH.planar(spE))))
+        ej = float(jnp.mean(eng["energy"](sj, Pp, k1p)) / n_act)
+        et = float(jnp.mean(eng["energy"](st, Pp, k1p)) / n_act)
+        sd = float(jnp.std(eng["energy"](sj, Pp, k1p)) / n_act)
+        nrm = float(jnp.max(jnp.abs(
+            jnp.linalg.norm(st, axis=-1)
+            - jnp.asarray(geo["disco"][None]).astype(jnp.float32))))
+        row = dict(T=T, E_prod=ej, E_halo=et, E_sd=sd,
+                   sigma=abs(et - ej) / (sd + 1e-30), norm_err=nrm,
+                   M_prod=float(jnp.mean(eng["magnetization"](sj)[0])),
+                   M_halo=float(jnp.mean(eng["magnetization"](st)[0])))
+        out["physics"].append(row)
+        print(f"  T={T:>5.1f}  E/sitio {ej:+9.5f} / {et:+9.5f}  "
+              f"({row['sigma']:.2f} sigma)   |M| {row['M_prod']:.4f} / "
+              f"{row['M_halo']:.4f}   |norma-1| {nrm:.1e}", flush=True)
+
+    out["exact_ok"] = all(r["spin_mismatch"] == 0 for r in out["exact"])
+    out["physics_ok"] = all(r["sigma"] < 3.0 and r["norm_err"] < 1e-5
+                            for r in out["physics"])
+    out["ok"] = bool(out["exact_ok"] and out["physics_ok"])
+    print(f"\n  -> {'la fisica coincide' if out['ok'] else 'AVISO: la fisica NO coincide'}",
+          flush=True)
+    return out
