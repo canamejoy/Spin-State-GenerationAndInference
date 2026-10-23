@@ -38,6 +38,9 @@ FACTOR = {
     "t4_1_50": 20, "t4_2_50": 20,                        # 10 T, overridden
     "t4_1_500": 20, "t4_2_500": 20,
 }
+# A cell where only one of the two arms was timed at full length.
+PARTIAL = {}
+
 CPU_FACTOR = "tasa"      # the CPU bar comes from a rate, not a ladder run
 
 
@@ -56,8 +59,25 @@ def load():
                              r["kernel"]["us_per_replica_sweep"])
         d[f"h100_{n}_50_repl"] = r["replicas"]
         s = json.load(open(f"{CUR}/states10_{n}gpu.json"))["rows"][0]
-        d[f"h100_{n}_500"] = (s["produccion"]["us_per_replica_sweep"],
-                              s["kernel"]["us_per_replica_sweep"])
+        e, o = (s["produccion"]["us_per_replica_sweep"],
+                s["kernel"]["us_per_replica_sweep"])
+        # The 200-temperature run overrides each cell it actually timed. Its
+        # one-device call skipped the standard arm, which alone cost more than
+        # the rest of the table, so that cell keeps its x5 value and factor.
+        try:
+            f = json.load(open(f"{CUR}/states10full_{n}gpu.json"))["rows"][0]
+            got = []
+            if "produccion" in f:
+                e = f["produccion"]["us_per_replica_sweep"]; got.append("e")
+            if "kernel" in f:
+                o = f["kernel"]["us_per_replica_sweep"]; got.append("o")
+            if len(got) == 2:
+                FACTOR[f"h100_{n}_500"] = 1
+            else:
+                PARTIAL[f"h100_{n}_500"] = got
+        except FileNotFoundError:
+            pass
+        d[f"h100_{n}_500"] = (e, o)
     # The ten-temperature run supplies every T4 cell...
     try:
         st = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4.json"))
@@ -213,8 +233,11 @@ def build(d, repl, with_cpu):
             continue
         e, o = d[k]
         m = FACTOR.get(k, 1)
-        rows.append((label, [("estandar", clock(e, repl), m),
-                             ("optimizado", clock(o, repl), m)]))
+        pa = PARTIAL.get(k, [])
+        rows.append((label, [("estandar", clock(e, repl),
+                              1 if "e" in pa else m),
+                             ("optimizado", clock(o, repl),
+                              1 if "o" in pa else m)]))
     return rows
 
 
