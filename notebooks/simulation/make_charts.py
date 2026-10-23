@@ -37,6 +37,8 @@ FACTOR = {
     "h100_1_500": 5, "h100_2_500": 5, "h100_4_500": 5,   # 40 T
     "t4_1_50": 20, "t4_2_50": 20,                        # 10 T, overridden
     "t4_1_500": 20, "t4_2_500": 20,
+    "h100_1_5000": 100, "h100_2_5000": 100,                # 2 T, 100 states
+    "h100_4_5000": 100,
 }
 # A cell where only one of the two arms was timed at full length.
 PARTIAL = {}
@@ -77,7 +79,29 @@ def load():
                 PARTIAL[f"h100_{n}_500"] = got
         except FileNotFoundError:
             pass
+        if n == 1:
+            # the arm `state_ladder` was told to skip, timed on its own at
+            # 80 of 200 temperatures
+            try:
+                m1 = json.load(open(f"{CUR}/missing_1gpu.json"))
+                r1 = m1["rows"][0]
+                e = r1["produccion"]["us_per_replica_sweep"]
+                # ONLY the standard arm came from this 80-temperature run;
+                # the optimised one was already timed over all 200, and
+                # PARTIAL is what records that, so it must not be cleared.
+                FACTOR["h100_1_500"] = round(200 / m1["n_temps"], 1)
+            except FileNotFoundError:
+                pass
         d[f"h100_{n}_500"] = (e, o)
+        # 100 states
+        try:
+            c = json.load(open(f"{CUR}/states100_{n}gpu.json"))
+            r = c["rows"][0]
+            d[f"h100_{n}_5000"] = (r["produccion"]["us_per_replica_sweep"],
+                                   r["kernel"]["us_per_replica_sweep"])
+            FACTOR[f"h100_{n}_5000"] = round(200 / c["n_temps"])
+        except FileNotFoundError:
+            pass
     # The ten-temperature run supplies every T4 cell...
     try:
         st = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4.json"))
@@ -244,7 +268,7 @@ def build(d, repl, with_cpu):
 def main():
     d = load()
     out = {}
-    for repl, states in ((50, 1), (500, 10)):
+    for repl, states in ((50, 1), (500, 10), (5000, 100)):
         for with_cpu in (True, False):
             rows = build(d, repl, with_cpu)
             n = f"{states}estado{'s' if states > 1 else ''}_" \
@@ -262,7 +286,7 @@ def main():
             f.write(svg)
     print("generadas:", ", ".join(out))
     # The numbers, printed so they can be checked against the bars.
-    for repl, states in ((50, 1), (500, 10)):
+    for repl, states in ((50, 1), (500, 10), (5000, 100)):
         print(f"\n=== {states} estado(s), {repl} réplicas ===")
         for label, bars in build(d, repl, True):
             for name, v, fac in bars:

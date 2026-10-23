@@ -1,0 +1,30 @@
+{
+ "available": true,
+ "gpu": {
+  "repr": "cuda:0",
+  "kind": "NVIDIA H100 80GB HBM3",
+  "platform": "gpu",
+  "n_devices": 1,
+  "smi": [
+   "NVIDIA H100 80GB HBM3, GPU-b45243ef-66a8-6df6-8944-dc8b0ebd2d29, 81559 MiB, 1980 MHz, 610.57.04, 5"
+  ]
+ },
+ "n_devices": 1,
+ "n_temps": 80,
+ "sweeps": 20000,
+ "n_therm": 13333,
+ "n_meas": 6667,
+ "total_sweeps": 1600000,
+ "rows": [
+  {
+   "replicas": 500,
+   "per_device": 500,
+   "produccion": {
+    "wall_s": 3046.982167237,
+    "minutes": 50.783036120616664,
+    "us_per_replica_sweep": 3.80872770904625
+   },
+   "change_pct": null
+  }
+ ]
+}

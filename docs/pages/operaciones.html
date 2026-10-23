@@ -1145,7 +1145,9 @@ lo que queda extrapolado es poco:
         <td class="n">200 T · 4 000 000</td>
         <td class="best"><b>medidas</b></td></tr>
     <tr><td>10 estados — <b>1× H100 estándar</b></td>
-        <td class="n">40 T · 800 000</td><td class="n">×5</td></tr>
+        <td class="n">80 T · 1 600 000</td><td class="n">×2.5</td></tr>
+    <tr><td><b>100 estados</b> — H100 1/2/4</td>
+        <td class="n">2 T · 40 000</td><td class="n">×100</td></tr>
     <tr><td>10 estados — T4 1/2</td><td class="n">10 T · 200 000</td>
         <td class="n">×20</td></tr>
     <tr><td>CPU</td><td class="n">tasa a 100 réplicas</td>
@@ -1153,11 +1155,10 @@ lo que queda extrapolado es poco:
   </tbody>
 </table></div>
 
-<p>La única celda de H100 que sigue extrapolada es <b>1× H100 estándar con
-500 réplicas</b>, porque medirla costaba <b>$12.34</b> de los $24.27
-disponibles — más que todo el resto de la tabla junta. Es además la que menos
-se pierde: ya sabemos <i>por qué</i> está inflada, porque
-<code>v₂(500) = 2</code> le dispara el castigo del ancho de la sección 1.</p>
+<p><b>Esa celda ya se midió también</b>, a 80 de las 200 temperaturas: dio
+50.78 min, o <b>126.9 min</b> escalado, contra los 127.09 que decía el ×5.
+<b>Coinciden al 0.1 %.</b> No se midió a 200 T porque costaba $10.48 de los
+$8.64 que quedaban en la cuenta.</p>
 
 <h4>Qué tan buenas eran las extrapolaciones</h4>
 
@@ -1186,13 +1187,16 @@ confiar en él:</p>
         <td class="n">18.57 min</td><td class="best">−1.2 %</td></tr>
     <tr><td>4× H100 optimizado</td><td class="n">6.87 min ×5</td>
         <td class="n">6.33 min</td><td class="n">−7.9 %</td></tr>
+    <tr><td>1× H100 estándar<br><span style="opacity:.7">500 réplicas</span></td>
+        <td class="n">127.09 min ×5</td>
+        <td class="n">126.9 min ×2.5</td><td class="best">−0.1 %</td></tr>
   </tbody>
 </table></div>
 
 <div class="key">
-  <p><b>Nueve celdas, y el peor error es 7.9 %; siete están bajo el 3 %.</b>
+  <p><b>Diez celdas, y el peor error es 7.9 %; ocho están bajo el 3 %.</b>
   Incluso el ×20 acertó dentro del 5.4 %.</p>
-  <p><b>Y erraban por exceso, no por defecto:</b> ocho de nueve medidas salieron
+  <p><b>Y erraban por exceso, no por defecto:</b> nueve de diez medidas salieron
   <b>más rápidas</b> que lo extrapolado. Yo había argumentado lo contrario para
   la T4 —que el estrangulamiento térmico de una tarjeta de 70 W haría de la
   extrapolación un <b>piso</b>— y el dato lo <b>refuta</b>. La celda corta ya
@@ -1365,7 +1369,7 @@ aprovecha</b>.</p></div>
 <text x="453.5" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">2x T4</text>
 <rect x="543.0" y="279.3" width="58.0" height="128.7" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
 <text x="572.0" y="273.3" font-size="11.5" text-anchor="middle" fill="currentColor">2.1 h</text>
-<text x="572.0" y="260.3" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×5</text>
+<text x="572.0" y="260.3" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×2.5</text>
 <rect x="608.0" y="330.6" width="58.0" height="77.4" rx="2.5" fill="#2e7d32"/>
 <text x="637.0" y="324.6" font-size="11.5" text-anchor="middle" fill="currentColor">22.6 min</text>
 <text x="604.5" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">1x H100</text>
@@ -1420,7 +1424,7 @@ aprovecha</b>.</p></div>
 <text x="347.8" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">2x T4</text>
 <rect x="467.5" y="356.0" width="58.0" height="52.0" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
 <text x="496.5" y="350.0" font-size="11.5" text-anchor="middle" fill="currentColor">2.1 h</text>
-<text x="496.5" y="337.0" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×5</text>
+<text x="496.5" y="337.0" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×2.5</text>
 <rect x="532.5" y="398.8" width="58.0" height="9.2" rx="2.5" fill="#2e7d32"/>
 <text x="561.5" y="392.8" font-size="11.5" text-anchor="middle" fill="currentColor">22.6 min</text>
 <text x="529.0" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">1x H100</text>
@@ -1480,7 +1484,136 @@ es que <code>v₂(500) = 2</code> lo castigaba con una tarjeta y
 <code>v₂(250) = 1</code> lo libera con dos. <b>No escaló mejor: escapó de su
 propio castigo.</b></div>
 
-<h3>10.5 · La recomendación</h3>
+<h3>10.5 · Cien estados (5000 réplicas)</h3>
+
+<p>El trabajo donde el hardware por fin tiene con qué llenarse. 5000 réplicas
+dividen limpio entre uno, dos y cuatro dispositivos: 5000, 2500 y 1250 por
+tarjeta.</p>
+
+<svg viewBox="0 0 1000 470" width="100%" style="max-width:100%;font-family:system-ui,sans-serif" role="img" aria-label="100 estados (5000 réplicas)">
+<text x="8" y="22" font-size="17" font-weight="600" fill="currentColor">100 estados (5000 réplicas)</text>
+<text x="8" y="41" font-size="12.5" fill="currentColor" opacity=".72">100 estados, 5000 réplicas, escalera completa de producción (200 T × 20 000 barridos). ≈ = extrapolado desde una celda más corta</text>
+<rect x="880" y="48" width="11" height="11" rx="2" fill="#2e7d32"/>
+<text x="896" y="58" font-size="11.5" fill="currentColor" opacity=".8">optimizado</text>
+<rect x="794" y="48" width="11" height="11" rx="2" fill="#b00020"/>
+<text x="810" y="58" font-size="11.5" fill="currentColor" opacity=".8">estandar</text>
+<line x1="76" y1="408.0" x2="982" y2="408.0" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="412.0" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">16.7 min</text>
+<line x1="76" y1="339.6" x2="982" y2="339.6" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="343.6" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">2.8 h</text>
+<line x1="76" y1="271.2" x2="982" y2="271.2" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="275.2" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">27.8 h</text>
+<line x1="76" y1="202.8" x2="982" y2="202.8" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="206.8" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">11.6 d</text>
+<line x1="76" y1="134.4" x2="982" y2="134.4" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="138.4" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">115.7 d</text>
+<line x1="76" y1="66.0" x2="982" y2="66.0" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="70.0" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">1157.4 d</text>
+<line x1="76" y1="408.0" x2="982" y2="408.0" stroke="currentColor" stroke-opacity=".45"/>
+<rect x="160.2" y="130.8" width="58.0" height="277.2" rx="2.5" fill="#9e9e9e" fill-opacity="0.6"/>
+<text x="189.2" y="124.8" font-size="11.5" text-anchor="middle" fill="currentColor">130.7 d</text>
+<text x="189.2" y="111.8" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">tasa</text>
+<text x="189.2" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">CPU, 24 hilos</text>
+<rect x="354.2" y="285.4" width="58.0" height="122.6" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="383.2" y="279.4" font-size="11.5" text-anchor="middle" fill="currentColor">17.2 h</text>
+<text x="383.2" y="266.4" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="419.2" y="330.6" width="58.0" height="77.4" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="448.2" y="324.6" font-size="11.5" text-anchor="middle" fill="currentColor">3.8 h</text>
+<text x="448.2" y="311.6" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="415.8" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">1x H100</text>
+<rect x="580.8" y="305.0" width="58.0" height="103.0" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="609.8" y="299.0" font-size="11.5" text-anchor="middle" fill="currentColor">8.9 h</text>
+<text x="609.8" y="286.0" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="645.8" y="351.6" width="58.0" height="56.4" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="674.8" y="345.6" font-size="11.5" text-anchor="middle" fill="currentColor">1.9 h</text>
+<text x="674.8" y="332.6" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="642.2" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">2x H100</text>
+<rect x="807.2" y="340.0" width="58.0" height="68.0" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="836.2" y="334.0" font-size="11.5" text-anchor="middle" fill="currentColor">2.7 h</text>
+<text x="836.2" y="321.0" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="872.2" y="371.2" width="58.0" height="36.8" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="901.2" y="365.2" font-size="11.5" text-anchor="middle" fill="currentColor">57.6 min</text>
+<text x="901.2" y="352.2" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="868.8" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">4x H100</text>
+<text x="76" y="460" font-size="11.5" fill="currentColor" opacity=".6">reloj de la escalera completa (escala logarítmica)</text>
+</svg>
+<p>Y sin la CPU, que a 130 días aplasta cualquier escala:</p>
+<svg viewBox="0 0 1000 470" width="100%" style="max-width:100%;font-family:system-ui,sans-serif" role="img" aria-label="100 estados (5000 réplicas) — solo GPU">
+<text x="8" y="22" font-size="17" font-weight="600" fill="currentColor">100 estados (5000 réplicas) — solo GPU</text>
+<text x="8" y="41" font-size="12.5" fill="currentColor" opacity=".72">100 estados, 5000 réplicas, escalera completa de producción (200 T × 20 000 barridos). ≈ = extrapolado desde una celda más corta</text>
+<rect x="880" y="48" width="11" height="11" rx="2" fill="#2e7d32"/>
+<text x="896" y="58" font-size="11.5" fill="currentColor" opacity=".8">optimizado</text>
+<rect x="794" y="48" width="11" height="11" rx="2" fill="#b00020"/>
+<text x="810" y="58" font-size="11.5" fill="currentColor" opacity=".8">estandar</text>
+<line x1="76" y1="408.0" x2="982" y2="408.0" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="412.0" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">0</text>
+<line x1="76" y1="358.7" x2="982" y2="358.7" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="362.7" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">2.8 h</text>
+<line x1="76" y1="309.3" x2="982" y2="309.3" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="313.3" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">5.6 h</text>
+<line x1="76" y1="260.0" x2="982" y2="260.0" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="264.0" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">8.3 h</text>
+<line x1="76" y1="210.7" x2="982" y2="210.7" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="214.7" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">11.1 h</text>
+<line x1="76" y1="161.3" x2="982" y2="161.3" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="165.3" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">13.9 h</text>
+<line x1="76" y1="112.0" x2="982" y2="112.0" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="116.0" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">16.7 h</text>
+<line x1="76" y1="408.0" x2="982" y2="408.0" stroke="currentColor" stroke-opacity=".45"/>
+<rect x="165.5" y="102.6" width="58.0" height="305.4" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="194.5" y="96.6" font-size="11.5" text-anchor="middle" fill="currentColor">17.2 h</text>
+<text x="194.5" y="83.6" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="230.5" y="341.2" width="58.0" height="66.8" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="259.5" y="335.2" font-size="11.5" text-anchor="middle" fill="currentColor">3.8 h</text>
+<text x="259.5" y="322.2" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="227.0" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">1x H100</text>
+<rect x="467.5" y="249.7" width="58.0" height="158.3" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="496.5" y="243.7" font-size="11.5" text-anchor="middle" fill="currentColor">8.9 h</text>
+<text x="496.5" y="230.7" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="532.5" y="375.0" width="58.0" height="33.0" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="561.5" y="369.0" font-size="11.5" text-anchor="middle" fill="currentColor">1.9 h</text>
+<text x="561.5" y="356.0" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="529.0" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">2x H100</text>
+<rect x="769.5" y="359.3" width="58.0" height="48.7" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="798.5" y="353.3" font-size="11.5" text-anchor="middle" fill="currentColor">2.7 h</text>
+<text x="798.5" y="340.3" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="834.5" y="390.9" width="58.0" height="17.1" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="863.5" y="384.9" font-size="11.5" text-anchor="middle" fill="currentColor">57.6 min</text>
+<text x="863.5" y="371.9" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="831.0" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">4x H100</text>
+<text x="76" y="460" font-size="11.5" fill="currentColor" opacity=".6">reloj de la escalera completa</text>
+</svg>
+<div class="key">
+  <p><b>El motor optimizado escala casi perfecto</b>:
+  0.677 → 0.334 → 0.173 µs/réplica-barrido de una a cuatro tarjetas, un
+  <b>3.91×</b>. Compáralo con el <b>1.10×</b> que daba con un solo estado: es
+  la misma máquina y el mismo kernel, lo único que cambió es que hay trabajo
+  suficiente.</p>
+  <p>Y la ganancia contra el estándar llega a <b>−78.1 %</b> y <b>−79.2 %</b>
+  en una y dos tarjetas, las cifras más altas de todo el estudio.</p>
+</div>
+
+<div class="note"><strong>Dos avisos de lectura.</strong>
+Estas seis barras son <b>×100</b> desde una escalera de 2 temperaturas. El
+factor asusta, pero la lección de la sección 10.2 fue que <b>el error crece
+cuando la celda se encoge en reloj</b>, no cuando el factor crece — y con 5000
+réplicas una escalera de 2 T ya da celdas de 10.3 y 5.4 minutos, más largas
+que el ×20 de T4 que se validó al 5 %. La excepción es
+<b>4× optimizado, 0.58 min</b>: es la celda más corta de la tabla y por tanto
+la menos fiable, igual que la de 1.3 min que dio el peor error (−7.9 %) en la
+puntuación.
+<br><br>El <b>estándar</b> parece escalar superlinealmente de dos a cuatro
+tarjetas (5.35 → 1.64 min, un 3.3× con el doble de hardware). Otra vez no es
+escala: <code>v₂(2500) = 2</code> lo castiga y <code>v₂(1250) = 1</code> lo
+libera. <b>Escapa de su propio castigo</b>, como ya hizo a 500 réplicas.</div>
+
+<div class="note"><strong>Falta la T4.</strong> Las barras de T4 no están
+porque a 5000 réplicas no se han medido, y transferir la tasa del caso de 500
+no vale: la tasa depende de las réplicas <b>por dispositivo</b>, y en H100 el
+estándar pasó de 1.074 a 1.605 µs al subir de 250 a 2500 por tarjeta. La
+medición está corriendo en Kaggle y entra cuando llegue.</div>
+
+<h3>10.6 · La recomendación</h3>
 
 <div class="key">
   <p><b>Para un estado</b>: una sola H100 con el motor optimizado,

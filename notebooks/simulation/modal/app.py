@@ -8761,3 +8761,18 @@ def state_ladder(n_temps: int = 200, sweeps: int = 20000, rd: float = 18.30,
         o = [x for x in only1.split(",") if x] if (nd == 1 and only1) else None
         fn.remote(f"{tag}_{nd}gpu", rd, layers, reps_n, n_temps, sweeps, by,
                   warps, o)
+
+
+@app.local_entrypoint()
+def state_one(reps: int = 500, n_temps: int = 80, sweeps: int = 20000,
+              arms: str = "produccion", rd: float = 18.30, layers: int = 5,
+              by: int = 4, warps: int = 4, tag: str = "state_one"):
+    """One device, one engine: the cell that `state_ladder` was told to skip.
+
+    `state_ladder` fans out over one, two and four devices, so asking it for a
+    single cell would re-time five others. This exists to close exactly the
+    arm that the budget left extrapolated.
+    """
+    state_ladder_1.remote(f"{tag}_1gpu", rd, layers, [int(reps)], n_temps,
+                          sweeps, by, warps,
+                          [x for x in arms.split(",") if x])
