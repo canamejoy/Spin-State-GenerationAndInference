@@ -39,6 +39,7 @@ FACTOR = {
     "t4_1_500": 20, "t4_2_500": 20,
     "h100_1_5000": 100, "h100_2_5000": 100,                # 2 T, 100 states
     "h100_4_5000": 100,
+    "t4_1_5000": 100, "t4_2_5000": 100,                    # 2 T, 100 states
 }
 # A cell where only one of the two arms was timed at full length.
 PARTIAL = {}
@@ -114,6 +115,15 @@ def load():
     # ...and the full 200-temperature run overrides the one-state ones, which
     # it measured outright. Those keys then drop out of FACTOR, so the chart
     # draws them solid.
+    # 100 states on the T4, measured over two temperatures
+    try:
+        c1 = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4_100.json"))
+        for r in c1["rows"]:
+            d[f"t4_{r['devices']}_{r['replicas']}"] = (
+                r["estandar"]["us_per_replica_sweep"],
+                r["optimizado"]["us_per_replica_sweep"])
+    except FileNotFoundError:
+        pass
     try:
         fu = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4_full.json"))
         for r in fu["rows"]:
