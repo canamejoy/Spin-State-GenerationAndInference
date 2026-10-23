@@ -80,6 +80,21 @@ def code(s):
 
 def embed(name):
     src = io.open(f"{MOD}/{name}", encoding="utf-8").read()
+    # Parsing only proves the file is syntactically Python. Two Kaggle runs
+    # died on things a static check sees: a module that was never written and
+    # a call passing a name the function does not take. pyflakes is checked
+    # here, at embed time, because a GPU run is an expensive linter.
+    try:
+        import subprocess, sys
+        r = subprocess.run([sys.executable, "-m", "pyflakes", f"{MOD}/{name}"],
+                           capture_output=True, text=True)
+        bad = [l for l in r.stdout.splitlines()
+               if "undefined name" in l or "imported but unused" not in l
+               and "missing placeholders" not in l
+               and "never used" not in l and l.strip()]
+        assert not bad, f"{name} no pasa pyflakes:\n" + "\n".join(bad)
+    except ImportError:
+        print(f"  AVISO: pyflakes no disponible, {name} sin revisar")
     h = hashlib.sha256(src.encode()).hexdigest()
     return code(
         f"# {name} -- byte-identical to the repository copy. sha256 {h}\n"

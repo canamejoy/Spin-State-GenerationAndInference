@@ -318,7 +318,8 @@ def run(batches=(64, 65, 100, 101), layers=(5,), repeats=5, steps=200,
 
 
 def run_states(reps=(50, 500), devices=(1, 2), n_temps=10, sweeps=20000,
-               Rd=18.30, L=5, by=4, warps=4, out=None, label="kaggle-states"):
+               Rd=18.30, L=5, by=4, warps=4, So=1.0, out=None,
+               label="kaggle-states"):
     """One state and ten states, on one card and on two.
 
     Kaggle hands out two T4s, which is exactly the pair this needs. The
@@ -356,7 +357,7 @@ def run_states(reps=(50, 500), devices=(1, 2), n_temps=10, sweeps=20000,
     # Nothing is timed before the physics is proven in THIS run. A clock
     # nobody checked does not belong on a chart, even when the same file
     # verified elsewhere and its checksum matches.
-    chk = verify(geo, by=by, warps=warps, So=So)
+    chk = verify(geo, by=by, warps=warps, So=So)   # So now a real parameter
     if not chk["ok"]:
         print("\n  la fisica no coincide: no se cronometra nada", flush=True)
         if out:
@@ -365,7 +366,7 @@ def run_states(reps=(50, 500), devices=(1, 2), n_temps=10, sweeps=20000,
         return dict(label=label, verify=chk, ok=False, rows=[])
     print("", flush=True)
 
-    annF = TH.build_anneal_full(geo, BY=int(by), num_warps=int(warps))
+    annF = TH.build_anneal_full(geo, BY=int(by), num_warps=int(warps), So=So)
     avail = jax.local_device_count()
     res = dict(label=label, env=environment(), n_temps=int(n_temps),
                sweeps=int(sweeps), n_therm=n_therm, n_meas=n_meas,
