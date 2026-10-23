@@ -27,6 +27,20 @@ SW_MEASURED_H100_1 = 200 * 20000        # the 50-replica arms ran full length
 SW_MEASURED_H100_10 = 40 * 20000        # the 500-replica arms ran 40 of 200
 
 
+# How far each cell was scaled to reach the 200-temperature ladder. 1 means
+# the stopwatch read it directly; `load` sets 1 on any cell a full-length run
+# later measured. Carrying the FACTOR rather than a boolean matters, since a
+# x5 stretch and a x20 one do not deserve the same trust and a bare tilde
+# hides the difference.
+FACTOR = {
+    "h100_1_50": 1, "h100_2_50": 1, "h100_4_50": 1,      # 200 T, measured
+    "h100_1_500": 5, "h100_2_500": 5, "h100_4_500": 5,   # 40 T
+    "t4_1_50": 20, "t4_2_50": 20,                        # 10 T, overridden
+    "t4_1_500": 20, "t4_2_500": 20,
+}
+CPU_FACTOR = "tasa"      # the CPU bar comes from a rate, not a ladder run
+
+
 def load():
     d = {}
     c = json.load(open(f"{ROOT}/notebooks/simulation/results/cpu_rate_repeat.json"))
@@ -44,6 +58,7 @@ def load():
         s = json.load(open(f"{CUR}/states10_{n}gpu.json"))["rows"][0]
         d[f"h100_{n}_500"] = (s["produccion"]["us_per_replica_sweep"],
                               s["kernel"]["us_per_replica_sweep"])
+    # The ten-temperature run supplies every T4 cell...
     try:
         st = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4.json"))
         for r in st["rows"]:
@@ -52,6 +67,18 @@ def load():
                     r["optimizado"]["us_per_replica_sweep"])
     except FileNotFoundError:
         print("  AVISO: aun no hay datos de T4 para estados; se omiten")
+    # ...and the full 200-temperature run overrides the one-state ones, which
+    # it measured outright. Those keys then drop out of FACTOR, so the chart
+    # draws them solid.
+    try:
+        fu = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4_full.json"))
+        for r in fu["rows"]:
+            k = f"t4_{r['devices']}_{r['replicas']}"
+            d[k] = (r["estandar"]["us_per_replica_sweep"],
+                    r["optimizado"]["us_per_replica_sweep"])
+            FACTOR[k] = 1
+    except FileNotFoundError:
+        pass
     return d
 
 
@@ -170,19 +197,6 @@ def chart(rows, title, sub, log, w=1000, h=470):
              f'{" (escala logar\u00edtmica)" if log else ""}</text>')
     o.append('</svg>')
     return "\n".join(o)
-
-
-# How far each cell was scaled to reach the 200-temperature ladder. 1 means
-# the stopwatch read it directly. Carrying the FACTOR rather than a boolean
-# matters: a x5 extrapolation on an H100 and a x20 one on a throttling T4
-# deserve very different trust, and a bare tilde hides that.
-FACTOR = {
-    "h100_1_50": 1, "h100_2_50": 1, "h100_4_50": 1,      # 200 T, measured
-    "h100_1_500": 5, "h100_2_500": 5, "h100_4_500": 5,   # 40 T
-    "t4_1_50": 20, "t4_2_50": 20,                        # 10 T
-    "t4_1_500": 20, "t4_2_500": 20,
-}
-CPU_FACTOR = "tasa"      # the CPU bar comes from a rate, not a ladder run
 
 
 def build(d, repl, with_cpu):
