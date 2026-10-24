@@ -90,6 +90,7 @@ lote, y **no se usa sin verificarlo**: antes de cronometrar nada reproduce el
     "con su `sha256` verificado."),
  embed("sim_core.py"),
  embed("triton_halo.py"),
+ embed("sim_multishell.py"),
  embed("triton_bench.py"),
  md("## 4 · Lectura y verificación de los parámetros"),
  code(C.VALIDA_CELL),

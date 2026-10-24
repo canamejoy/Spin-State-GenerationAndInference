@@ -33,8 +33,8 @@ of two — a fact the proposal uses in Section 3.
 
 To each site $i \in \Lambda$ is attached a classical spin
 $\mathbf{s}_i \in \mathbb{R}^3$ with $\lVert \mathbf{s}_i \rVert = S_0$; the
-configuration is $\mathbf{s} = \{\mathbf{s}_i\}_{i \in \Lambda}$. Let
-$\mathcal{N}(i)$ denote the first-neighbour shell of $i$ restricted to $\Lambda$,
+configuration is $\mathbf{s} = \{\mathbf{s}_i\}_{i \in \Lambda}$. Let $\mathcal{N}(i) = \{ i + \mathbf{d} : \mathbf{d} \in \mathcal{D}_k,\,
+k \in \mathcal{S} \} \cap \Lambda$ be the interacting neighbourhood of $i$,
 and let $\hat{\mathbf{x}}, \hat{\mathbf{y}}, \hat{\mathbf{z}}$ be the lattice
 directions. The in-plane directions wrap; $z$ does not, so the top and bottom
 layers have no neighbour beyond them.
@@ -43,7 +43,8 @@ The energy has five terms:
 
 $$
 \mathcal{H}(\mathbf{s}) =
-  -J \sum_{\langle i j \rangle} \mathbf{s}_i \cdot \mathbf{s}_j
+  -\sum_{k \in \mathcal{S}} J_k \!\!\sum_{\langle i j \rangle_k}\!\!
+     \mathbf{s}_i \cdot \mathbf{s}_j
   \;+\; \sum_{i} \mathcal{A}_i(\mathbf{s}_i)
   \;-\; D \sum_{i} \Bigl[ \mathbf{s}_i \times \mathbf{s}_{i+\hat{\mathbf{x}}}
          \Bigr]_{y}
@@ -51,7 +52,11 @@ $$
   \;-\; \mathbf{H} \cdot \sum_i \mathbf{s}_i .
 $$
 
-The first term is the first-shell exchange, summed once per bond. The
+The first term is the exchange over the active shells $\mathcal{S} \subseteq
+\{1,2,3,4\}$, where $\langle i j \rangle_k$ runs once over each bond of shell
+$k$ and $\mathcal{D}_k$ is that shell's displacement set: the six displacements
+at squared distance 1, the twelve at 2, the eight at 3 and the six at 4. The
+first-shell constant is normalised, $J_1 = 1$, and sets the energy scale. The
 Dzyaloshinskii–Moriya term is **interfacial**: it runs over in-plane bonds only,
 with the sign shown. That restriction is a modelling commitment, not a
 simplification — the all-axes form is a different physical system, and on a
@@ -76,7 +81,7 @@ neighbours. Surface anisotropy therefore enters as a **field over sites**, not
 as a scalar, and that is why it is carried as an array of the same shape as one
 spin component throughout.
 
-## 2. The checkerboard Metropolis chain
+## 2. The multi-sublattice Metropolis chain
 
 Let $\beta = 1/k_B T$. A single-site Metropolis step at site $i$ draws a trial
 spin $\mathbf{t}_i$ uniformly on the sphere of radius $S_0$, forms
@@ -86,45 +91,65 @@ difference the single-site change produces. Because every term of $\mathcal{H}$
 couples $i$ only to $\mathcal{N}(i)$ and to itself, $\Delta E_i$ reads
 
 $$
-\Delta E_i = -J\, \Delta \mathbf{s}_i \cdot
-   \!\!\sum_{j \in \mathcal{N}(i)}\!\! \mathbf{s}_j
+\Delta E_i = -\, \Delta \mathbf{s}_i \cdot
+   \!\!\sum_{k \in \mathcal{S}} J_k
+   \!\!\sum_{\mathbf{d} \in \mathcal{D}_k}\!\! \mathbf{s}_{i + \mathbf{d}}
  + \mathcal{A}_i(\mathbf{t}_i) - \mathcal{A}_i(\mathbf{s}_i)
  - D\, \delta^{\text{DM}}_i - \mathbf{H} \cdot \Delta \mathbf{s}_i ,
 $$
 
 with $\delta^{\text{DM}}_i$ the in-plane cross-product difference of the DMI
-term. The quantity that matters for what follows is the **neighbour sum**
-$\mathbf{v}_i = \sum_{j \in \mathcal{N}(i)} \mathbf{s}_j$: it is the only part of
-$\Delta E_i$ that reaches outside site $i$.
+term. The DMI term stays on first-shell bonds whatever else is active, because it is
+interfacial by construction. The quantity that matters for what follows is the
+**weighted neighbour sum** $\mathbf{v}_i = \sum_{k \in \mathcal{S}} J_k
+\sum_{\mathbf{d} \in \mathcal{D}_k} \mathbf{s}_{i+\mathbf{d}}$: it is the only
+part of $\Delta E_i$ that reaches outside site $i$.
 
-Partition $\Lambda$ by the parity of the coordinate sum,
+Let $\gamma : \Lambda \to \{0, \dots, n_c - 1\}$ be a colouring of the
+lattice, with colour classes $\Lambda^{(c)} = \gamma^{-1}(c)$ so that
+$\Lambda = \bigsqcup_{c} \Lambda^{(c)}$. The colouring is **admissible** for the
+active shells when no displacement of any active shell preserves it,
 
 $$
-\Lambda^{(c)} = \{ i \in \Lambda : (x_i + y_i + z_i) \bmod 2 = c \},
-\qquad c \in \{0, 1\},
+\gamma(i) \neq \gamma(i + \mathbf{d})
+\qquad \text{for every } \mathbf{d} \in \mathcal{D}_k, \ k \in \mathcal{S}.
 $$
 
-so that $\Lambda = \Lambda^{(0)} \sqcup \Lambda^{(1)}$. With first neighbours
-only, every $j \in \mathcal{N}(i)$ has parity opposite to $i$. Consequently
-$\Delta E_i$ for $i \in \Lambda^{(c)}$ depends on no spin of $\Lambda^{(c)}$,
-and the sites of one colour may be updated **simultaneously** without changing
-the chain: the simultaneous update is an exact reordering of the sequential
-sweep, not an approximation of it. One sweep is two half-steps, $c = 0$ then
-$c = 1$.
+Under an admissible colouring, $\Delta E_i$ for $i \in \Lambda^{(c)}$ depends on
+no spin of $\Lambda^{(c)}$, so the sites of one colour may be updated
+**simultaneously** without changing the chain: the simultaneous update is an
+exact reordering of the sequential sweep, not an approximation of it. One sweep
+is $n_c$ passes, $c = 0$ through $n_c - 1$.
 
-This exactness holds only while the interaction graph is bipartite with respect
-to that colouring. Second- and fourth-shell exchange connect sites of the same
-parity and would break it, which is why those couplings are held at zero
-throughout.
+Admissibility is decided by the parity of each shell's displacement sums.
+Shells 1 and 3 have odd sums, so every such neighbour falls in the opposite
+class of a two-colouring and the interaction graph stays bipartite. Shells 2 and
+4 have even sums and it does not. Shell 4 further reaches distance two along a
+single axis, which no stride-two colouring separates, and therefore requires
+stride three on all three axes. The narrowest admissible colouring for each case
+is
+
+| active shells $\mathcal{S}$ | $\gamma(x,y,z)$ | $n_c$ |
+|---|---|---|
+| $\{1\}$ or $\{1,3\}$ | $(x+y+z) \bmod 2$ | 2 |
+| any set containing 2, none containing 4 | $(x \bmod 2,\ y \bmod 2,\ z \bmod 2)$ | 8 |
+| any set containing 4 | $(x \bmod 3,\ y \bmod 3,\ z \bmod 3)$ | 27 |
+
+The colouring in use is **verified** against equation (7) over the displacement
+sets of the active shells rather than taken from this table, so a combination
+the table does not anticipate is detected instead of assumed.
+
+The cost of a wider colouring falls on the parallelism and not on the work: a
+sweep performs $|\Lambda|$ site updates whatever $n_c$ is, but each pass
+performs only $|\Lambda| / n_c$ of them concurrently.
 
 ## 3. The proposal: a single fused kernel for the sweep
 
-The chain of Section 2 is the object being realised; the proposal changes only
-how one half-step is computed. In an array-programming realisation, the
-neighbour sum $\mathbf{v}_i$ of equation (4) is obtained by materialising six
-shifted copies of the configuration and adding them. The proposal replaces that
-with one kernel that never materialises a shifted copy, and it is defined by
-four components, each named for the property it delivers.
+The chain of Section 2 is the object being realised, and the proposal is the
+realisation of one of its passes as a single fused kernel. It is defined by four
+components, each named for the property it delivers, and it computes the
+weighted neighbour sum $\mathbf{v}_i$ of equation (5) without ever
+materialising a translate of the configuration.
 
 ### 3.1 Contiguous neighbour access: the component-planar layout
 
@@ -146,20 +171,18 @@ Let a thread block own a tile of $B_y$ rows by $B_x$ lanes of one layer. The
 stencil requires, for each of the three components, the tile itself and its
 four in-plane translates together with the two out-of-plane ones. The proposal
 obtains each translate as a **vector-shifted contiguous read**: the index
-expression is $x + 1$ applied to a contiguous run, not an address computed
-independently per lane. The distinction is the whole of the component. A
-per-lane address prevents the compiler from proving contiguity and yields
-scattered accesses; a shifted run keeps the access pattern a shifted contiguous
-segment — the same pattern the materialised copy would have produced — while the
-copy itself never exists. The arithmetic of equation (4) is then carried out in
-registers and only the accepted configuration is written.
+expression is $x + 1$ applied to a contiguous run, so the access remains a
+contiguous segment displaced by one element and its contiguity is statically
+evident. The arithmetic of equation (5) is then carried out in registers and
+only the accepted configuration is written.
 
-The halo requires **no barrier**. By the parity property established after
-equation (6), every neighbour read by a block belongs to the opposite colour and
-is therefore not written by any block during that half-step. A block may read
-its halo from global memory with no coordination whatever. The bipartite
+The halo requires **no barrier**. By the admissibility condition of equation
+(7), every neighbour a block reads belongs to a colour class other than the one
+being updated, and is therefore written by no block during that pass. A block
+may read its halo from global memory with no coordination whatever. The
 colouring, introduced in Section 2 as a correctness device, is thus also what
-makes the locality safe.
+makes the locality safe — and the guarantee holds for any $n_c$, so it extends
+to the eight- and twenty-seven-class colourings unchanged.
 
 ### 3.3 Counter-based proposals: in-kernel generation
 
@@ -179,22 +202,20 @@ $$
 
 with $\mathcal{N}$ and $\mathcal{U}$ the normal and uniform streams of the
 generator. The four draws share one key, the step index $n$, and are separated
-by **distinct counters**. The separation is the component: drawing them from
-adjacent *keys* at a shared counter gives $u$ an input in common with the
-direction $\mathbf{t}_i$, so $u$ correlates with $\Delta E_i$ and the acceptance
-test of Section 2 is biased. One key and distinct counters is the textbook use
-of a counter-based generator and removes the shared input.
+by **distinct counters** — the standard use of a counter-based generator. The
+separation is required rather than incidental: the acceptance variate $u$ and
+the direction $\mathbf{t}_i$ must be statistically independent for the
+acceptance test of Section 2 to sample the intended chain, and distinct counters
+is what guarantees they share no input.
 
 ### 3.4 Deterministic observables: block-partial reduction
 
-The observables of equation (9) below are accumulated as **per-block partial
-sums** written to a small array and reduced afterwards, never by atomic
-accumulation into a shared scalar. An atomic float reduction makes the result
-depend on the order in which blocks retire, so two evaluations of the same
-configuration need not agree in the last bits; a partial-sum reduction is
-order-independent and therefore admits exact comparison against the reference
-implementation. The partial array is of size $O(B L \lceil N/B_y \rceil)$ and
-its final reduction is negligible beside the sweep.
+The observables of equation (10) below are accumulated as **per-block partial
+sums**, written to a small array and reduced afterwards. The reduction is
+therefore independent of the order in which blocks retire, so two evaluations of
+the same configuration agree to the last bit and the observables admit exact
+comparison. The partial array is of size $O(B L \lceil N/B_y \rceil)$ and its
+final reduction is negligible beside the sweep.
 
 The topological charge is the one observable whose kernel is partial by
 construction: the Berg–Lüscher plaquette form requires a two-argument arctangent
@@ -238,38 +259,37 @@ C_v = \frac{\langle (\Delta E)^2 \rangle}{k_B T^2 n_a},
 \chi = \frac{\langle (\Delta \lVert\mathbf{M}\rVert)^2 \rangle}{k_B T},
 $$
 
-and they are accumulated about a reference taken once per temperature rather
-than from raw moments. In single precision the raw form is not merely imprecise
-but qualitatively wrong: at low temperature one unit in the last place of
-$\langle E^2 \rangle$ exceeds the variance itself, and $\langle E^2 \rangle -
-\langle E \rangle^2$ comes out negative. A constant shift leaves a variance
-unchanged, so accumulating the fluctuation about a fixed reference is exact and
-keeps every accumulated quantity at the scale of the fluctuation instead of the
-total.
+and they are accumulated about a reference value taken once per temperature.
+A constant shift leaves a variance unchanged, so this is exact, and it keeps
+every accumulated quantity at the scale of the fluctuation rather than of the
+total — which is what single precision requires here, since at low temperature
+one unit in the last place of $\langle E^2 \rangle$ exceeds the variance being
+measured.
 
 ### 3.6 The combination
 
-One sweep applies the kernel of Sections 3.1–3.3 twice, once per colour; one
-temperature applies the sweep $n_{\text{th}}$ times to thermalise and
+One sweep applies the kernel of Sections 3.1–3.3 once per colour class, $n_c$
+times; one temperature applies the sweep $n_{\text{th}}$ times to thermalise and
 $n_{\text{me}}$ times while accumulating the observables of Section 3.4; and one
 simulation scans a decreasing temperature ladder $\{T_m\}_{m=1}^{M}$, carrying
 the final configuration of each temperature into the next:
 
 $$
-\mathbf{s}^{(m)} = \Bigl(\mathcal{K}^{(1)}_{\beta_m} \circ
-  \mathcal{K}^{(0)}_{\beta_m}\Bigr)^{\,n_{\text{th}} + n_{\text{me}}}
+\mathbf{s}^{(m)} = \Bigl(\textstyle\bigcirc_{c = n_c - 1}^{0}\;
+  \mathcal{K}^{(c)}_{\beta_m}\Bigr)^{\,n_{\text{th}} + n_{\text{me}}}
   \bigl(\mathbf{s}^{(m-1)}\bigr),
 \qquad \beta_m = 1/k_B T_m ,
 $$
 
-with $\mathcal{K}^{(c)}_\beta$ the half-step kernel for colour $c$ at inverse
-temperature $\beta$, and the whole composition evaluated for the $B$ replicas at
-once. Every symbol in equation (12) traces to a declaration: $\mathcal{K}^{(c)}$
-to Section 3.2, the colouring $c$ to equation (6), $\beta$ to Section 2, and $B$
-to Section 3.1.
+where $\bigcirc$ denotes composition over the colour classes in descending
+order, $\mathcal{K}^{(c)}_\beta$ is the single-pass kernel for class $c$ at
+inverse temperature $\beta$, and the whole composition is evaluated for the $B$
+replicas at once. Every symbol traces to a declaration: $\mathcal{K}^{(c)}$ to
+Section 3.2, the classes $c$ and their count $n_c$ to equation (7), $\beta$ to
+Section 2, and $B$ to Section 3.1.
 
 Figure 1 summarises the four components in the order this section defines them,
-showing for one half-step how the layout, the halo, the generator and the
+showing for one pass how the layout, the halo, the generator and the
 reduction compose into the kernel.
 
 <!-- FIGURE 1 — mandatory summary diagram, the visual form of the contribution
@@ -283,7 +303,7 @@ reduction compose into the kernel.
      experimental setup's own diagram.
      STATUS: to be drawn. -->
 
-**Figure 1.** The fused half-step kernel. (1) *Contiguous neighbour access*: the
+**Figure 1.** The fused single-pass kernel. (1) *Contiguous neighbour access*: the
 configuration is held component-planar, so a row of one Cartesian component is a
 contiguous segment (blue). (2) *A synchronisation-free halo*: each block reads
 its tile and the one-site border through shifted contiguous reads (green

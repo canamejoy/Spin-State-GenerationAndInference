@@ -25,13 +25,35 @@ PARAMS_CELL = r'''# ════════════════════
 # El intercambio de PRIMEROS vecinos está normalizado a Jex = 1, que es la
 # escala de energía del modelo; los demás se dan relativos a él.
 #
-# ⚠  Jex2, Jex3 y Jex4 DEBEN ser 0. No es una limitación del código sino del
-#    algoritmo: la actualización por tablero de ajedrez es un reordenamiento
-#    EXACTO del barrido secuencial sólo si los enlaces conectan sitios de
-#    paridad opuesta. Las capas 2 y 4 conectan sitios de la MISMA paridad, así
-#    que con ellas encendidas el tablero deja de ser exacto y la cadena
-#    simulada ya no es la que se pretende. El cuadernillo lo verifica y se
-#    detiene si no se cumple.
+# LAS CAPAS DE VECINOS Y LAS SUBREDES
+#
+# Dejar un Jex2, Jex3 o Jex4 distinto de cero enciende esa capa de vecinos, y
+# el cuadernillo lo detecta solo: cuenta cuáles están activas y elige el
+# coloreo que corresponda. No hay nada más que configurar.
+#
+# Por qué hace falta elegir. Actualizar varios sitios a la vez es un
+# reordenamiento EXACTO del barrido secuencial sólo si ningún par de sitios
+# del mismo color interactúa. Con primeros vecinos basta un tablero de dos
+# colores, porque todo primer vecino está a un desplazamiento de suma impar y
+# por tanto cae en el otro color. Las capas 2 y 4 tienen desplazamientos de
+# suma par y rompen eso, así que piden más subredes:
+#
+#   capas activas        coloreo                        subredes
+#   ──────────────────   ────────────────────────────   ────────
+#   1, o 1+3             (x+y+z) mod 2                      2
+#   cualquiera con la 2  (x mod 2, y mod 2, z mod 2)         8
+#   cualquiera con la 4  (x mod 3, y mod 3, z mod 3)        27
+#
+# La capa 4 llega a distancia 2 sobre un eje, y ningún coloreo de paso 2 puede
+# separar eso: de ahí el paso 3. El cuadernillo VERIFICA el coloreo elegido
+# recorriendo los desplazamientos de cada capa activa, en vez de darlo por
+# bueno.
+#
+# Lo que cuesta. Un barrido pasa a ser un pase por subred, y cada pase
+# actualiza 1/n de los sitios. El trabajo total por barrido no cambia, pero el
+# paralelismo disponible en cada pase sí se divide por n — que en una GPU es lo
+# que manda. Y el kernel optimizado de Triton está escrito para la primera
+# capa: con capas superiores el cuadernillo usa el motor de JAX y lo avisa.
 
 PARAMETROS = [
     # [  T  , Jex2, Jex3, Jex4,  Kan1  , KanS ,  Hex   ,  KDM   ]
@@ -143,21 +165,34 @@ nombres = list(NOMBRES) if NOMBRES else []
 nombres += [f"estado-{i+1}" for i in range(len(nombres), N_ESTADOS)]
 nombres = nombres[:N_ESTADOS]
 
-# Las capas 2 y 4 conectan sitios de la MISMA paridad: con ellas el tablero de
-# ajedrez deja de ser un reordenamiento exacto del barrido secuencial.
-malos = [(nombres[i], P[i, 1:4]) for i in range(N_ESTADOS) if np.any(P[i, 1:4] != 0)]
-if malos:
-    for nm, v in malos:
-        print(f"  {nm}: Jex2,Jex3,Jex4 = {v}")
-    raise SystemExit("Jex2, Jex3 y Jex4 deben ser 0: con ellos el tablero de "
-                     "ajedrez no es exacto y la cadena simulada no es la que "
-                     "se pretende.")
-
 print(f"{N_ESTADOS} estado(s) leídos de PARAMETROS")
-print(f"{'':>3} {'estado':<12}{'T':>7}{'Kan1':>9}{'KanS':>8}{'Hex':>9}{'KDM':>9}")
+print(f"{'':>3} {'estado':<12}{'T':>7}{'Jex2':>7}{'Jex3':>7}{'Jex4':>7}"
+      f"{'Kan1':>9}{'KanS':>8}{'Hex':>9}{'KDM':>9}")
 for i, nm in enumerate(nombres):
-    T, _, _, _, K1, KS, H, D = P[i]
-    print(f"{i+1:>3} {nm:<12}{T:>7.2f}{K1:>9.4f}{KS:>8.3f}{H:>9.4f}{D:>9.4f}")
+    T, J2, J3, J4, K1, KS, H, D = P[i]
+    print(f"{i+1:>3} {nm:<12}{T:>7.2f}{J2:>7.3f}{J3:>7.3f}{J4:>7.3f}"
+          f"{K1:>9.4f}{KS:>8.3f}{H:>9.4f}{D:>9.4f}")
+
+# ---- las capas de vecinos activas, y el coloreo que piden
+# Todos los estados de una corrida comparten el coloreo, así que las capas se
+# toman como la unión sobre los estados: un Jex2 distinto de cero en un solo
+# estado ya obliga a las ocho subredes para todos.
+import sim_multishell as MS
+
+activas = sorted({k for i in range(N_ESTADOS)
+                  for k in MS.shells_of(*P[i, 1:4])})
+COLOREO, N_SUBREDES, _f = MS.pick_colouring(activas)
+print(f"\ncapas de vecinos activas: {activas}")
+print(f"  coloreo: {COLOREO}  ->  {N_SUBREDES} subredes")
+print(f"  verificado sobre los desplazamientos de cada capa: "
+      f"{'si' if MS.check_colouring(_f, activas) else 'NO'}")
+if N_SUBREDES > 2:
+    print(f"  un barrido son {N_SUBREDES} pases y cada uno toca 1/{N_SUBREDES}"
+          f" de los sitios:")
+    print(f"  el trabajo por barrido es el mismo, el paralelismo por pase se"
+          f" divide por {N_SUBREDES}")
+    print(f"  y el kernel de Triton es de primera capa, así que se usará el"
+          f" motor de JAX")
 
 s = v2(REPLICAS) + v2(CAPAS)
 print(f"\nv₂({REPLICAS}) + v₂({CAPAS}) = {v2(REPLICAS)} + {v2(CAPAS)} = {s}")
@@ -181,15 +216,26 @@ import sim_core as S
 
 N_TERM = BARRIDOS * 2 // 3
 N_MED  = BARRIDOS - N_TERM
-geo = S.build_geometry(Rd=float(RD), L=int(CAPAS))
-eng = S.build_engine(geo)
+# Con sólo la primera capa se usa `sim_core`, que es el motor verificado de
+# referencia. Con capas superiores se usa `sim_multishell`, que lo reproduce
+# EXACTAMENTE en ese caso (0 de 13500 espines distintos con la misma semilla)
+# y además generaliza el coloreo.
+if activas == [1]:
+    geo = S.build_geometry(Rd=float(RD), L=int(CAPAS))
+    eng = S.build_engine(geo)
+else:
+    geo = MS.build_geometry(Rd=float(RD), L=int(CAPAS), shells=activas)
+    eng = MS.build_engine(geo)
 n_act = float(geo["n_active"])
 print(f"red: N={geo['N']}  capas={geo['L']}  sitios activos={geo['n_active']}"
       f"  de {geo['L']*geo['N']**2} de la caja")
 
 # ---- elegir el motor
 usar_triton = False
-if MOTOR in ("auto", "optimizado"):
+if activas != [1] and MOTOR == "optimizado":
+    raise SystemExit(f"el kernel optimizado cubre la primera capa de vecinos; "
+                     f"con las capas {activas} usa MOTOR='auto' o 'estandar'")
+if MOTOR in ("auto", "optimizado") and activas == [1]:
     try:
         import triton_halo as TH
         _ = TH.build_anneal_full(geo, BY=4, num_warps=4)
@@ -210,9 +256,10 @@ if usar_triton:
 
 # ---- parámetros de un estado, difundidos a las réplicas
 def columnas(fila, b):
-    T, _, _, _, K1, KS, H, D = fila
+    T, J2, J3, J4, K1, KS, H, D = fila
     c = lambda v: jnp.full((b, 1, 1, 1), float(v), jnp.float32)
-    return dict(Jex=c(1.0), Kan1=c(K1), Kan2=c(0.0), KanS=c(KS),
+    return dict(Jex=c(1.0), Jex2=c(J2), Jex3=c(J3), Jex4=c(J4),
+                Kan1=c(K1), Kan2=c(0.0), KanS=c(KS),
                 Hex=c(H), KDM=c(D), g=c(float(np.deg2rad(ANGULO)))), float(T)
 
 kB = 0.086173404

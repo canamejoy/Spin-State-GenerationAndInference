@@ -25,6 +25,45 @@ cuyo contrato las pide. Y el panorama de la literatura va en Related Work, que
 es la que no lleva ecuaciones y sí lleva un artefacto de síntesis. Meter las
 tres cosas en una sección habría violado los tres contratos a la vez.
 
+## Alcance: sólo lo optimizado
+
+Las secciones reportan **el simulador final y nada más**. No aparecen el motor
+estándar como línea base de rendimiento, ni versiones intermedias, ni intentos
+abandonados, ni la secuencia en que se llegó. Eso queda en
+`informe/informe.pdf`, que es donde el proceso sí es el contenido.
+
+La implementación de referencia **sí** aparece, pero sólo donde la corrección
+exige algo contra lo que ser correcto: las filas de la Tabla 1 que comparan
+espín a espín con la misma aleatoriedad. Nunca como comparación de velocidad.
+Las únicas líneas base de rendimiento son la **CPU** y el **estado del arte
+publicado**.
+
+Verificado: Results no contiene ninguna de las cifras del motor estándar
+(−51.3 %, −31.4 %, +47.7 %, +17.8 %, +49.9 %) ni las palabras «reference
+engine» o «standard engine».
+
+## Las cuatro capas de vecinos
+
+El modelo ya no está restringido a primeros vecinos. La Sección 2 define un
+coloreo general $\gamma$ y su condición de admisibilidad, y da el coloreo más
+estrecho para cada conjunto de capas activas:
+
+| capas activas | coloreo | clases |
+|---|---|---|
+| {1} o {1,3} | $(x+y+z)\bmod 2$ | 2 |
+| con la 2 | paridad por eje | 8 |
+| con la 4 | paso 3 por eje | 27 |
+
+Las capas 1 y 3 tienen desplazamientos de suma impar y dejan el grafo bipartito;
+las 2 y 4 no. La capa 4 llega a distancia 2 sobre un eje, que ningún coloreo de
+paso 2 separa. La garantía de «sin barrera» de la Sección 3.2 se sigue de la
+condición de admisibilidad y no del número de clases, así que vale igual con 8
+y con 27.
+
+El motor está en `codigo/sim_multishell.py` y **reproduce `sim_core`
+exactamente** cuando sólo hay primera capa: 0 de 13 500 espines distintos con la
+misma semilla, y energía, |M| y Q a 0.000e+00.
+
 ## Lo que cumple cada contrato
 
 **Materials and Methods.** No lleva ningún número medido — se puede verificar
