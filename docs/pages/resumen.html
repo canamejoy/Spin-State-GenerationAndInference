@@ -165,12 +165,15 @@ confundirlos: el de arriba lo entendemos, el de abajo no.</p>
     de memoria. Lo reprodujimos en CUDA puro, sin compilador: el reparto
     consecutivo cuesta <b class="n">+14.9 %</b> y el kernel de JAX paga
     <b class="n">+14.25 %</b>.</p></div>
-  <div class="card"><h3>Dentado &nbsp;<span style="color:var(--warn)">sin mecanismo</span></h3>
+  <div class="card"><h3>Dentado &nbsp;<span style="color:var(--accent)">mecanismo hallado</span></h3>
     <span class="big">27 – 35 %</span>
-    <p>Dos lotes <b>del mismo ancho</b> pueden diferir un 20 %. Es una
-    ondulación irregular a lo largo de todo el eje, reproducible pero
-    inexplicada. Descartamos: cuantización de olas, conflictos de canal de
-    memoria, el emisor de reducciones y el costo de lanzamiento.</p></div>
+    <p>Dos lotes <b>del mismo ancho</b> pueden diferir un 20 %. La causa es que
+    <b>Triton re-teja el kernel</b> para cada forma, con su propio modelo de
+    costo: la rejilla es <code>Π ⌈dim/tile⌉</code>, predicha <b>8 de 8</b>, y el
+    tile cambia de 4 a 32 según el lote. <b>No tiene forma cerrada</b> — se
+    elige compilando y leyendo la firma, no con una regla. Descartamos antes:
+    cuantización de olas, conflictos de canal, el emisor de reducciones y el
+    costo de lanzamiento.</p></div>
 </div>
 
 <div class="note warn"><strong>El 78 % es el producto de los dos.</strong>
