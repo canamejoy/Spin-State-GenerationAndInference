@@ -1,0 +1,186 @@
+{
+ "label": "charilaou_t4",
+ "N": 128,
+ "LZ": 128,
+ "sites": 2097152,
+ "paper": {
+  "source": "arXiv:2106.11286",
+  "device": "Tesla V100 32GB",
+  "ns_per_update": {
+   "128^3": 1.63,
+   "512^3": 1.59,
+   "inset_min": 1.55
+  },
+  "updates_per_s": {
+   "128^3": 610000000.0,
+   "512^3": 630000000.0
+  },
+  "J": 1.0,
+  "K": 0.01,
+  "S": 1.0,
+  "Tc_over_J": 1.445,
+  "n_per_block": 8,
+  "mcs_therm": 10000,
+  "mcs_avg": 10000
+ },
+ "device": "Tesla T4",
+ "jax": "0.11.1",
+ "beta": 0.7689350249903883,
+ "verification": {
+  "host": [
+   [
+    "neighbour sum vs an explicit PBC loop",
+    true,
+    0.0
+   ],
+   [
+    "energy vs a direct bond enumeration",
+    true,
+    6.81387633458025e-08
+   ],
+   [
+    "dE vs the total-energy difference of one flip",
+    true,
+    5.888556415811763e-07
+   ],
+   [
+    "every first neighbour is of the opposite colour",
+    true,
+    0.0
+   ]
+  ],
+  "ours": [
+   [
+    "one pass, parity 0, identical randomness",
+    true,
+    0.0
+   ],
+   [
+    "dE, parity 0",
+    true,
+    4.76837158203125e-07
+   ],
+   [
+    "one pass, parity 1, identical randomness",
+    true,
+    0.0
+   ],
+   [
+    "dE, parity 1",
+    true,
+    4.76837158203125e-07
+   ],
+   [
+    "|s| = So after an in-kernel pass",
+    true,
+    1.1920928955078125e-07
+   ]
+  ],
+  "theirs": [
+   [
+    "|s| = So throughout",
+    true,
+    1.1920928955078125e-07
+   ],
+   [
+    "energy falls from a random start (-101.8 -> -4695.7)",
+    true,
+    -45.12388031078853
+   ]
+  ]
+ },
+ "ours": [
+  {
+   "seconds": 0.38831122300007337,
+   "sweeps": 120,
+   "sites": 2097152,
+   "BY": 2,
+   "ns_per_update": 1.5430101672811245,
+   "updates_per_s": 648083869.5716823,
+   "finite": true
+  },
+  {
+   "seconds": 0.3798841180000636,
+   "sweeps": 120,
+   "sites": 2097152,
+   "BY": 4,
+   "ns_per_update": 1.509523860613758,
+   "updates_per_s": 662460545.4023162,
+   "finite": true
+  },
+  {
+   "seconds": 0.3486758669999972,
+   "sweeps": 120,
+   "sites": 2097152,
+   "BY": 8,
+   "ns_per_update": 1.3855134129524118,
+   "updates_per_s": 721754109.8134046,
+   "finite": true
+  }
+ ],
+ "theirs": [
+  {
+   "seconds": 13.055126870000095,
+   "steps": 1200,
+   "n_per": 1,
+   "sites": 2097152,
+   "attempts": 2516582400,
+   "ns_per_update": 5.187641330560085,
+   "updates_per_s": 192765832.53916565,
+   "finite": true
+  },
+  {
+   "seconds": 7.028932032000057,
+   "steps": 1200,
+   "n_per": 2,
+   "sites": 2097152,
+   "attempts": 1258291200,
+   "ns_per_update": 5.586093292236374,
+   "updates_per_s": 179015986.2510376,
+   "finite": true
+  },
+  {
+   "seconds": 3.759359361999941,
+   "steps": 1200,
+   "n_per": 4,
+   "sites": 2097152,
+   "attempts": 629145600,
+   "ns_per_update": 5.975340782801217,
+   "updates_per_s": 167354471.71118563,
+   "finite": true
+  },
+  {
+   "seconds": 2.09331638499998,
+   "steps": 1200,
+   "n_per": 8,
+   "sites": 2097152,
+   "attempts": 314572800,
+   "ns_per_update": 6.654473574956195,
+   "updates_per_s": 150274847.2491429,
+   "finite": true
+  },
+  {
+   "seconds": 1.8497766989999036,
+   "steps": 1200,
+   "n_per": 16,
+   "sites": 2097152,
+   "attempts": 157286400,
+   "ns_per_update": 11.760563526152952,
+   "updates_per_s": 85029939.06509803,
+   "finite": true
+  },
+  {
+   "seconds": 1.8749450709999564,
+   "steps": 1200,
+   "n_per": 32,
+   "sites": 2097152,
+   "attempts": 78643200,
+   "ns_per_update": 23.841159451802017,
+   "updates_per_s": 41944268.77692879,
+   "finite": true
+  }
+ ],
+ "best_ours_ns": 1.3855134129524118,
+ "best_theirs_ns": 5.187641330560085,
+ "ratio_theirs_over_ours": 3.74420145056962
+}

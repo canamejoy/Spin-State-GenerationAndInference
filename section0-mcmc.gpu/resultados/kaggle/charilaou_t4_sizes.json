@@ -1,0 +1,42 @@
+[
+ {
+  "seconds": 1.3040208059999259,
+  "sweeps": 381,
+  "sites": 262144,
+  "BY": 4,
+  "ns_per_update": 13.056285047154924,
+  "updates_per_s": 76591465.05980341,
+  "finite": true,
+  "N": 64
+ },
+ {
+  "seconds": 0.157084435999991,
+  "sweeps": 47,
+  "sites": 2097152,
+  "BY": 4,
+  "ns_per_update": 1.5936956608548163,
+  "updates_per_s": 627472374.1568239,
+  "finite": true,
+  "N": 128
+ },
+ {
+  "seconds": 0.1992344379999622,
+  "sweeps": 20,
+  "sites": 7077888,
+  "BY": 4,
+  "ns_per_update": 1.4074427145496102,
+  "updates_per_s": 710508491.5090173,
+  "finite": true,
+  "N": 192
+ },
+ {
+  "seconds": 0.39287285199998223,
+  "sweeps": 20,
+  "sites": 16777216,
+  "BY": 4,
+  "ns_per_update": 1.1708523392676777,
+  "updates_per_s": 854078662.5796561,
+  "finite": true,
+  "N": 256
+ }
+]
