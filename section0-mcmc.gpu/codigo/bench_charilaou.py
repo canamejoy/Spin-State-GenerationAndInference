@@ -233,7 +233,6 @@ def _theirs_kernel(
     sz_ptr,          # (NT,) f32
     beta_ptr,        # (1,)  f32
     step_ptr,        # (1,)  i32
-    ox_ptr, oy_ptr, oz_ptr,
     N: tl.constexpr,
     LZ: tl.constexpr,
     N_PER: tl.constexpr,
@@ -298,11 +297,12 @@ def _theirs_kernel(
     beta = tl.load(beta_ptr)
     acc = (dE <= 0.0) | (ru < tl.exp(-beta * tl.minimum(dE, 80.0)))
 
-    # The output pointers alias the inputs, so this is the paper's in-place
-    # update of global memory and the untouched n-1 spins are never copied.
-    tl.store(ox_ptr + i, tl.where(acc, t0, s0))
-    tl.store(oy_ptr + i, tl.where(acc, t1, s1))
-    tl.store(oz_ptr + i, tl.where(acc, t2, s2))
+    # The host aliases these three inputs onto the three outputs, so writing
+    # back through them IS the paper's in-place update of global memory, and
+    # the untouched n-1 spins of the block are never copied.
+    tl.store(sx_ptr + i, tl.where(acc, t0, s0))
+    tl.store(sy_ptr + i, tl.where(acc, t1, s1))
+    tl.store(sz_ptr + i, tl.where(acc, t2, s2))
 
 
 # ============================================ a pure-JAX reference for ours
