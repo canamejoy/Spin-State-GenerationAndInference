@@ -226,20 +226,23 @@ def _ours_kernel(
 #
 # One spin is updated per block, so the lane count is not ours to choose.
 
+# jax_triton versions disagree about what `input_output_aliases` does to the
+# kernel signature, and the disagreement is not detectable from the signature
+# of `triton_call`. On jax_triton 0.4.1 (Kaggle) an aliased input IS the output
+# and no extra pointer is appended, so the kernel takes five pointers. On the
+# version in the Modal image, three output pointers are appended anyway, and a
+# five-pointer kernel dies with IndexError("Function argument index out of
+# range"). Both forms are in-place -- in the second the appended pointers alias
+# the inputs -- so the measurement is the same either way, and `build_theirs`
+# probes which one the installed version wants rather than assuming.
+#
+# The body lives in one device function so the two wrappers cannot drift.
+
 @triton.jit
-def _theirs_kernel(
-    sx_ptr,          # (NT,) f32   x components, linearised
-    sy_ptr,          # (NT,) f32
-    sz_ptr,          # (NT,) f32
-    beta_ptr,        # (1,)  f32
-    step_ptr,        # (1,)  i32
-    N: tl.constexpr,
-    LZ: tl.constexpr,
-    N_PER: tl.constexpr,
-    JEX: tl.constexpr,
-    KAN: tl.constexpr,
-    SO: tl.constexpr,
-):
+def _theirs_body(sx_ptr, sy_ptr, sz_ptr, beta_ptr, step_ptr,
+                 ox_ptr, oy_ptr, oz_ptr,
+                 N: tl.constexpr, LZ: tl.constexpr, N_PER: tl.constexpr,
+                 JEX: tl.constexpr, KAN: tl.constexpr, SO: tl.constexpr):
     blk = tl.program_id(0)
     sd = tl.load(step_ptr)
     NN = N * N
@@ -297,12 +300,31 @@ def _theirs_kernel(
     beta = tl.load(beta_ptr)
     acc = (dE <= 0.0) | (ru < tl.exp(-beta * tl.minimum(dE, 80.0)))
 
-    # The host aliases these three inputs onto the three outputs, so writing
-    # back through them IS the paper's in-place update of global memory, and
-    # the untouched n-1 spins of the block are never copied.
-    tl.store(sx_ptr + i, tl.where(acc, t0, s0))
-    tl.store(sy_ptr + i, tl.where(acc, t1, s1))
-    tl.store(sz_ptr + i, tl.where(acc, t2, s2))
+    tl.store(ox_ptr + i, tl.where(acc, t0, s0))
+    tl.store(oy_ptr + i, tl.where(acc, t1, s1))
+    tl.store(oz_ptr + i, tl.where(acc, t2, s2))
+
+
+@triton.jit
+def _theirs_kernel(
+    sx_ptr, sy_ptr, sz_ptr, beta_ptr, step_ptr,
+    N: tl.constexpr, LZ: tl.constexpr, N_PER: tl.constexpr,
+    JEX: tl.constexpr, KAN: tl.constexpr, SO: tl.constexpr,
+):
+    """Five pointers: the aliased inputs are the outputs."""
+    _theirs_body(sx_ptr, sy_ptr, sz_ptr, beta_ptr, step_ptr,
+                 sx_ptr, sy_ptr, sz_ptr, N, LZ, N_PER, JEX, KAN, SO)
+
+
+@triton.jit
+def _theirs_kernel_io(
+    sx_ptr, sy_ptr, sz_ptr, beta_ptr, step_ptr, ox_ptr, oy_ptr, oz_ptr,
+    N: tl.constexpr, LZ: tl.constexpr, N_PER: tl.constexpr,
+    JEX: tl.constexpr, KAN: tl.constexpr, SO: tl.constexpr,
+):
+    """Eight pointers: output pointers are appended even when aliased."""
+    _theirs_body(sx_ptr, sy_ptr, sz_ptr, beta_ptr, step_ptr,
+                 ox_ptr, oy_ptr, oz_ptr, N, LZ, N_PER, JEX, KAN, SO)
 
 
 # ============================================ a pure-JAX reference for ours
@@ -400,7 +422,13 @@ def build_ours(N, LZ, BY=4, J=1.0, K=0.01, So=1.0, has_rng=True):
 
 
 def build_theirs(N, LZ, n_per=8, J=1.0, K=0.01, So=1.0):
-    """One of his steps: N_b blocks, one random spin updated in each."""
+    """One of his steps: N_b blocks, one random spin updated in each.
+
+    Which kernel signature the installed jax_triton wants is PROBED, not
+    assumed -- see the note above `_theirs_body`. The probe is a one-step call
+    on the real arrays, so a version that accepts neither form fails here
+    rather than in the middle of a timing loop.
+    """
     import jax
     import jax.numpy as jnp
     import jax_triton as jt
@@ -415,18 +443,34 @@ def build_theirs(N, LZ, n_per=8, J=1.0, K=0.01, So=1.0):
     n_blocks = NT // n_per
     shp = jax.ShapeDtypeStruct((NT,), jnp.float32)
 
-    def step_fn(sx, sy, sz, beta, step):
-        return jt.triton_call(
-            sx, sy, sz,
-            jnp.float32(beta).reshape(1), jnp.int32(step).reshape(1),
-            kernel=_theirs_kernel, out_shape=(shp, shp, shp),
-            grid=(n_blocks,), N=N, LZ=LZ, N_PER=int(n_per),
-            JEX=float(J), KAN=float(K), SO=float(So), num_warps=1,
-            input_output_aliases={0: 0, 1: 1, 2: 2},
-        )
+    def make(kernel):
+        def step_fn(sx, sy, sz, beta, step):
+            return jt.triton_call(
+                sx, sy, sz,
+                jnp.float32(beta).reshape(1), jnp.int32(step).reshape(1),
+                kernel=kernel, out_shape=(shp, shp, shp),
+                grid=(n_blocks,), N=N, LZ=LZ, N_PER=int(n_per),
+                JEX=float(J), KAN=float(K), SO=float(So), num_warps=1,
+                input_output_aliases={0: 0, 1: 1, 2: 2},
+            )
+        return step_fn
 
-    return dict(step=step_fn, n_blocks=n_blocks, n_per=n_per,
-                updates_per_step=n_blocks)
+    z = jnp.zeros((NT,), jnp.float32)
+    chosen, why = None, []
+    for name, kern in (("in-place", _theirs_kernel), ("appended", _theirs_kernel_io)):
+        fn = make(kern)
+        try:
+            jax.block_until_ready(fn(z, z, z, BETA, 0))
+            chosen, chosen_name = fn, name
+            break
+        except Exception as e:                       # try the other signature
+            why.append(f"{name}: {type(e).__name__}: {str(e)[:160]}")
+    if chosen is None:
+        raise RuntimeError("neither kernel signature compiles:\n  "
+                           + "\n  ".join(why))
+
+    return dict(step=chosen, n_blocks=n_blocks, n_per=n_per,
+                updates_per_step=n_blocks, signature=chosen_name)
 
 
 # ============================================================== verification
@@ -618,7 +662,7 @@ def time_theirs(N=128, LZ=128, steps=2000, n_per=8, J=1.0, K=0.01, So=1.0):
     dt = time.perf_counter() - t0
     attempts = steps * eng["updates_per_step"]
     return dict(seconds=dt, steps=steps, n_per=n_per, sites=NT,
-                attempts=attempts,
+                attempts=attempts, signature=eng["signature"],
                 ns_per_update=dt / attempts * 1e9,
                 updates_per_s=attempts / dt,
                 finite=bool(np.isfinite(np.asarray(out[0])).all()))
