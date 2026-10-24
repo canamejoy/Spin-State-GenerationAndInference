@@ -79,6 +79,10 @@ triton_image = (
         "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/theta4.json",
         "/root/theta4.json",
     )
+    .add_local_file(
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/bench_charilaou.py",
+        "/root/bench_charilaou.py",
+    )
 )
 
 # The XLA-confound probe needs a kernel that XLA never touches, so this image
@@ -8776,3 +8780,64 @@ def state_one(reps: int = 500, n_temps: int = 80, sweeps: int = 20000,
     state_ladder_1.remote(f"{tag}_1gpu", rd, layers, [int(reps)], n_temps,
                           sweeps, by, warps,
                           [x for x in arms.split(",") if x])
+
+
+# ===================================================================== T1-T3
+#
+# The three controlled comparisons against Charilaou, arXiv:2106.11286. The
+# device set exists to bracket his Tesla V100 (80 SMs, 900 GB/s), because we
+# cannot rent one: the T4 on Kaggle sits below it on both axes, the A10G is the
+# closest single proxy at 72 SMs and 600 GB/s, and the A100 sits above it at
+# 108 and 1555. The P100 would have bracketed from below, but Triton needs
+# compute capability 7.0 and it is 6.0.
+#
+# Every arm is a single system at HIS geometry -- simple cubic 128^3, periodic
+# on all three axes -- and not our 5000-replica configuration, so the per-device
+# replica floor cannot flatter us.
+
+def _charilaou(tag, N, LZ, sweeps, steps):
+    import json
+    import sys
+    sys.path.insert(0, "/root")
+    import bench_charilaou as BC
+
+    print(f"gpu={device_identity()}", flush=True)
+    res = BC.run(N=N, LZ=LZ, sweeps=sweeps, steps=steps, label=tag)
+    res["gpu"] = device_identity()
+    with open(f"/out/{tag}.json", "w") as f:
+        json.dump(res, f, indent=1)
+    vol.commit()
+    return res
+
+
+@app.function(gpu="A10G", image=triton_image, timeout=60 * 45,
+              volumes={"/out": vol})
+def charilaou_a10g(tag, N, LZ, sweeps, steps):
+    return _charilaou(tag, N, LZ, sweeps, steps)
+
+
+@app.function(gpu="A100", image=triton_image, timeout=60 * 45,
+              volumes={"/out": vol})
+def charilaou_a100(tag, N, LZ, sweeps, steps):
+    return _charilaou(tag, N, LZ, sweeps, steps)
+
+
+@app.function(gpu="H100", image=triton_image, timeout=60 * 45,
+              volumes={"/out": vol})
+def charilaou_h100(tag, N, LZ, sweeps, steps):
+    return _charilaou(tag, N, LZ, sweeps, steps)
+
+
+@app.local_entrypoint()
+def charilaou(device: str = "a10g", n: int = 128, lz: int = 128,
+              sweeps: int = 120, steps: int = 1200, tag: str = ""):
+    """Their method against ours: same device, same model, same geometry."""
+    fn = {"a10g": charilaou_a10g, "a100": charilaou_a100,
+          "h100": charilaou_h100}[device.lower()]
+    t = tag or f"charilaou_{device.lower()}"
+    r = fn.remote(t, n, lz, sweeps, steps)
+    print()
+    print(f"  device  {r.get('device')}")
+    print(f"  ours    {r.get('best_ours_ns')} ns/update")
+    print(f"  theirs  {r.get('best_theirs_ns')} ns/update")
+    print(f"  paper on a V100: 1.63 ns at 128^3, 1.55 ns minimum")
