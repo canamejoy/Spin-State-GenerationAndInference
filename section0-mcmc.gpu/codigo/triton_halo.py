@@ -503,7 +503,10 @@ def build_anneal(geo, BY=4, num_warps=4, So=1.0):
             snap = s[0, 2, LZ // 2]
             return (s, c), (out, snap)
 
-        c0 = jnp.asarray(int(seed), jnp.int32) * jnp.int32(1000003)
+        # `int(seed)` forced concreteness, which is fine under `jax.jit`
+        # with a Python int closed over but fails under `pmap`, where the
+        # per-device seed arrives as a tracer. `asarray` accepts both.
+        c0 = jnp.asarray(seed, jnp.int32) * jnp.int32(1000003)
         (s, _), (all_obs, snaps) = jax.lax.scan(per_T, (sp, c0), betas)
         return all_obs, s, snaps
 
@@ -776,7 +779,10 @@ def build_anneal_full(geo, BY=4, num_warps=4, So=1.0):
                              sMz / n_meas, sQ / n_meas, E_ref, M_ref])
             return (s, c), (out, s[0, 2, LZ // 2])
 
-        c0 = jnp.asarray(int(seed), jnp.int32) * jnp.int32(1000003)
+        # `int(seed)` forced concreteness, which is fine under `jax.jit`
+        # with a Python int closed over but fails under `pmap`, where the
+        # per-device seed arrives as a tracer. `asarray` accepts both.
+        c0 = jnp.asarray(seed, jnp.int32) * jnp.int32(1000003)
         (s, _), (all_obs, snaps) = jax.lax.scan(per_T, (sp, c0), betas)
         return all_obs, s, snaps
 
