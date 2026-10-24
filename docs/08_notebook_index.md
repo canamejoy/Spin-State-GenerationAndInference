@@ -18,7 +18,7 @@ item marked against what has actually been run.
 
 ---
 
-## 1. Generative models — `notebooks/generative/`
+## 1. Generative models — `section1-generative/modelos/`
 
 | Notebook | What it did |
 |---|---|
@@ -31,14 +31,14 @@ item marked against what has actually been run.
 | `cvae-8params.ipynb` | CVAE conditioned on all 8 Hamiltonian parameters. |
 | `cvae_xception_retrain.ipynb` / `cvae_vit_retrain.ipynb` | Both CVAEs retrained on 100% of the dataset. |
 
-## 2. Inverse model — `notebooks/inverse/`
+## 2. Inverse model — `section2-inverse/cuadernillos/`
 
 | Notebook | What it did |
 |---|---|
 | `XceptionFullDataBaseV3100.ipynb` | Original Keras training of the Xception regressor (image -> 8 parameters). |
 | `xception-keras-to-torch.ipynb` | Faithful hand-port of the Keras weights to PyTorch with parity verification. 288 state-dict tensors, 21.3 M parameters. `KERAS_BN_EPS = 1e-3` is set explicitly because eps is not stored in the state dict. |
 
-## 3. Full cycle — `notebooks/cycle/`
+## 3. Full cycle — `section3-cycle/ciclo/`
 
 | Notebook | What it did |
 |---|---|
@@ -46,7 +46,7 @@ item marked against what has actually been run.
 | `cycle_complete_newmetrics.ipynb` | The same cycle scored with the three physical metrics (magnetisation, spin correlation, peak wavevector). |
 | `ciclo_texture_fidelity.ipynb` | Texture fidelity restricted to the non-saturated regime (low H_ex), where the texture actually carries information. |
 
-## 4. Evaluation — `notebooks/evaluation/`
+## 4. Evaluation — `section1-generative/evaluacion/`
 
 | Notebook | What it did |
 |---|---|
@@ -57,7 +57,7 @@ item marked against what has actually been run.
 | `ddpm_steps_sweep.ipynb` | Sampling-step sweep, 25 vs 50 vs 100. 100 steps is what the comparison protocol uses. |
 | `image-metrics-robustness.ipynb` | Robustness of the image metrics to noise and perturbation. |
 
-## 5. Cycle integration — `notebooks/integration/`
+## 5. Cycle integration — `section3-cycle/integracion/`
 
 Three ways of closing the loop between the DDPM and the inverse model, each
 trained separately, then all four arms evaluated under one protocol.
@@ -102,7 +102,7 @@ low-pass filter at r <= 14 collapses the guided/unguided gap from +0.823 to
 
 Raw outputs are in `results/kaggle/*.json`.
 
-## 6. Archive — `notebooks/archive/`
+## 6. Archive — `section3-cycle/archivo/`
 
 Superseded cycle notebooks kept for provenance: `ciclo_completo_resultadosxclusters`,
 `ciclo_external_dataset`, `ciclo_external_fixes`, `diagnostico-ciclo-externo`.

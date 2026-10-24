@@ -197,10 +197,10 @@ generated = generated[:, :39, :39]   # top-left crop, no interpolation
 For per-image loops use `center_crop(img_40, size=39)` (imported from metrics).
 
 This applies to:
-- `notebooks/evaluation/generative_comparison.ipynb` — Section 1 (image generation loop)
-- `notebooks/cycle/ciclo_completo_v2.ipynb` — Section 1 (image generation loop)
-- `notebooks/generative/cvae_xception_retrain.ipynb` — decoder output is 40×40 via transposed conv; crop before loss and metric computation
-- `notebooks/generative/cvae_vit_retrain.ipynb` — same
+- `section1-generative/evaluacion/generative_comparison.ipynb` — Section 1 (image generation loop)
+- `section3-cycle/ciclo/ciclo_completo_v2.ipynb` — Section 1 (image generation loop)
+- `section1-generative/modelos/cvae_xception_retrain.ipynb` — decoder output is 40×40 via transposed conv; crop before loss and metric computation
+- `section1-generative/modelos/cvae_vit_retrain.ipynb` — same
 
 Verify the circular mask in `metrics.py` is `circular_mask(h=39, w=39)` — confirm no accidental change to 40.
 
@@ -424,11 +424,11 @@ pd.DataFrame(rows).to_csv(f"{OUTPUT_DIR}/robustness/robustness_scores.csv", inde
 | File | Changes |
 |------|---------|
 | `notebooks/utils/metrics.py` | Update `STRUCTURE_NAMES` (6 phases), `STRUCTURE_COLORS` (6 colors); add `STRUCTURE_MAP`, `get_structure_label()`, `center_crop()`, `normalize_metrics()` |
-| `notebooks/generative/cvae_xception_retrain.ipynb` | `importlib` metrics import; auto-detect paths; crop 40→39 after decoder; 6-structure figures; checkpoint save to `OUTPUT_DIR/checkpoints/`; upload instructions cell |
-| `notebooks/generative/cvae_vit_retrain.ipynb` | Same as above |
-| `notebooks/evaluation/image_metrics_robustness.ipynb` | `importlib` metrics import; auto-detect paths; full test split; normalization step; `norm_scores` in all figures; raw+normalized CSV |
-| `notebooks/evaluation/generative_comparison.ipynb` | `importlib` metrics import; auto-detect paths; full test split; crop 40→39 in generation loop; 6-structure figures |
-| `notebooks/cycle/ciclo_completo_v2.ipynb` | `importlib` metrics import; auto-detect paths; full test split; crop 40→39 in generation loop; 6-structure figures |
+| `section1-generative/modelos/cvae_xception_retrain.ipynb` | `importlib` metrics import; auto-detect paths; crop 40→39 after decoder; 6-structure figures; checkpoint save to `OUTPUT_DIR/checkpoints/`; upload instructions cell |
+| `section1-generative/modelos/cvae_vit_retrain.ipynb` | Same as above |
+| `section1-generative/evaluacion/image_metrics_robustness.ipynb` | `importlib` metrics import; auto-detect paths; full test split; normalization step; `norm_scores` in all figures; raw+normalized CSV |
+| `section1-generative/evaluacion/generative_comparison.ipynb` | `importlib` metrics import; auto-detect paths; full test split; crop 40→39 in generation loop; 6-structure figures |
+| `section3-cycle/ciclo/ciclo_completo_v2.ipynb` | `importlib` metrics import; auto-detect paths; full test split; crop 40→39 in generation loop; 6-structure figures |
 
 ---
 

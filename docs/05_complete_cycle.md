@@ -131,17 +131,17 @@ The internal cycle notebook additionally computes metrics broken down by **magne
 
 | Notebook | Dataset | Status |
 |---|---|---|
-| [ciclo_completo_v2](../notebooks/cycle/ciclo_completo_v2.ipynb) | Internal test split | ✅ Complete |
-| [cycle_complete_newmetrics](../notebooks/cycle/cycle_complete_newmetrics.ipynb) | Internal test split | ✅ Complete |
-| [ciclo_texture_fidelity](../notebooks/cycle/ciclo_texture_fidelity.ipynb) | Internal, texture/saturation split | ✅ Complete |
+| [ciclo_completo_v2](../section3-cycle/ciclo/ciclo_completo_v2.ipynb) | Internal test split | ✅ Complete |
+| [cycle_complete_newmetrics](../section3-cycle/ciclo/cycle_complete_newmetrics.ipynb) | Internal test split | ✅ Complete |
+| [ciclo_texture_fidelity](../section3-cycle/ciclo/ciclo_texture_fidelity.ipynb) | Internal, texture/saturation split | ✅ Complete |
 
-Superseded runs live in `notebooks/archive/` and are kept only as an archive —
+Superseded runs live in `section3-cycle/archivo/` and are kept only as an archive —
 they predate the crop-before-mask fix and the three-metric set, so their physical
 numbers are not comparable with current results.
 
 ### Integrated cycle (training-time and sampling-time closure)
 
-See [`notebooks/integration/README.md`](../notebooks/integration/README.md).
+See [`section3-cycle/integracion/README.md`](../section3-cycle/integracion/README.md).
 
 | Notebook | What it closes | Fine-tunes |
 |---|---|---|

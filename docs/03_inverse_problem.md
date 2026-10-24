@@ -146,4 +146,4 @@ Per-phase $R^2$ confirms that accuracy rises substantially in ordered low-$T$ ph
 
 ## Notebook
 
-See [notebooks/inverse/xception_inverse.md](../notebooks/inverse/xception_inverse.md) for implementation details.
+See [section2-inverse/cuadernillos/xception_inverse.md](../section2-inverse/cuadernillos/xception_inverse.md) for implementation details.

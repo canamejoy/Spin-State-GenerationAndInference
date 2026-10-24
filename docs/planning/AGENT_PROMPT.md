@@ -36,9 +36,9 @@ End-to-endMSGenFreamework/
 
 Move the following notebooks to a new folder `notebooks/replaced/` (create it if needed). Do **not** delete them:
 
-- `notebooks/cycle/ciclo_external_dataset.ipynb`
-- `notebooks/cycle/ciclo_external_fixes.ipynb`
-- `notebooks/cycle/diagnostico-ciclo-externo.ipynb`
+- `section3-cycle/ciclo/ciclo_external_dataset.ipynb`
+- `section3-cycle/ciclo/ciclo_external_fixes.ipynb`
+- `section3-cycle/ciclo/diagnostico-ciclo-externo.ipynb`
 
 Keep everything else in place.
 
@@ -187,7 +187,7 @@ with tf.device("/cpu:0"):
 
 ## NOTEBOOKS TO CREATE OR FULLY REWRITE
 
-### NOTEBOOK 1 — `notebooks/generative/cvae_xception_retrain.ipynb`
+### NOTEBOOK 1 — `section1-generative/modelos/cvae_xception_retrain.ipynb`
 **Purpose**: Retrain CVAE-Xception from scratch on 100% of the dataset. The user will run this manually on Kaggle or Colab.
 
 **Architecture**:
@@ -229,7 +229,7 @@ L = (1 - SSIM(x, x̂)) + 0.05 * L1(x, x̂) + β * KLD(q(z|x,y) || p(z|y))
 
 ---
 
-### NOTEBOOK 2 — `notebooks/generative/cvae_vit_retrain.ipynb`
+### NOTEBOOK 2 — `section1-generative/modelos/cvae_vit_retrain.ipynb`
 **Purpose**: Retrain CVAE-ViT from scratch on 100% of the dataset. Ready to run on Kaggle or Colab.
 
 **Architecture**:
@@ -271,7 +271,7 @@ def beta_for_epoch(epoch, total_epochs, beta_start=1e-6, beta_max=0.0657, warmup
 
 ---
 
-### NOTEBOOK 3 — `notebooks/evaluation/image_metrics_robustness.ipynb`
+### NOTEBOOK 3 — `section1-generative/evaluacion/image_metrics_robustness.ipynb`
 **Purpose**: Demonstrate why pixel-based metrics (MSE, BCE, SSIM) are insufficient for evaluating magnetic domain images, and why cosine similarity in Xception latent space is a better metric. This is a standalone experiment using **only real images** — no generative model needed.
 
 **Requires**: Xception weights only (TF/CPU). No DDPM, no CVAE.
@@ -396,7 +396,7 @@ This directly illustrates that cosine similarity is stable where SSIM degrades.
 
 ---
 
-### NOTEBOOK 4 — `notebooks/evaluation/generative_comparison.ipynb`
+### NOTEBOOK 4 — `section1-generative/evaluacion/generative_comparison.ipynb`
 **Purpose**: Compare the three generative models (CVAE-Xception, CVAE-ViT, DDPM) on image metrics, physical metrics, and qualitative inspection. This is the **core Part 1 notebook** for the article.
 
 **Requires**: All 5 weight files (Xception, DDPM, CVAE-Xception, CVAE-ViT). Both TF and PyTorch.
@@ -613,7 +613,7 @@ Print SSIM and Cosine values below each generated image column.
 
 ---
 
-### NOTEBOOK 5 — `notebooks/cycle/ciclo_completo_v2.ipynb`
+### NOTEBOOK 5 — `section3-cycle/ciclo/ciclo_completo_v2.ipynb`
 **Purpose**: Full end-to-end cycle evaluation with DDPM on the internal test set. This is the **core Part 2 notebook**. It is a clean rewrite of `ciclo_completo_resultadosxclusters.ipynb` (the old notebook goes to `replaced/`).
 
 **Requires**: DDPM weights (PyTorch, cuda:0) + Xception weights (TF, CPU).
@@ -888,11 +888,11 @@ Code cells must be clean with:
 |--------|------|
 | **Move to `replaced/`** | `ciclo_external_dataset.ipynb`, `ciclo_external_fixes.ipynb`, `diagnostico-ciclo-externo.ipynb` |
 | **Move to `replaced/`** | `ciclo_completo_resultadosxclusters.ipynb` (superseded by Notebook 5) |
-| **Create** | `notebooks/generative/cvae_xception_retrain.ipynb` |
-| **Create** | `notebooks/generative/cvae_vit_retrain.ipynb` |
-| **Create** | `notebooks/evaluation/image_metrics_robustness.ipynb` |
-| **Create** | `notebooks/evaluation/generative_comparison.ipynb` |
-| **Create** | `notebooks/cycle/ciclo_completo_v2.ipynb` |
+| **Create** | `section1-generative/modelos/cvae_xception_retrain.ipynb` |
+| **Create** | `section1-generative/modelos/cvae_vit_retrain.ipynb` |
+| **Create** | `section1-generative/evaluacion/image_metrics_robustness.ipynb` |
+| **Create** | `section1-generative/evaluacion/generative_comparison.ipynb` |
+| **Create** | `section3-cycle/ciclo/ciclo_completo_v2.ipynb` |
 | **Create** | `notebooks/utils/metrics.py` |
 
 **Total new notebooks: 5. Shared utility module: 1. Notebooks retired to `replaced/`: 4.**

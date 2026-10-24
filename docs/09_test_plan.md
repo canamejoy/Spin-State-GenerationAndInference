@@ -87,7 +87,7 @@ where the property holds.
 | 4 | DDPM FiLM — 8 parameters + spin correlation |
 
 This is a **conditioning ablation**, not the architecture comparison that
-`notebooks/evaluation/physical-metrics-comparison-4models.ipynb` already ran
+`section1-generative/evaluacion/physical-metrics-comparison-4models.ipynb` already ran
 (DDPM-mine / DDPM-paper / NCSN / CVAE). Both are worth having; they answer
 different questions and should not be presented as one table.
 

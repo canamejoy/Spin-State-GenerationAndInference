@@ -83,7 +83,7 @@ See [docs/06_datasets.md](docs/06_datasets.md) for full details and preprocessin
 
 ## Notebooks at a Glance
 
-### 1. Xception Inverse Model — `notebooks/inverse/`
+### 1. Xception Inverse Model — `section2-inverse/cuadernillos/`
 
 Trains an Xception CNN to predict 8 Hamiltonian parameters from a magnetisation image.
 
@@ -95,27 +95,27 @@ Trains an Xception CNN to predict 8 Hamiltonian parameters from a magnetisation 
 | $\tilde{J}_2$ | 0.9146 | 0.030 meV |
 | $T^{(0)}$ | 0.8430 | 0.890 K |
 
-See [notebooks/inverse/xception_inverse.md](notebooks/inverse/xception_inverse.md).
+See [section2-inverse/cuadernillos/xception_inverse.md](section2-inverse/cuadernillos/xception_inverse.md).
 
-### 2. DDPM Generative Model — `notebooks/generative/`
+### 2. DDPM Generative Model — `section1-generative/modelos/`
 
 Trains a conditional DDPM (U-Net backbone, cosine schedule, EMA) to generate 39×39 magnetisation images conditioned on 8 Hamiltonian parameters. Uses PyTorch.
 
-See [notebooks/generative/ddpm_train.md](notebooks/generative/ddpm_train.md).
+See [section1-generative/modelos/ddpm_train.md](section1-generative/modelos/ddpm_train.md).
 
-### 3. Complete Cycle — Internal Dataset — `notebooks/cycle/`
+### 3. Complete Cycle — Internal Dataset — `section3-cycle/ciclo/`
 
 Runs the full θ → DDPM → image → Xception → θ̂ pipeline on the internal test split. Evaluates with regression metrics (R², MAE), image metrics (MSE, SSIM, FFT-Corr), three physical observables (M, C_nn, q_peak), and per-magnetic-phase breakdowns.
 
-See [notebooks/archive/ciclo_completo.md](notebooks/archive/ciclo_completo.md).
+See [section3-cycle/archivo/ciclo_completo.md](section3-cycle/archivo/ciclo_completo.md).
 
-### 4. Complete Cycle — External Dataset — `notebooks/cycle/` 🔧
+### 4. Complete Cycle — External Dataset — `section3-cycle/ciclo/` 🔧
 
 Same pipeline applied to the larger external dataset (218k). Currently under investigation for distribution shift issues.
 
-See [notebooks/archive/ciclo_external.md](notebooks/archive/ciclo_external.md).
+See [section3-cycle/archivo/ciclo_external.md](section3-cycle/archivo/ciclo_external.md).
 
-### 5. Integrated Cycle — `notebooks/integration/`
+### 5. Integrated Cycle — `section3-cycle/integracion/`
 
 Three ways of closing the loop between the generator and the inverse model, using
 the 256-d Xception latent (the regression head removed) as the meeting point.
@@ -127,7 +127,7 @@ The training loss is `denoise_MSE + λ·(1 − cos(z(x̂₀), z(x₀)))` — no 
 | `02_ddpm_cosine_joint_finetune` | Same, encoder also trains | DDPM + encoder |
 | `03_latent_guided_sampler` | Latent guidance at sampling time | Neither |
 
-See [notebooks/integration/README.md](notebooks/integration/README.md).
+See [section3-cycle/integracion/README.md](section3-cycle/integracion/README.md).
 
 ---
 

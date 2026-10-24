@@ -14,13 +14,13 @@ cosine loss or guidance.
 See [`docs/05_complete_cycle.md`](../../docs/05_complete_cycle.md) for the theory and
 evaluation protocol.
 
-## Relationship to `notebooks/integration/evaluation/`
+## Relationship to `section3-cycle/integracion/evaluation/`
 
-The `notebooks/integration/evaluation/` notebooks evaluate the **integrated** architectures
+The `section3-cycle/integracion/evaluation/` notebooks evaluate the **integrated** architectures
 (cosine-loss fine-tunes and latent-guided sampling, see
-[`notebooks/integration/README.md`](../integration/README.md)) using the same physical-metric
-and cycle-evaluation protocol as this directory. `notebooks/cycle/` is the baseline: it
+[`section3-cycle/integracion/README.md`](../integration/README.md)) using the same physical-metric
+and cycle-evaluation protocol as this directory. `section3-cycle/ciclo/` is the baseline: it
 establishes the plain-checkpoint cycle numbers that the integration notebooks compare
 against (`DDPM+cos`, joint fine-tune, and guided sampling are all reported relative to this
 baseline). Superseded, pre-crop-before-mask runs are archived under
-[`notebooks/archive/`](../archive/), not here.
+[`section3-cycle/archivo/`](../archive/), not here.

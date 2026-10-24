@@ -726,7 +726,7 @@ MODEL_COLORS = {
 
 # Column order of ``data['params']`` — verified against README.md, docs/01_hamiltonian.md
 # and the notebook that actually trained on the array
-# (notebooks/inverse/XceptionFullDataBaseV3100.ipynb).
+# (section2-inverse/cuadernillos/XceptionFullDataBaseV3100.ipynb).
 # A previous revision of this file listed these in a different order, which
 # silently mislabelled every per-parameter table that imported PARAM_NAMES.
 PARAM_KEYS = ["T", "Jex2", "Jex3", "Jex4", "Kan1", "KanS", "Hex", "KDM"]

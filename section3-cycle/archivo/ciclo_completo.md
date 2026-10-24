@@ -141,5 +141,5 @@ The dataset provides magnetic phase `labels` (0–3). For each cluster, the note
 
 - Cycle theory: [docs/05_complete_cycle.md](../../docs/05_complete_cycle.md)
 - Metrics: [docs/07_metrics.md](../../docs/07_metrics.md)
-- Inverse model: [notebooks/inverse/xception_inverse.md](../inverse/xception_inverse.md)
-- Generative model: [notebooks/generative/ddpm_train.md](../generative/ddpm_train.md)
+- Inverse model: [section2-inverse/cuadernillos/xception_inverse.md](../inverse/xception_inverse.md)
+- Generative model: [section1-generative/modelos/ddpm_train.md](../generative/ddpm_train.md)
