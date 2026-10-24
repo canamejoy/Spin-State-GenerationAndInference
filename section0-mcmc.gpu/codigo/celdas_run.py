@@ -267,39 +267,148 @@ surf = jnp.asarray(geo["surface"][None, ...])
 salida = {}
 t_total = time.perf_counter()
 
-for i, nm in enumerate(nombres):
-    Pcols, T_obj = columnas(P[i], REPLICAS)
-    k1 = jnp.where(surf, Pcols["KanS"], Pcols["Kan1"])
+# ---- cuantas GPU hay, y sobre que eje se reparten
+#
+# Esto existe porque la version anterior usaba `jax.jit` a secas, que coloca
+# TODO en el dispositivo 0: en una maquina con dos T4 usaba una sola y la otra
+# quedaba ociosa. Hay dos ejes sobre los que repartir y no son equivalentes.
+#
+#   estados   un estado entero por GPU. Es el eje que escala -- medido, 3.29x
+#             sobre 4 GPU con 10 estados contra 1.10x con uno solo -- porque
+#             cada estado lleva su propia escalera de temperaturas y sus
+#             propios parametros, asi que no hay nada que comunicar.
+#   replicas  parte las replicas de UN estado entre las GPU. Es lo que sirve
+#             cuando hay menos estados que GPU. Medido en T4: 50 replicas en
+#             2 T4 (25 por dispositivo) dan 3.413 us/replica-barrido contra
+#             7.282 en una sola, es decir 2.13x.
+#
+# Los repartos DESIGUALES se serializan (+83.8% medido), asi que se exige
+# divisibilidad exacta y, si no la hay, se usa una sola GPU y se dice por que.
+n_dev = jax.local_device_count()
+if n_dev > 1 and N_ESTADOS >= n_dev and N_ESTADOS % n_dev == 0:
+    MODO, por_dev = "estados", REPLICAS
+elif n_dev > 1 and REPLICAS % n_dev == 0:
+    MODO, por_dev = "replicas", REPLICAS // n_dev
+else:
+    MODO, por_dev = "uno", REPLICAS
+    if n_dev > 1:
+        print(f"AVISO: {n_dev} GPU visibles, pero ni {N_ESTADOS} estados ni "
+              f"{REPLICAS} replicas se dividen exacto entre {n_dev}; un "
+              f"reparto desigual se serializa, asi que se usa 1 GPU")
+
+print(f"GPU: {n_dev} visible(s) -> "
+      f"{sorted({d.device_kind for d in jax.devices()})}")
+if MODO == "estados":
+    print(f"reparto: un estado por GPU, {N_ESTADOS // n_dev} tanda(s) "
+          f"de {n_dev}, {REPLICAS} replicas cada uno")
+elif MODO == "replicas":
+    print(f"reparto: las {REPLICAS} replicas de cada estado entre {n_dev} "
+          f"GPU, {por_dev} por dispositivo")
+else:
+    print(f"reparto: 1 GPU, {REPLICAS} replicas")
+
+
+def _arma(i, b):
+    """Lo que un dispositivo necesita para el estado `i` con `b` replicas."""
+    Pc, T_obj = columnas(P[i], b)
     temps = np.linspace(T_INICIAL, T_obj, int(N_TEMPERATURAS))
-    betas = jnp.asarray(1.0 / (kB * temps), jnp.float32)
-    sp = S.init_spins(jax.random.PRNGKey(SEMILLA + i), geo, REPLICAS)
+    return dict(Pcols=Pc, temps=temps,
+                betas=jnp.asarray(1.0 / (kB * temps), jnp.float32),
+                k1=jnp.where(surf, Pc["KanS"], Pc["Kan1"]),
+                par=(TH.pack_params(Pc, b) if usar_triton else None))
 
-    if usar_triton:
-        ann = TH.build_anneal_full(geo, BY=4, num_warps=4)
-        par = TH.pack_params(Pcols, REPLICAS)
-        f = jax.jit(lambda s: ann(s, SEMILLA + i, betas, par, k1, N_TERM, N_MED))
-        arg = TH.planar(sp)
-    else:
-        f = jax.jit(lambda s: eng["anneal"](s, jax.random.PRNGKey(SEMILLA + i),
-                                            betas, Pcols, N_TERM, N_MED))
-        arg = sp
 
-    f = f.lower(arg).compile()          # compila sin ejecutar
-    t0 = time.perf_counter()
-    obs, final, snaps = jax.block_until_ready(f(arg))
-    dt = time.perf_counter() - t0
-
+def _guarda(nm, obs, snap, temps, dt, repl):
     red = S.reduce_obs(np.asarray(obs), temps, n_act)
     salida[nm] = dict(T=temps.tolist(),
                       **{k: np.asarray(v).tolist() for k, v in red.items()
                          if k != "T"},
                       reloj_s=dt,
                       us_por_replica_barrido=1e6 * dt
-                        / (int(N_TEMPERATURAS) * BARRIDOS * REPLICAS))
-    # la capa media de la réplica 0 en la última temperatura, para la figura
-    salida[nm]["_snap"] = np.asarray(snaps[-1]).tolist()
+                        / (int(N_TEMPERATURAS) * BARRIDOS * repl))
+    salida[nm]["_snap"] = np.asarray(snap).tolist()
     print(f"  {nm:<12}{dt:7.1f} s   "
-          f"{salida[nm]['us_por_replica_barrido']:6.3f} µs/réplica-barrido")
+          f"{salida[nm]['us_por_replica_barrido']:6.3f} us/replica-barrido")
+
+
+if MODO == "estados":
+    # Un estado entero por dispositivo. La escalera, los parametros y la
+    # semilla cambian por estado, asi que viajan como ejes del pmap.
+    for base in range(0, N_ESTADOS, n_dev):
+        idx = list(range(base, base + n_dev))
+        pz = [_arma(i, REPLICAS) for i in idx]
+        betas = jnp.stack([q["betas"] for q in pz])
+        k1 = jnp.stack([q["k1"] for q in pz])
+        sem = jnp.asarray([SEMILLA + i for i in idx], jnp.int32)
+        sp = [S.init_spins(jax.random.PRNGKey(SEMILLA + i), geo, REPLICAS)
+              for i in idx]
+        if usar_triton:
+            ann = TH.build_anneal_full(geo, BY=4, num_warps=4)
+            par = jnp.stack([q["par"] for q in pz])
+            g = lambda s, sd, bt, pr, kk: ann(s, sd, bt, pr, kk,
+                                              N_TERM, N_MED)
+            arg = (jnp.stack([TH.planar(x) for x in sp]), sem, betas, par, k1)
+        else:
+            Pst = {k: jnp.stack([q["Pcols"][k] for q in pz])
+                   for k in pz[0]["Pcols"]}
+            g = lambda s, sd, bt, pc: eng["anneal"](
+                s, jax.random.PRNGKey(sd), bt, pc, N_TERM, N_MED)
+            arg = (jnp.stack(sp), sem, betas, Pst)
+        t0 = time.perf_counter()
+        obs, final, snaps = jax.block_until_ready(jax.pmap(g)(*arg))
+        dt = time.perf_counter() - t0
+        for j, i in enumerate(idx):
+            _guarda(nombres[i], np.asarray(obs)[j],
+                    np.asarray(snaps)[j][-1], pz[j]["temps"], dt, REPLICAS)
+
+elif MODO == "replicas":
+    # Las replicas de un estado repartidas. Todos los dispositivos comparten
+    # la escalera y los parametros; solo cambian los espines y la semilla.
+    for i, nm in enumerate(nombres):
+        q = _arma(i, por_dev)
+        sem = jnp.asarray([SEMILLA + i * 1000 + d for d in range(n_dev)],
+                          jnp.int32)
+        sp = S.init_spins(jax.random.PRNGKey(SEMILLA + i), geo, REPLICAS)
+        sp = sp.reshape(n_dev, por_dev, *sp.shape[1:])
+        if usar_triton:
+            ann = TH.build_anneal_full(geo, BY=4, num_warps=4)
+            g = lambda s, sd: ann(s, sd, q["betas"], q["par"], q["k1"],
+                                  N_TERM, N_MED)
+            arg = (jnp.stack([TH.planar(x) for x in sp]), sem)
+        else:
+            g = lambda s, sd: eng["anneal"](s, jax.random.PRNGKey(sd),
+                                            q["betas"], q["Pcols"],
+                                            N_TERM, N_MED)
+            arg = (sp, sem)
+        t0 = time.perf_counter()
+        obs, final, snaps = jax.block_until_ready(jax.pmap(g)(*arg))
+        dt = time.perf_counter() - t0
+        # `anneal` devuelve (n_T, 6, replicas) POR dispositivo, asi que las
+        # replicas se reunen concatenando por el ULTIMO eje. Aplanar el eje
+        # principal mezclaria temperaturas con observables, que es justo el
+        # error que `reduce_obs` advierte en su docstring.
+        obs = np.concatenate(list(np.asarray(obs)), axis=-1)
+        _guarda(nm, obs, np.asarray(snaps)[0][-1], q["temps"], dt, REPLICAS)
+
+else:
+    for i, nm in enumerate(nombres):
+        q = _arma(i, REPLICAS)
+        sp = S.init_spins(jax.random.PRNGKey(SEMILLA + i), geo, REPLICAS)
+        if usar_triton:
+            ann = TH.build_anneal_full(geo, BY=4, num_warps=4)
+            f = jax.jit(lambda s: ann(s, SEMILLA + i, q["betas"], q["par"],
+                                      q["k1"], N_TERM, N_MED))
+            arg = TH.planar(sp)
+        else:
+            f = jax.jit(lambda s: eng["anneal"](
+                s, jax.random.PRNGKey(SEMILLA + i), q["betas"], q["Pcols"],
+                N_TERM, N_MED))
+            arg = sp
+        f = f.lower(arg).compile()          # compila sin ejecutar
+        t0 = time.perf_counter()
+        obs, final, snaps = jax.block_until_ready(f(arg))
+        dt = time.perf_counter() - t0
+        _guarda(nm, obs, snaps[-1], q["temps"], dt, REPLICAS)
 
 print(f"\ntotal: {(time.perf_counter()-t_total)/60:.2f} min para "
       f"{N_ESTADOS} estado(s)")

@@ -17,7 +17,7 @@ import json
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "..", "cuadernillos", "simulacion_lista_para_correr.ipynb")
+OUT = os.path.join(HERE, "..", "cuadernillos", "simulation_ready_for_r.ipynb")
 
 import sys
 sys.path.insert(0, HERE)      # the cell bodies live beside this file
