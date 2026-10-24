@@ -1,0 +1,30 @@
+{
+ "tau_max": {
+  "uniform": 316.4602508544922,
+  "helical": 467.6582946777344,
+  "points": 589.9798889160156,
+  "lines": 694.4164733886719
+ },
+ "allocation_by_tau": {
+  "uniform": 61,
+  "helical": 90,
+  "points": 114,
+  "lines": 134
+ },
+ "equal_allocation": {
+  "uniform": 100,
+  "helical": 100,
+  "points": 100,
+  "lines": 100
+ },
+ "neff_equal": {
+  "uniform": 1580,
+  "helical": 1069,
+  "points": 847,
+  "lines": 720
+ },
+ "neff_by_tau": 967,
+ "chains_needed": 298,
+ "total_now": 400,
+ "meas_sweeps": 5000
+}

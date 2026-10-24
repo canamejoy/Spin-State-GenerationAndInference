@@ -1,0 +1,253 @@
+{
+ "rows": [
+  {
+   "label": "100 (ancho 4)",
+   "batches": [
+    100
+   ],
+   "n_replicas": 100,
+   "widths": [
+    4
+   ],
+   "n_launches": 1,
+   "wall_min": 1.1605487449999714,
+   "wall_median": 1.1607574999999883,
+   "wall_max": 1.161659883999988,
+   "spread_pct": 0.09574255323645531,
+   "samples": [
+    1.161659883999988,
+    1.1606935560000124,
+    1.16076040599998,
+    1.1608130689999712,
+    1.1607623450000233,
+    1.1607317509999575,
+    1.1607574999999883,
+    1.1605487449999714,
+    1.1606286979999823
+   ],
+   "wall_per_replica_min": 0.011605487449999714,
+   "wall_per_replica_median": 0.011607574999999884,
+   "us_per_sweep_replica": 3.2243263888888567,
+   "compile_s": [
+    21.790015601999983
+   ],
+   "compile_total": 21.790015601999983
+  },
+  {
+   "label": "50 + 50 (ancho 2,2)",
+   "batches": [
+    50,
+    50
+   ],
+   "n_replicas": 100,
+   "widths": [
+    2,
+    2
+   ],
+   "n_launches": 2,
+   "wall_min": 0.872690829999982,
+   "wall_median": 0.8729472800000053,
+   "wall_max": 0.8735151580000036,
+   "spread_pct": 0.09445819432083447,
+   "samples": [
+    0.8735151580000036,
+    0.872690829999982,
+    0.8730640949999895,
+    0.8731693359999895,
+    0.8728751740000007,
+    0.8729895010000064,
+    0.8728864110000245,
+    0.8729472800000053,
+    0.872749768999995
+   ],
+   "wall_per_replica_min": 0.00872690829999982,
+   "wall_per_replica_median": 0.008729472800000053,
+   "us_per_sweep_replica": 2.42485355555557,
+   "compile_s": [
+    44.745259753,
+    44.745259753
+   ],
+   "compile_total": 89.490519506
+  },
+  {
+   "label": "51 + 49 (ancho 1,1)",
+   "batches": [
+    51,
+    49
+   ],
+   "n_replicas": 100,
+   "widths": [
+    1,
+    1
+   ],
+   "n_launches": 2,
+   "wall_min": 0.8793902270000444,
+   "wall_median": 0.8796108859999663,
+   "wall_max": 0.8802437629999815,
+   "spread_pct": 0.09705998244360359,
+   "samples": [
+    0.8802437629999815,
+    0.8799487599999907,
+    0.8794776729999967,
+    0.8795657200000164,
+    0.8796108859999663,
+    0.8793902270000444,
+    0.8797692819999838,
+    0.8797094070000071,
+    0.8794794040000511
+   ],
+   "wall_per_replica_min": 0.008793902270000445,
+   "wall_per_replica_median": 0.008796108859999662,
+   "us_per_sweep_replica": 2.4433635722221285,
+   "compile_s": [
+    39.781003991999995,
+    45.891105659
+   ],
+   "compile_total": 85.672109651
+  },
+  {
+   "label": "99 (ancho 1)",
+   "batches": [
+    99
+   ],
+   "n_replicas": 99,
+   "widths": [
+    1
+   ],
+   "n_launches": 1,
+   "wall_min": 0.8009992010000246,
+   "wall_median": 0.8012638800000218,
+   "wall_max": 0.8014661349999983,
+   "spread_pct": 0.05829394079179817,
+   "samples": [
+    0.8014661349999983,
+    0.8010287289999951,
+    0.801337296000014,
+    0.8010605929999883,
+    0.8009992010000246,
+    0.8013777919999825,
+    0.8012694220000185,
+    0.8012638800000218,
+    0.8011403979999727
+   ],
+   "wall_per_replica_min": 0.00809090102020227,
+   "wall_per_replica_median": 0.008093574545454766,
+   "us_per_sweep_replica": 2.2482151515152125,
+   "compile_s": [
+    35.921418872000004
+   ],
+   "compile_total": 35.921418872000004
+  },
+  {
+   "label": "101 (ancho 1)",
+   "batches": [
+    101
+   ],
+   "n_replicas": 101,
+   "widths": [
+    1
+   ],
+   "n_launches": 1,
+   "wall_min": 0.797471685000005,
+   "wall_median": 0.7982850120000364,
+   "wall_max": 0.7988260569999852,
+   "spread_pct": 0.16983323990746868,
+   "samples": [
+    0.797471685000005,
+    0.7983329250000111,
+    0.7982850120000364,
+    0.7982884700000454,
+    0.7981400929999722,
+    0.7984064529999841,
+    0.7982756629999699,
+    0.7982095450000202,
+    0.7988260569999852
+   ],
+   "wall_per_replica_min": 0.007895759257425791,
+   "wall_per_replica_median": 0.00790381200000036,
+   "us_per_sweep_replica": 2.1955033333334333,
+   "compile_s": [
+    48.428766345999975
+   ],
+   "compile_total": 48.428766345999975
+  }
+ ],
+ "Rd": 18.3,
+ "L": 5,
+ "N": 39,
+ "device": {
+  "repr": "cuda:0",
+  "kind": "NVIDIA H100 80GB HBM3",
+  "platform": "gpu",
+  "n_devices": 1,
+  "smi": [
+   "NVIDIA H100 80GB HBM3, GPU-534420f6-8dd8-28dd-4353-c2770599cf9d, 81559 MiB, 1980 MHz, 610.57.04, 5"
+  ]
+ },
+ "n_temps": 8,
+ "n_therm": 300,
+ "n_meas": 150,
+ "sweeps": 3600,
+ "reps": 9,
+ "note": "Replicas are independent chains, so the split is statistically exact but not bit-identical: the RNG keys differ. On one GPU the two launches are serial, so the wall clock of the protocol is their sum.",
+ "analysis": {
+  "question": "Does the split protocol (51+49, width 1 each) beat the current production convention (50+50, width 2 each)? Both are two launches of 100 replicas total, so the fixed launch cost is paid twice in BOTH, and the only variable left is vector width 1 against width 2.",
+  "answer": {
+   "verdict": "TIE",
+   "delta_pct": 0.76,
+   "reading": "51+49 is 0.76% SLOWER than 50+50, which is inside the measurement's own resolution. Width 2 is free, now confirmed with launch count held fixed. The protocol gains nothing over the current convention at this size."
+  },
+  "my_prediction_was_wrong": {
+   "predicted": "51+49 would win by 5 to 7%",
+   "basis": "the 52-point survey put B=50 at 9.788 s/replica against 9.130 at B=45 and 9.162 at B=55, i.e. 7.0% high, which I attributed to the sawtooth",
+   "measured": "a tie, +0.76%",
+   "why_wrong": "B=50's +7% in the survey did not reproduce. The survey used short cells, where we have since measured +-2.5% noise in both directions, and a single run. The anomaly that made my B=50 interpolation fail by 7% was most likely that noise, not a real feature of the curve at B=50.",
+   "lesson": "a single short-cell point is not evidence of a sawtooth feature below ~5%"
+  },
+  "model_validated_out_of_sample": {
+   "model": "W(B) = a + b*B with a = 0.0820 s, b = 0.007215 s/replica",
+   "fitted_on": "the PREVIOUS run (split_protocol.json), not on this one",
+   "errors_pct": {
+    "50 + 50": -1.4,
+    "51 + 49": -0.7,
+    "99": 0.6,
+    "101": -1.5
+   },
+   "verdict": "every width-1 and width-2 config predicted within 1.5%, out of sample"
+  },
+  "width4_penalty_isolated": {
+   "B": 100,
+   "measured": 0.011607574999999884,
+   "width1_model": 0.008035,
+   "penalty_pct": 44.5,
+   "note": "a clean single number for the width-4 penalty, against the validated model"
+  },
+  "what_actually_dominates_here": {
+   "finding": "At this scale the LAUNCH COUNT matters far more than the width.",
+   "one_extra_launch_over_100_replicas": {
+    "cost_s": 0.00082,
+    "pct_of_a_replica": 10.4
+   },
+   "comparisons_pct": {
+    "101 alone vs 51+49": -10.14,
+    "101 alone vs 50+50": -9.46,
+    "99 alone vs 51+49": -7.99,
+    "99 alone vs 50+50": -7.28
+   },
+   "reading": "For 100 replicas a SINGLE odd batch of 99 or 101 beats either two-launch option by 8 to 10%, because it pays the fixed cost once instead of twice."
+  },
+  "the_practical_consequence_for_200": {
+   "note": "extrapolated with the model validated above, not measured directly",
+   "four_launches_of_50_width2": 0.00886,
+   "protocol_101_plus_99": 0.00804,
+   "one_launch_of_200_width4": 0.01045,
+   "protocol_vs_four_launches_pct": -9.3,
+   "reading": "If production currently runs one launch per state, 4 states x 50 replicas is FOUR launches. The protocol's 101+99 is TWO, and beats it by 9.3% -- by launch count, not by width. The protocol's real value is not that it reaches width 1; it is that it reaches 200 replicas in two launches instead of four, while avoiding the width-4 batch."
+  },
+  "limits": [
+   "One H100, 3600 sweeps, nine interleaved repeats, dispersion 0.1-0.2%.",
+   "The 200-replica row is modelled, not measured; only the 100-replica rows are direct measurements here.",
+   "Everything is the width axis. The sawtooth is untouched: B=99 and B=101 differ by 2.3% and both are width 1."
+  ]
+ }
+}

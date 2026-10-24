@@ -1,0 +1,334 @@
+{
+ "rows": [
+  {
+   "B": 10,
+   "width": 2,
+   "sec_per_replica": 15.22,
+   "source": "busqueda"
+  },
+  {
+   "B": 15,
+   "width": 1,
+   "sec_per_replica": 14.618,
+   "source": "barrido"
+  },
+  {
+   "B": 20,
+   "width": 4,
+   "sec_per_replica": 13.033,
+   "source": "busqueda"
+  },
+  {
+   "B": 25,
+   "width": 1,
+   "sec_per_replica": 11.561,
+   "source": "barrido"
+  },
+  {
+   "B": 30,
+   "width": 2,
+   "sec_per_replica": 10.103,
+   "source": "barrido"
+  },
+  {
+   "B": 35,
+   "width": 1,
+   "sec_per_replica": 10.451,
+   "source": "busqueda"
+  },
+  {
+   "B": 45,
+   "width": 1,
+   "sec_per_replica": 9.13,
+   "source": "barrido"
+  },
+  {
+   "B": 50,
+   "width": 2,
+   "sec_per_replica": 9.788,
+   "source": "barrido"
+  },
+  {
+   "B": 55,
+   "width": 1,
+   "sec_per_replica": 9.162,
+   "source": "barrido"
+  },
+  {
+   "B": 65,
+   "width": 1,
+   "sec_per_replica": 9.757,
+   "source": "barrido"
+  },
+  {
+   "B": 75,
+   "width": 1,
+   "sec_per_replica": 9.163,
+   "source": "busqueda"
+  },
+  {
+   "B": 90,
+   "width": 2,
+   "sec_per_replica": 9.218,
+   "source": "barrido"
+  },
+  {
+   "B": 100,
+   "width": 4,
+   "sec_per_replica": 12.825,
+   "source": "barrido"
+  },
+  {
+   "B": 110,
+   "width": 2,
+   "sec_per_replica": 8.806,
+   "source": "barrido"
+  },
+  {
+   "B": 125,
+   "width": 1,
+   "sec_per_replica": 8.953,
+   "source": "busqueda"
+  },
+  {
+   "B": 135,
+   "width": 1,
+   "sec_per_replica": 8.665,
+   "source": "barrido"
+  },
+  {
+   "B": 140,
+   "width": 4,
+   "sec_per_replica": 12.606,
+   "source": "busqueda"
+  },
+  {
+   "B": 160,
+   "width": 4,
+   "sec_per_replica": 12.873,
+   "source": "barrido"
+  },
+  {
+   "B": 185,
+   "width": 1,
+   "sec_per_replica": 9.193,
+   "source": "busqueda"
+  },
+  {
+   "B": 195,
+   "width": 1,
+   "sec_per_replica": 8.816,
+   "source": "barrido"
+  },
+  {
+   "B": 230,
+   "width": 2,
+   "sec_per_replica": 8.436,
+   "source": "barrido"
+  },
+  {
+   "B": 245,
+   "width": 1,
+   "sec_per_replica": 8.773,
+   "source": "busqueda"
+  },
+  {
+   "B": 255,
+   "width": 1,
+   "sec_per_replica": 8.761,
+   "source": "busqueda"
+  },
+  {
+   "B": 265,
+   "width": 1,
+   "sec_per_replica": 8.522,
+   "source": "busqueda"
+  },
+  {
+   "B": 270,
+   "width": 2,
+   "sec_per_replica": 8.497,
+   "source": "busqueda"
+  },
+  {
+   "B": 275,
+   "width": 1,
+   "sec_per_replica": 8.669,
+   "source": "busqueda"
+  },
+  {
+   "B": 280,
+   "width": 4,
+   "sec_per_replica": 11.421,
+   "source": "barrido"
+  },
+  {
+   "B": 285,
+   "width": 1,
+   "sec_per_replica": 8.981,
+   "source": "busqueda"
+  },
+  {
+   "B": 315,
+   "width": 1,
+   "sec_per_replica": 8.619,
+   "source": "busqueda"
+  },
+  {
+   "B": 325,
+   "width": 1,
+   "sec_per_replica": 8.404,
+   "source": "busqueda"
+  },
+  {
+   "B": 335,
+   "width": 1,
+   "sec_per_replica": 8.472,
+   "source": "busqueda"
+  },
+  {
+   "B": 345,
+   "width": 1,
+   "sec_per_replica": 8.405,
+   "source": "busqueda"
+  },
+  {
+   "B": 355,
+   "width": 1,
+   "sec_per_replica": 8.134,
+   "source": "busqueda"
+  },
+  {
+   "B": 365,
+   "width": 1,
+   "sec_per_replica": 8.332,
+   "source": "busqueda"
+  },
+  {
+   "B": 375,
+   "width": 1,
+   "sec_per_replica": 8.405,
+   "source": "busqueda"
+  },
+  {
+   "B": 385,
+   "width": 1,
+   "sec_per_replica": 8.036,
+   "source": "busqueda"
+  },
+  {
+   "B": 395,
+   "width": 1,
+   "sec_per_replica": 8.207,
+   "source": "busqueda"
+  },
+  {
+   "B": 405,
+   "width": 1,
+   "sec_per_replica": 8.126,
+   "source": "busqueda"
+  },
+  {
+   "B": 415,
+   "width": 1,
+   "sec_per_replica": 8.538,
+   "source": "busqueda"
+  },
+  {
+   "B": 425,
+   "width": 1,
+   "sec_per_replica": 8.06,
+   "source": "busqueda"
+  },
+  {
+   "B": 435,
+   "width": 1,
+   "sec_per_replica": 8.013,
+   "source": "busqueda"
+  },
+  {
+   "B": 445,
+   "width": 1,
+   "sec_per_replica": 8.261,
+   "source": "busqueda"
+  },
+  {
+   "B": 455,
+   "width": 1,
+   "sec_per_replica": 8.401,
+   "source": "busqueda"
+  },
+  {
+   "B": 465,
+   "width": 1,
+   "sec_per_replica": 8.218,
+   "source": "busqueda"
+  },
+  {
+   "B": 475,
+   "width": 1,
+   "sec_per_replica": 8.557,
+   "source": "busqueda"
+  },
+  {
+   "B": 485,
+   "width": 1,
+   "sec_per_replica": 8.492,
+   "source": "busqueda"
+  },
+  {
+   "B": 495,
+   "width": 1,
+   "sec_per_replica": 9.611,
+   "source": "busqueda"
+  },
+  {
+   "B": 525,
+   "width": 1,
+   "sec_per_replica": 8.874,
+   "source": "busqueda"
+  },
+  {
+   "B": 585,
+   "width": 1,
+   "sec_per_replica": 8.333,
+   "source": "barrido"
+  },
+  {
+   "B": 705,
+   "width": 1,
+   "sec_per_replica": 7.721,
+   "source": "barrido"
+  },
+  {
+   "B": 850,
+   "width": 2,
+   "sec_per_replica": 7.332,
+   "source": "barrido"
+  },
+  {
+   "B": 1020,
+   "width": 4,
+   "sec_per_replica": 14.823,
+   "source": "busqueda"
+  }
+ ],
+ "n_distinct": 52,
+ "best_B": 850,
+ "best_sec": 7.332,
+ "best_source": "barrido",
+ "bayes_best_B": 435,
+ "bayes_best_sec": 8.013,
+ "device": "NVIDIA H100 80GB HBM3",
+ "Rd": 18.3,
+ "L": 5,
+ "sweeps_per_eval": 60000,
+ "prod_sweeps": 4000000,
+ "unit": "seconds per replica for a full production run, EXTRAPOLATED from 60,000-sweep cells",
+ "cross_check_B100": {
+  "measured": 12.825,
+  "old_curve": 12.77,
+  "agreement_pct": 0.4,
+  "note": "independent run weeks earlier, same lattice"
+ }
+}

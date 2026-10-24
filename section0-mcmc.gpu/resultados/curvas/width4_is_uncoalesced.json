@@ -1,0 +1,95 @@
+{
+ "question": "Why does a 4-wide elementwise loop cost about 14% while a 2-wide one is free? Measured with no XLA anywhere, so the answer cannot be a compiler artefact.",
+ "design": "An elementwise kernel over n floats (two reads, one write, a couple of multiplies, a max and a reciprocal), compiled by nvrtc through CuPy at the 128-thread block XLA itself uses. Total work is identical in every cell; only how many elements a thread owns, and which ones, changes. n = 1,368,900, exactly the element count of the reference lattice at B = 60.",
+ "schemes": {
+  "blocked": "thread t owns elements t*VEC .. t*VEC+VEC-1 (consecutive)",
+  "strided": "thread t owns elements t, t+T, t+2T, ... (grid-stride, coalesced)"
+ },
+ "device": "NVIDIA H100 80GB HBM3",
+ "rows": [
+  {
+   "vec": 1,
+   "scheme": "blocked",
+   "grid": 10695,
+   "block": 128,
+   "us_per_pass": 8.41,
+   "gb_s": 1952.2
+  },
+  {
+   "vec": 1,
+   "scheme": "strided",
+   "grid": 10695,
+   "block": 128,
+   "us_per_pass": 8.41,
+   "gb_s": 1953.9
+  },
+  {
+   "vec": 2,
+   "scheme": "blocked",
+   "grid": 5348,
+   "block": 128,
+   "us_per_pass": 6.13,
+   "gb_s": 2681.6
+  },
+  {
+   "vec": 2,
+   "scheme": "strided",
+   "grid": 5348,
+   "block": 128,
+   "us_per_pass": 5.6,
+   "gb_s": 2935.1
+  },
+  {
+   "vec": 4,
+   "scheme": "blocked",
+   "grid": 2674,
+   "block": 128,
+   "us_per_pass": 9.67,
+   "gb_s": 1698.9
+  },
+  {
+   "vec": 4,
+   "scheme": "strided",
+   "grid": 2674,
+   "block": 128,
+   "us_per_pass": 4.6,
+   "gb_s": 3570.9
+  }
+ ],
+ "result": {
+  "blocked_4_vs_1": "+14.9% time, -13.0% effective bandwidth",
+  "blocked_2_vs_1": "-27.2% time",
+  "strided_4_vs_1": "-45.3% time, 3571 GB/s, 107% of HBM3 peak (L2 helping)",
+  "strided_2_vs_1": "-33.4% time",
+  "jax_reference": "+14.25% at width 4 and +0.09% at width 2, on Rd 23.55 L 3, H100",
+  "verdict": "The blocked scheme at VEC=4 is the ONLY cell slower than VEC=1, and it costs +14.9% against the JAX kernel's +14.25% -- a match within 0.65 pp, reproduced with no compiler involved. The same width run coalesced is 45% FASTER, so width itself is not the problem: the problem is that XLA gives each thread CONSECUTIVE elements."
+ },
+ "mechanism": {
+  "note": "Blocked, one load instruction across a 32-thread warp touches addresses 4*VEC bytes apart, so the warp's request spans VEC*128 bytes and needs VEC 128-byte transactions to deliver 128 bytes of useful data.",
+  "waste": {
+   "1": "128 B span, 1 transaction",
+   "2": "256 B span, 2 transactions",
+   "4": "512 B span, 4 transactions"
+  },
+  "crossover": "Widening also cuts the block count and raises instruction-level parallelism, which is why VEC=2 blocked still wins by 27%. At VEC=4 the 4x transaction waste overtakes that gain and the sign flips. That is exactly the measured signature: width 2 free, width 4 expensive."
+ },
+ "reconciles": "The compiler-versus-hardware split was a false dichotomy. XLA makes the DECISION (which width, and consecutive rather than strided); the memory system sets the PRICE. That is why the penalty correlates with device properties and why experiment 3b's hand-written kernel was flat: 3b used one site per thread at every B, so no width decision ever varied. Forcing the width in raw CUDA brings the penalty back.",
+ "refuted_here": {
+  "hypothesis": "The ~2 MB footprint threshold is XLA's working set fitting in L2.",
+  "arithmetic": "XLA's own allocation is 0.676 MB per replica (7.8x the spin array, from the 3a probe). At B=60 that is 16.4 MB for arm A and 40.6 MB for arm B. BOTH fit in the H100's 50 MB L2, yet arm A is null and arm B is +15%.",
+  "also": "This probe touches 15.7 MB per pass -- comparable to arm A -- and the blocked VEC=4 penalty appears anyway. So arm A's null result is not explained by the coalescing picture either.",
+  "status": "REFUTED. The footprint threshold remains open, but better posed."
+ },
+ "still_open": [
+  "Why arm A (16.4 MB working set) shows no penalty when this probe shows one at 15.7 MB. Something about the small-N lattices suppresses it.",
+  "Why B=512 is the global minimum and B=768 near the worst, both width 4.",
+  "Whether XLA picks blocked indexing on every target architecture."
+ ],
+ "method": {
+  "entrypoint": "app.py::vector_width",
+  "iters": 300,
+  "repeats": 3,
+  "sd_s": 0.0,
+  "note": "sd below the timer's resolution in every cell"
+ }
+}

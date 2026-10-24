@@ -1,0 +1,450 @@
+<title>Réplicas por GPU</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{--bg:#f7f5f2;--surface:#fffefc;--ink:#1c1a17;--muted:#6b645b;--rule:#e2ddd5;
+      --up:#c0392b;--dn:#2471a3;--accent:#1a7a6a;--warn:#b8651b;--dead:#9a9289;
+      --display:"Spectral",Georgia,serif;--body:"IBM Plex Sans",system-ui,sans-serif;
+      --mono:"IBM Plex Mono",ui-monospace,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#16161a;--surface:#1f1f24;--ink:#eceae6;--muted:#9d968c;--rule:#34343c;
+  --up:#e8604f;--dn:#4a9fe0;--accent:#39b8a2;--warn:#dc9346;--dead:#6a6560;
+  color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16161a;--surface:#1f1f24;--ink:#eceae6;--muted:#9d968c;
+  --rule:#34343c;--up:#e8604f;--dn:#4a9fe0;--accent:#39b8a2;--warn:#dc9346;
+  --dead:#6a6560;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;
+     line-height:1.6;margin:0}
+.wrap{max-width:900px;margin:0 auto;padding-inline:20px;padding-block:44px 64px}
+h1{font-family:var(--display);font-size:clamp(1.9rem,5vw,2.7rem);line-height:1.1;
+   margin:0 0 .35em;text-wrap:balance;font-weight:600}
+h2{font-family:var(--display);font-size:clamp(1.25rem,3vw,1.6rem);line-height:1.2;
+   margin:2.1em 0 .5em;text-wrap:balance;font-weight:600}
+h3{font-size:1rem;margin:1.5em 0 .35em;font-weight:600}
+p{margin:0 0 .9em;max-width:68ch}
+ul{max-width:66ch;padding-left:1.25em;margin:0 0 .9em}li{margin:.3em 0}
+.lede{font-size:1.1rem;color:var(--muted);max-width:62ch}
+.eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;
+         text-transform:uppercase;color:var(--accent);margin:0 0 .6em}
+code,.n{font-family:var(--mono);font-variant-numeric:tabular-nums}.n{font-weight:500}
+hr{border:0;border-top:1px solid var(--rule);margin:2.4rem 0}
+.key{background:var(--surface);border:1px solid var(--rule);
+     border-left:3px solid var(--accent);border-radius:10px;padding:16px 18px;margin:1.3em 0}
+.key p{margin:0;max-width:64ch}.key p+p{margin-top:.6em}
+.note{border-left:3px solid var(--rule);padding:.1rem 0 .1rem 1rem;margin:1.2em 0;
+      color:var(--muted);max-width:64ch;font-size:.94rem}
+.note strong{color:var(--ink)}.note.warn{border-left-color:var(--warn)}
+.note.bad{border-left-color:var(--up)}
+table{border-collapse:collapse;width:100%;font-size:.9rem;margin:.9em 0}
+th,td{text-align:right;padding:7px 9px;border-bottom:1px solid var(--rule)}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--mono);font-size:.68rem;letter-spacing:.07em;text-transform:uppercase;
+   color:var(--muted);font-weight:500}
+td.n{font-variant-numeric:tabular-nums}.tw{overflow-x:auto}
+.best td{color:var(--accent);font-weight:600}
+td.bad{color:var(--up);font-weight:600}td.good{color:var(--accent);font-weight:600}
+.chartbox{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+          padding:16px;margin:1.3em 0}
+.chartbox canvas{width:100%;height:auto;display:block;max-width:100%;cursor:crosshair}
+.cap{font-size:.84rem;color:var(--muted);margin:10px 0 0}
+.seg{display:flex;flex-wrap:wrap;gap:4px}
+.seg button{font-family:var(--body);font-size:.85rem;padding:6px 11px;cursor:pointer;
+  background:transparent;color:var(--ink);border:1px solid var(--rule);border-radius:6px}
+.seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.ctl>span{display:block;font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;
+          text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin:1.1em 0}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+      padding:14px 16px;min-width:0}
+.card h3{margin-top:0}.card p{font-size:.92rem;margin-bottom:0}
+.big{font-family:var(--mono);font-size:1.5rem;font-weight:500;display:block;margin:.1em 0 .2em}
+.big.up{color:var(--up)}.big.ok{color:var(--accent)}
+</style>
+
+<div class="wrap">
+<p class="eyebrow">H100 · Rd 18.30 · 5 capas · parámetros de producción</p>
+<h1>Réplicas por GPU</h1>
+<p class="lede">Cincuenta tamaños de lote medidos en una sola GPU y una sola
+geometría, para decidir cuántas réplicas conviene poner en cada dispositivo.</p>
+
+<div class="key">
+  <p><b>El resultado.</b> El mejor lote medido es <b><code>B</code> = 850</b>,
+  con <b class="n">7.33 s por réplica</b> en una corrida completa de producción.
+  El peor de los cincuenta cuesta <b class="n">15.22 s</b> — <b>más del
+  doble</b>, con el mismo trabajo y la misma física.</p>
+  <p style="color:var(--muted);font-size:.93rem">Candidatos restringidos a
+  múltiplos de cinco, para que el total siempre se reparta limpio si se usan
+  varias GPUs. Las pruebas dicen el óptimo <em>por GPU</em>; cómo repartir el
+  total entre dispositivos es una decisión aparte.</p>
+</div>
+
+<h2>La curva</h2>
+
+<div class="key">
+  <p><b>Los parámetros de producción, que es lo que mide cada punto.</b></p>
+</div>
+
+<div class="tw"><table>
+  <thead><tr><th>parámetro</th><th>valor</th><th>de dónde sale</th></tr></thead>
+  <tbody>
+    <tr><td>Temperaturas del descenso</td><td class="n">200</td>
+        <td>convención del proyecto</td></tr>
+    <tr><td>Barridos por temperatura</td><td class="n">20 000</td>
+        <td>convención del proyecto</td></tr>
+    <tr class="best"><td><b>Barridos totales por réplica</b></td>
+        <td class="n"><b>4 000 000</b></td><td>200 × 20 000</td></tr>
+    <tr><td>Radio del disco · <code>Rd</code></td><td class="n">18.30</td>
+        <td>geometría fija</td></tr>
+    <tr><td>Capas · <code>L</code></td><td class="n">5</td><td>geometría fija</td></tr>
+    <tr><td>Rejilla · <code>N</code></td><td class="n">39 × 39</td>
+        <td><code>2·(⌊Rd⌋+1)+1</code></td></tr>
+    <tr><td>Sitios activos</td><td class="n">5 245</td>
+        <td>los que caen dentro del disco</td></tr>
+    <tr><td>GPU</td><td class="n">H100 80GB HBM3</td><td>un solo modelo</td></tr>
+  </tbody>
+</table></div>
+
+<p>Así que <b>cada punto de la curva es lo que una réplica consume para
+completar las 200 temperaturas × 20 000 barridos</b>. El reloj de una tanda
+entera es ese número <b>multiplicado por <code>B</code></b>: con
+<code>B</code> = 850 son 7.33 × 850 = <b class="n">1.73 h</b> para las 850
+réplicas, y con <code>B</code> = 50 son 9.79 × 50 = <b class="n">8.2 min</b>
+para 50.</p>
+
+<div class="note"><strong>Por eso se divide por réplica y no se mira el reloj
+pelado.</strong> Un lote chico siempre tarda menos en total, porque hace menos
+trabajo — pero cada réplica le sale más cara. Dividir por el número de réplicas
+es lo que vuelve comparables lotes de distinto tamaño, y lo que deja ver que
+<code>B</code> = 50 cuesta un 33 % más por réplica que <code>B</code> = 850
+aunque su tanda termine antes.</div>
+
+<div class="chartbox">
+  <div class="ctl" style="margin-bottom:12px"><span>Colorear por</span>
+    <div class="seg" id="segW" role="group" aria-label="Coloreado">
+      <button data-w="on" aria-pressed="true">ancho de vector</button>
+      <button data-w="off" aria-pressed="false">plano</button>
+    </div>
+  </div>
+  <canvas id="c" width="860" height="400"
+    aria-label="Segundos por réplica contra réplicas por GPU, cincuenta puntos medidos"></canvas>
+  <p class="cap" id="cap">Pasá el cursor sobre un punto. Eje horizontal
+  logarítmico. <b>Rojo</b> son los lotes que el compilador vectoriza por 4;
+  <b>azul</b> y <b>verde</b> los que no.</p>
+</div>
+
+<div class="two">
+  <div class="card"><h3>Mejor lote</h3><span class="big ok">B = 850</span>
+    <p><b>7.33 s</b> por réplica. Segundo: <code>B</code> = 705 con 7.72 s.</p></div>
+  <div class="card"><h3>Peor lote</h3><span class="big up">B = 10</span>
+    <p><b>15.22 s</b> por réplica — <b>2.08×</b> el mejor, mismo trabajo.</p></div>
+  <div class="card"><h3>Convención actual</h3><span class="big up">B = 50</span>
+    <p><b>9.79 s</b> medidos: <b>33 % por encima</b> del mejor.</p></div>
+</div>
+
+<div class="note warn"><strong>Dos puntos que se midieron aparte, y uno
+corrige una afirmación nuestra.</strong> <code>B</code> = 50 y
+<code>B</code> = 100 son las convenciones heredadas, así que se midieron
+explícitamente. <code>B</code> = 50 da <b class="n">9.79 s</b> — pero antes
+figuraba como «~9.15 s» en esta página, interpolado entre
+<code>B</code> = 45 (9.13) y <code>B</code> = 55 (9.16). <b>La interpolación
+falló por 7 %</b>: <code>B</code> = 50 es peor que sus dos vecinos, que es
+exactamente el dentado haciendo lo suyo en un punto que importa. Es otra razón
+para no interpolar esta curva nunca. Y <code>B</code> = 100 da
+<b class="n">12.83 s</b> contra <b class="n">12.77 s</b> de una medición
+independiente de hace semanas: coinciden al <b class="n">0.4 %</b>.</div>
+
+<h2>Los dos efectos que forman la curva</h2>
+<div class="two">
+  <div class="card"><h3>Efecto del ancho <span style="color:var(--accent)">explicado</span></h3>
+    <span class="big">+29 a +44 %</span>
+    <p>El compilador XLA le da a cada hilo <b>4 elementos consecutivos</b> en vez
+    de 1 cuando <code>v₂(B) + v₂(L) ≥ 2</code>. Eso rompe la coalescencia de
+    memoria: un warp pide 512 bytes para entregar 128 útiles.</p></div>
+  <div class="card"><h3>Dentado <span style="color:var(--warn)">sin mecanismo</span></h3>
+    <span class="big">20 %</span>
+    <p>Entre los 19 lotes del <em>mismo</em> ancho medidos en [325, 525] hay un
+    20 % de dispersión. Es reproducible y no lo explica nada de lo que probamos.</p></div>
+</div>
+
+<h3>El ancho, medido contra los vecinos más cercanos</h3>
+<div class="tw"><table>
+  <thead><tr><th><code>B</code> (ancho 4)</th><th>s/réplica</th>
+    <th>vecino izq.</th><th>vecino der.</th><th>exceso</th></tr></thead>
+  <tbody>
+    <tr><td class="n">20</td><td class="n">13.03</td><td class="n">15: 14.62</td>
+        <td class="n">25: 11.56</td><td class="n">−0.4 %</td></tr>
+    <tr><td class="n">140</td><td class="bad">12.61</td><td class="n">135: 8.67</td>
+        <td class="n">185: 9.19</td><td class="bad">+41 %</td></tr>
+    <tr><td class="n">160</td><td class="bad">12.87</td><td class="n">135: 8.67</td>
+        <td class="n">185: 9.19</td><td class="bad">+44 %</td></tr>
+    <tr class="best"><td class="n">280</td><td class="bad">11.42</td>
+        <td class="n">275: 8.67</td><td class="n">285: 8.98</td><td class="bad">+29 %</td></tr>
+    <tr><td class="n">1020</td><td class="bad">14.82</td><td class="n">850: 7.33</td>
+        <td class="n">—</td><td class="bad">+102 %</td></tr>
+  </tbody>
+</table></div>
+<p>La fila de <code>B</code> = 280 es la más limpia: sus dos vecinos <b>están
+medidos a distancia 5</b>, así que el exceso de <b class="n">+29 %</b> es casi
+puro efecto del ancho. En <code>B</code> = 20 el efecto desaparece porque ahí
+domina otra cosa — el costo fijo por barrido repartido entre pocas réplicas.</p>
+
+<h2>Por qué paralelizar por experimentos no reduce el tiempo</h2>
+<p>Mismo trabajo total —96 cadenas, 3000 barridos— reagrupado de tres maneras:</p>
+<div class="tw"><table>
+  <thead><tr><th>agrupación</th><th>1 GPU</th><th>2 GPUs</th><th>4 GPUs</th>
+    <th>escala 1→4</th></tr></thead>
+  <tbody>
+    <tr><td><b>por experimentos</b> · 24 lanz. × 4 cadenas</td>
+        <td class="bad">1.580 s</td><td class="n">1.502 s</td><td class="n">1.419 s</td>
+        <td class="bad">1.11×</td></tr>
+    <tr><td>por réplicas · 4 lanz. × 24 cadenas</td>
+        <td class="n">0.755 s</td><td class="n">0.565 s</td><td class="n">0.323 s</td>
+        <td class="n">2.34×</td></tr>
+    <tr class="best"><td>ambos · 1 lanz. × 96 cadenas</td>
+        <td class="n">0.735 s</td><td class="n">0.348 s</td><td class="n">0.190 s</td>
+        <td><b>3.86×</b></td></tr>
+  </tbody>
+</table></div>
+<p>Agrupar por experimentos falla <b>dos veces</b>. En una sola GPU ya cuesta
+<b class="n">2.1×</b> más que agrupar por réplicas, porque 4 cadenas por
+lanzamiento dejan los 16 896 núcleos de una H100 casi ociosos. Y además
+<b>casi no escala</b>: 1.11× al pasar de 1 a 4 dispositivos, porque cuatro
+cadenas repartidas en cuatro GPUs es <b>una cadena por GPU</b>.</p>
+<div class="note"><strong>La razón de fondo.</strong> Los experimentos son
+<em>pocos</em> y los fija la física — cuatro conjuntos de parámetros. Las
+réplicas son <em>muchas</em> y las elegimos nosotros. El paralelismo necesita un
+eje <b>ancho</b>, y solo las réplicas lo dan.</div>
+
+<h2>Por qué el número de lanzamientos no cambia nada</h2>
+<p>En la tabla de arriba, <code>réplicas</code> usa <b>4 lanzamientos</b> y
+<code>ambos</code> usa <b>1</b>, con el mismo trabajo: en una GPU dan
+<b class="n">0.755 s</b> contra <b class="n">0.735 s</b>, un
+<b class="n">2.7 %</b>. Por separado, el mismo trabajo repartido en 1, 4, 100 y
+400 lanzamientos abarca <b class="n">+0.9 %</b>.</p>
+<p>El trabajo en la GPU es idéntico; lo único que cambia es cuántas veces
+despacha el host, que es un costo fijo y chico amortizado en lo que corre
+adentro. <b>Lo que importa no es cuántos lanzamientos hay, sino cuántas cadenas
+lleva cada uno.</b></p>
+<div class="note"><strong>Dos controles más, por si surge la duda.</strong>
+Cuatro estados distintos en un mismo lote cuestan lo mismo que 100 réplicas de
+uno solo (<b class="n">+0.3 %</b>): los parámetros entran como una columna que
+se difunde, no como una ramificación. Y el número de GPUs a <code>B</code> fijo
+cuesta <b class="n">−0.2 %</b>.</div>
+
+<h2>Cómo leer estos números</h2>
+<div class="key">
+  <p><b>Todo está en segundos por réplica de una corrida completa de
+  producción</b>: 200 temperaturas × 20 000 barridos = 4 000 000 barridos. Es la
+  cifra que se interpreta sola.</p>
+</div>
+<div class="note warn"><strong>Son extrapolados, y el sesgo está medido.</strong>
+Cada punto se midió con celdas de <b class="n">60 000</b> barridos —67× más
+cortas que producción— y se multiplicó por 4 000 000. Comparando dos curvas
+nuestras con celdas de distinto largo, las cortas <b>sobre-reportan</b> entre
+<b class="n">+2.6 %</b> y <b class="n">+12.9 %</b>, peor en lotes chicos. Medir
+los cincuenta puntos a producción real serían <b>~34 horas</b>; el paso
+siguiente es validar los mejores candidatos a 200 × 20 000 y así medir el sesgo
+con datos propios.</div>
+
+<h2>Lo que salió mal en el método, y vale decirlo</h2>
+<div class="note bad"><strong>La optimización bayesiana se perdió el
+óptimo.</strong> Buscó 34 puntos y se quedó en <code>B</code> = 435
+(8.01 s), mientras que el barrido parejo encontró <code>B</code> = 850
+(7.33 s): <b class="n">9.3 % mejor</b>. Pasó porque el modelo ya incorporaba la
+regla del ancho, así que el residuo era chico y la mejora esperada se dedicó a
+explotar un barrio de ±100 alrededor del primer buen punto. <b>La BO optimiza,
+no muestrea</b> — y sobre una función con un dentado del 20 % entre vecinos, el
+muestreo parejo le ganó.</div>
+<div class="note"><strong>Y dejó un coeficiente mal estimado.</strong> De los 34
+puntos de la búsqueda, solo <b>3</b> eran de ancho 4, y los tres en los extremos
+(20, 140, 1020). El modelo reportó un recargo de +48.8 % para el ancho 4, que
+está confundido con el término <code>a/B</code> y con el dentado. Los números
+del ancho que aparecen en esta página vienen de la comparación contra vecinos
+medidos, no de ese ajuste.</div>
+
+<h2>Recomendación</h2>
+<div class="key">
+  <p><b>Usar <code>B</code> = 850 réplicas por GPU</b> para esta geometría en una
+  H100. Si el total no lo permite, <code>B</code> = 705 cuesta 5 % más y
+  cualquier lote en [385, 465] cuesta entre 9 % y 13 % más.</p>
+  <p><b>Evitar los múltiplos de cuatro</b>, que es donde el compilador vectoriza
+  por 4: cuestan entre 29 % y 44 % más que sus vecinos inmediatos.</p>
+  <p><b>La convención de 50 réplicas por GPU cuesta 33 % más por réplica</b>
+  que <code>B</code> = 850, medido y no interpolado.</p>
+  <p style="color:var(--muted);font-size:.93rem">Y agrupar siempre por réplicas,
+  no por experimentos: es la diferencia entre escalar 3.86× y 1.11× al pasar de
+  una GPU a cuatro.</p>
+</div>
+
+<hr>
+<p style="color:var(--muted);font-size:.87rem">50 lotes distintos medidos en
+H100, Rd = 18.30, 5 capas, 5245 sitios activos. Compilación excluida del
+cronómetro en todos los casos. 34 puntos de la búsqueda bayesiana y 24 del
+barrido parejo, con solapamiento. Datos en
+<code>notebooks/simulation/results/curves/bayes_and_survey_B.json</code> (34
+de la búsqueda y 16 del barrido tras descartar los 8 que se solapaban) y
+<code>parallel_axes_measured.json</code>.</p>
+</div>
+
+<script>
+"use strict";
+const PTS = [
+  {B:10, w:2, s:15.220, src:"bo"},
+  {B:15, w:1, s:14.618, src:"sv"},
+  {B:20, w:4, s:13.033, src:"bo"},
+  {B:25, w:1, s:11.561, src:"sv"},
+  {B:30, w:2, s:10.103, src:"sv"},
+  {B:35, w:1, s:10.451, src:"bo"},
+  {B:45, w:1, s:9.130, src:"sv"},
+  {B:50, w:2, s:9.788, src:"sv"},
+  {B:55, w:1, s:9.162, src:"sv"},
+  {B:65, w:1, s:9.757, src:"sv"},
+  {B:75, w:1, s:9.163, src:"bo"},
+  {B:90, w:2, s:9.218, src:"sv"},
+  {B:100, w:4, s:12.825, src:"sv"},
+  {B:110, w:2, s:8.806, src:"sv"},
+  {B:125, w:1, s:8.953, src:"bo"},
+  {B:135, w:1, s:8.665, src:"sv"},
+  {B:140, w:4, s:12.606, src:"bo"},
+  {B:160, w:4, s:12.873, src:"sv"},
+  {B:185, w:1, s:9.193, src:"bo"},
+  {B:195, w:1, s:8.816, src:"sv"},
+  {B:230, w:2, s:8.436, src:"sv"},
+  {B:245, w:1, s:8.773, src:"bo"},
+  {B:255, w:1, s:8.761, src:"bo"},
+  {B:265, w:1, s:8.522, src:"bo"},
+  {B:270, w:2, s:8.497, src:"bo"},
+  {B:275, w:1, s:8.669, src:"bo"},
+  {B:280, w:4, s:11.421, src:"sv"},
+  {B:285, w:1, s:8.981, src:"bo"},
+  {B:315, w:1, s:8.619, src:"bo"},
+  {B:325, w:1, s:8.404, src:"bo"},
+  {B:335, w:1, s:8.472, src:"bo"},
+  {B:345, w:1, s:8.405, src:"bo"},
+  {B:355, w:1, s:8.134, src:"bo"},
+  {B:365, w:1, s:8.332, src:"bo"},
+  {B:375, w:1, s:8.405, src:"bo"},
+  {B:385, w:1, s:8.036, src:"bo"},
+  {B:395, w:1, s:8.207, src:"bo"},
+  {B:405, w:1, s:8.126, src:"bo"},
+  {B:415, w:1, s:8.538, src:"bo"},
+  {B:425, w:1, s:8.060, src:"bo"},
+  {B:435, w:1, s:8.013, src:"bo"},
+  {B:445, w:1, s:8.261, src:"bo"},
+  {B:455, w:1, s:8.401, src:"bo"},
+  {B:465, w:1, s:8.218, src:"bo"},
+  {B:475, w:1, s:8.557, src:"bo"},
+  {B:485, w:1, s:8.492, src:"bo"},
+  {B:495, w:1, s:9.611, src:"bo"},
+  {B:525, w:1, s:8.874, src:"bo"},
+  {B:585, w:1, s:8.333, src:"sv"},
+  {B:705, w:1, s:7.721, src:"sv"},
+  {B:850, w:2, s:7.332, src:"sv"},
+  {B:1020, w:4, s:14.823, src:"bo"},
+];
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let byW = true, hover = null;
+
+function draw(){
+  const cv = document.getElementById("c");
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 860, h = 400;
+  cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  cv.style.height = h+"px";
+  const g = cv.getContext("2d");
+  g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const m = {l:56,r:16,t:22,b:50};
+  const lo = 10, hi = 1020;
+  const px = B => m.l + (Math.log(B)-Math.log(lo))/(Math.log(hi)-Math.log(lo))*(w-m.l-m.r);
+  const ymax = 16, py = v => m.t + (1 - v/ymax)*(h-m.t-m.b);
+  const MUT=css("--muted"), RULE=css("--rule"), INK=css("--ink"), SUR=css("--surface");
+  const COL = {1:css("--dn"), 2:css("--accent"), 4:css("--up")};
+
+  g.font = "11px "+css("--mono")+", monospace";
+  g.strokeStyle = RULE; g.fillStyle = MUT;
+  g.textAlign="right"; g.textBaseline="middle";
+  for (let v=6; v<=ymax; v+=2){
+    g.beginPath(); g.moveTo(m.l,py(v)); g.lineTo(w-m.r,py(v)); g.stroke();
+    g.fillText(v+" s", m.l-8, py(v));
+  }
+  g.textAlign="center"; g.textBaseline="top";
+  for (const B of [10,25,50,100,250,500,1000])
+    g.fillText(String(B), px(B), h-m.b+8);
+  g.save(); g.translate(14,(h-m.b+m.t)/2); g.rotate(-Math.PI/2);
+  g.textAlign="center"; g.textBaseline="top";
+  g.fillText("segundos por réplica (corrida de producción)",0,0); g.restore();
+  g.textAlign="center"; g.textBaseline="bottom";
+  g.fillText("réplicas por GPU", (m.l+w-m.r)/2, h-4);
+
+  // la línea une los puntos en orden de B
+  g.strokeStyle = RULE; g.lineWidth = 1.4;
+  g.beginPath();
+  PTS.forEach((p,i) => i ? g.lineTo(px(p.B),py(p.s)) : g.moveTo(px(p.B),py(p.s)));
+  g.stroke();
+
+  const best = PTS.reduce((a,b) => b.s < a.s ? b : a);
+  for (const p of PTS){
+    g.fillStyle = byW ? COL[p.w] : css("--accent");
+    const r = p === best ? 5.5 : 3.4;
+    g.beginPath(); g.arc(px(p.B), py(p.s), r, 0, 7); g.fill();
+    if (p === best){
+      g.strokeStyle = g.fillStyle; g.lineWidth = 1.5;
+      g.beginPath(); g.arc(px(p.B), py(p.s), 9, 0, 7); g.stroke();
+      g.fillStyle = INK; g.font = "500 11px "+css("--mono")+", monospace";
+      g.textAlign="center"; g.textBaseline="bottom";
+      g.fillText("B="+p.B+" · "+p.s.toFixed(2)+" s", px(p.B), py(p.s)-13);
+      g.font = "11px "+css("--mono")+", monospace";
+    }
+  }
+  if (byW){
+    g.textAlign="left"; g.textBaseline="top";
+    g.font="11px "+css("--mono")+", monospace";
+    g.fillStyle=COL[1]; g.fillText("● ancho 1", m.l+6, m.t+2);
+    g.fillStyle=COL[2]; g.fillText("● ancho 2", m.l+86, m.t+2);
+    g.fillStyle=COL[4]; g.fillText("● ancho 4 (se paga)", m.l+166, m.t+2);
+  }
+  if (hover){
+    const p = hover;
+    g.strokeStyle = MUT; g.setLineDash([2,3]); g.lineWidth=1;
+    g.beginPath(); g.moveTo(px(p.B),m.t); g.lineTo(px(p.B),h-m.b); g.stroke();
+    g.setLineDash([]);
+    const L = ["B = "+p.B, p.s.toFixed(3)+" s por réplica",
+               "ancho "+p.w, p.src==="bo" ? "búsqueda" : "barrido"];
+    g.font="11px "+css("--mono")+", monospace";
+    const bw = Math.max(...L.map(t=>g.measureText(t).width))+16;
+    let bx = px(p.B)+12; if (bx+bw > w-m.r) bx = px(p.B)-bw-12;
+    const by = m.t+24, bh = L.length*15+10;
+    g.fillStyle=SUR; g.strokeStyle=RULE;
+    g.beginPath();
+    if (g.roundRect) g.roundRect(bx,by,bw,bh,6); else g.rect(bx,by,bw,bh);
+    g.fill(); g.stroke();
+    g.fillStyle=INK; g.textAlign="left"; g.textBaseline="top";
+    L.forEach((t,i)=>g.fillText(t,bx+8,by+6+i*15));
+  }
+  cv._px = px;
+}
+const cv = document.getElementById("c");
+function onMove(ev){
+  const r = cv.getBoundingClientRect();
+  const x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+  const px = cv._px; if (!px) return;
+  let best = null, bd = 1e9;
+  for (const p of PTS){ const d = Math.abs(px(p.B)-x); if (d<bd){ bd=d; best=p; } }
+  hover = bd < 14 ? best : null; draw();
+}
+cv.addEventListener("mousemove", onMove);
+cv.addEventListener("touchmove", e => { e.preventDefault(); onMove(e); }, {passive:false});
+cv.addEventListener("mouseleave", () => { hover=null; draw(); });
+document.getElementById("segW").addEventListener("click", ev => {
+  const b = ev.target.closest("button"); if (!b) return;
+  [...ev.currentTarget.querySelectorAll("button")]
+    .forEach(x => x.setAttribute("aria-pressed", String(x===b)));
+  byW = b.dataset.w === "on"; draw();
+});
+draw();
+let t; window.addEventListener("resize", ()=>{clearTimeout(t); t=setTimeout(draw,120);});
+if (window.matchMedia){
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  (mq.addEventListener ? mq.addEventListener.bind(mq,"change") : mq.addListener.bind(mq))(draw);
+}
+</script>

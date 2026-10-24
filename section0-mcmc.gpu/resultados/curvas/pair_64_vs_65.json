@@ -1,0 +1,139 @@
+{
+ "question": "One replica apart: B=64 takes XLA's 4-wide path (v2(5)+v2(64)=6) and B=65 stays scalar (v2(5)+v2(65)=0). Does the rule hold across independent sessions and devices?",
+ "design": "Identical code on every platform -- sim_core.py and pair_test.py embedded in the Kaggle notebook with their SHA-256 verified byte-for-byte against the repository. Arms INTERLEAVED (64,65,64,65,...) so drift cannot load onto one arm. Compilation outside the timer. 40 temperatures x 1500 sweeps = 60,000 sweeps per cell.",
+ "lattice": {
+  "Rd": 18.3,
+  "L": 5,
+  "N": 39,
+  "n_active": 5245
+ },
+ "kaggle_t4": {
+  "runs": [
+   {
+    "account": "andrescanamejoy",
+    "platform": "kaggle",
+    "device": "Tesla T4",
+    "jax": "0.11.1",
+    "s64": [
+     22.646523537500002,
+     23.60172177473959,
+     23.83606656067707
+    ],
+    "s65": [
+     12.513042631538474,
+     13.320861172564115,
+     13.32954571205129
+    ],
+    "penalty": 0.7895336784367972,
+    "overlap": false
+   },
+   {
+    "account": "camilaordonez",
+    "platform": "kaggle",
+    "device": "Tesla T4",
+    "jax": "0.11.1",
+    "s64": [
+     23.648898332291676,
+     23.77403140781249,
+     23.77685514531251
+    ],
+    "s65": [
+     13.00028757102564,
+     13.208673652051276,
+     13.230548502307707
+    ],
+    "penalty": 0.8052908208336587,
+    "overlap": false
+   },
+   {
+    "account": "alegriaandres",
+    "platform": "kaggle",
+    "device": "Tesla T4",
+    "jax": "0.11.1",
+    "s64": [
+     22.72292713854167,
+     22.93444198541666,
+     22.93234856536458
+    ],
+    "s65": [
+     12.618664993333338,
+     12.58382708564103,
+     12.604997427435901
+    ],
+    "penalty": 0.8141833426335681,
+    "overlap": false
+   },
+   {
+    "account": "alegriacarlos",
+    "platform": "kaggle",
+    "device": "Tesla T4",
+    "jax": "0.11.1",
+    "s64": [
+     22.607399866145855,
+     22.84839905442707,
+     23.067270198697898
+    ],
+    "s65": [
+     12.285120131282063,
+     12.619552979230765,
+     12.731645710256462
+    ],
+    "penalty": 0.8206634247517566,
+    "overlap": false
+   }
+  ],
+  "n_measurements": 24,
+  "B64": {
+   "mean": 23.199740297243924,
+   "sd": 0.46531819544148134,
+   "min": 22.607399866145855,
+   "max": 23.83606656067707
+  },
+  "B65": {
+   "mean": 12.837230630726506,
+   "sd": 0.34519333052906814,
+   "min": 12.285120131282063,
+   "max": 13.32954571205129
+  },
+  "aggregate_penalty": 0.8072231437296353,
+  "per_account_range": [
+   0.7895336784367972,
+   0.8206634247517566
+  ],
+  "global_overlap": false,
+  "verdict": "Four independent Kaggle sessions on four physical T4s, three interleaved repeats each. Every account separates with no overlap, the penalties span only 3.1 pp, and globally the slowest B=65 is far below the fastest B=64."
+ },
+ "h100_pair": {
+  "runs_penalty": [
+   0.015,
+   0.018,
+   0.025
+  ],
+  "overlap": true,
+  "note": "Three independent containers, three physical H100s, three interleaved repeats each. They agree with each other, so this is not noise."
+ },
+ "h100_control": {
+  "harness": "app.py::stride_discriminator --lattices ref, the path that produced +12.1%",
+  "repeats": 3,
+  "us": {
+   "63": 2.216,
+   "64": 2.538,
+   "65": 2.438,
+   "66": 2.326
+  },
+  "width": {
+   "63": 1,
+   "64": 4,
+   "65": 1,
+   "66": 2
+  },
+  "harness_validated": "B=63 gives 2.216 against 2.2121 measured earlier (+0.18%) and B=64 gives 2.538 against 2.5354 (+0.10%), so the harness reproduces the old numbers.",
+  "diagnosis": "B=65 is genuinely slow on this device: 2.438 against 2.216 for B=63, a +10% gap between two batches of the SAME width. The rule does not explain that -- it is the broad sawtooth, which has no mechanism.",
+  "pair_choice": {
+   "64_vs_63": 0.145,
+   "64_vs_65": 0.041,
+   "understatement_factor": 3.5
+  },
+  "lesson": "An isolated pair is a WEAK experiment. It works when the effect dominates the background wobble (the T4 at +80%) and fails when it does not. On an H100 the same B=64 measures +14.5% or +4.1% depending on which odd batch it is compared against, and the difference is the sawtooth, not the effect. The serious measurements are dense contiguous windows of 8 to 17 batches."
+ }
+}

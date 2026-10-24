@@ -1,0 +1,89 @@
+{
+ "label": "kaggle-t4-states",
+ "env": {
+  "smi": "Tesla T4, 15360 MiB, 1590 MHz, 580.178.04\nTesla T4, 15360 MiB, 1590 MHz, 580.178.04",
+  "jax": "0.11.1",
+  "devices": [
+   "cuda:0",
+   "cuda:1"
+  ],
+  "compute_capability": "7.5",
+  "device_kind": "Tesla T4",
+  "triton": "3.8.0",
+  "jax_triton": "0.4.1",
+  "python": "3.13.15"
+ },
+ "n_temps": 10,
+ "sweeps": 20000,
+ "n_therm": 13333,
+ "n_meas": 6667,
+ "measured_sweeps": 200000,
+ "full_sweeps": 4000000,
+ "devices_available": 2,
+ "rows": [
+  {
+   "devices": 1,
+   "replicas": 50,
+   "per_device": 50,
+   "estandar": {
+    "wall_s": 167.82837876400004,
+    "us_per_replica_sweep": 16.782837876400002,
+    "full_ladder_s": 3356.5675752800003
+   },
+   "optimizado": {
+    "wall_s": 77.152407058,
+    "us_per_replica_sweep": 7.715240705799999,
+    "full_ladder_s": 1543.04814116
+   },
+   "change_pct": -54.028986261917254
+  },
+  {
+   "devices": 1,
+   "replicas": 500,
+   "per_device": 500,
+   "estandar": {
+    "wall_s": 2237.8890796759997,
+    "us_per_replica_sweep": 22.378890796759997,
+    "full_ladder_s": 44757.78159352
+   },
+   "optimizado": {
+    "wall_s": 900.742060305,
+    "us_per_replica_sweep": 9.007420603049999,
+    "full_ladder_s": 18014.841206099998
+   },
+   "change_pct": -59.750370628940686
+  },
+  {
+   "devices": 2,
+   "replicas": 50,
+   "per_device": 25,
+   "estandar": {
+    "wall_s": 85.34651594700017,
+    "us_per_replica_sweep": 8.534651594700017,
+    "full_ladder_s": 1706.9303189400036
+   },
+   "optimizado": {
+    "wall_s": 35.232814253000015,
+    "us_per_replica_sweep": 3.5232814253000013,
+    "full_ladder_s": 704.6562850600002
+   },
+   "change_pct": -58.71792320745766
+  },
+  {
+   "devices": 2,
+   "replicas": 500,
+   "per_device": 250,
+   "estandar": {
+    "wall_s": 868.2155926910004,
+    "us_per_replica_sweep": 8.682155926910005,
+    "full_ladder_s": 17364.31185382001
+   },
+   "optimizado": {
+    "wall_s": 422.1817669339998,
+    "us_per_replica_sweep": 4.221817669339998,
+    "full_ladder_s": 8443.635338679998
+   },
+   "change_pct": -51.37362534281792
+  }
+ ]
+}

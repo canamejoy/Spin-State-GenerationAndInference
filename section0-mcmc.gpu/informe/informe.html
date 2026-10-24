@@ -1,0 +1,1207 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sección 0 · MCMC en GPU — informe completo</title>
+<style>
+:root{
+  --bg:#fbfbf9; --fg:#1a1a1a; --muted:#5c5c5c; --line:#dcdcd6;
+  --accent:#2e7d32; --bad:#b00020; --warn:#a8630a; --card:#fff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.62 ui-serif,Georgia,"Times New Roman",serif}
+.wrap{max-width:52rem;margin:0 auto;padding:3rem 1.25rem 5rem}
+h1{font-size:2.1rem;line-height:1.18;margin:.2rem 0 .6rem;letter-spacing:-.015em}
+h2{font-size:1.5rem;margin:3.2rem 0 .7rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--fg);letter-spacing:-.01em}
+h3{font-size:1.14rem;margin:2.1rem 0 .5rem}
+h4{font-size:1rem;margin:1.5rem 0 .4rem;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em;font-size:.82rem}
+p,li{margin:.6rem 0}
+code{font-family:var(--mono);font-size:.88em;background:#f0f0ea;
+  padding:.08em .32em;border-radius:3px}
+.eyebrow{font-family:var(--mono);font-size:.74rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--muted);margin:0}
+.lede{font-size:1.1rem;color:#333}
+.key{background:var(--card);border:1px solid var(--line);
+  border-left:4px solid var(--accent);padding:.85rem 1.1rem;margin:1.1rem 0;
+  border-radius:0 5px 5px 0}
+.note{background:#f4f4ee;border:1px solid var(--line);padding:.8rem 1.05rem;
+  margin:1.1rem 0;border-radius:5px;font-size:.95rem}
+.note.warn{border-left:4px solid var(--warn)}
+.note.bad{border-left:4px solid var(--bad)}
+.tw{overflow-x:auto;margin:1.1rem 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem;
+  font-family:ui-sans-serif,system-ui,sans-serif}
+th,td{border:1px solid var(--line);padding:.42rem .6rem;text-align:left;
+  vertical-align:top}
+th{background:#f0f0ea;font-weight:600}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.best{color:var(--accent);font-weight:600}
+.bad{color:var(--bad);font-weight:600}
+.warn{color:var(--warn);font-weight:600}
+nav.toc{background:var(--card);border:1px solid var(--line);
+  padding:1rem 1.2rem;border-radius:5px;margin:2rem 0;
+  font-family:ui-sans-serif,system-ui,sans-serif;font-size:.9rem}
+nav.toc ol{margin:.3rem 0;padding-left:1.4rem}
+nav.toc a{color:var(--fg);text-decoration:none}
+nav.toc a:hover{text-decoration:underline}
+hr{border:0;border-top:1px solid var(--line);margin:2.5rem 0}
+.meta{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+@media print{
+  body{background:#fff;font-size:10.5pt}
+  .wrap{max-width:none;padding:0}
+  h2{page-break-after:avoid} h3{page-break-after:avoid}
+  table{page-break-inside:avoid} .key,.note{page-break-inside:avoid}
+  nav.toc{page-break-after:always}
+}
+@page{
+  size:A4; margin:20mm 16mm 20mm;
+  @bottom-center{content:counter(page) " / " counter(pages);
+    font-family:ui-sans-serif,system-ui,sans-serif; font-size:8.5pt;
+    color:#777}
+  @top-right{content:"Sección 0 · MCMC en GPU";
+    font-family:ui-sans-serif,system-ui,sans-serif; font-size:8pt;
+    color:#999}
+}
+@page:first{@top-right{content:""} @bottom-center{content:""}}
+/* The TOC carries page numbers in print, which is the one thing a PDF
+   needs that a web page does not. */
+@media print{
+  nav.toc a::after{content:" — p. " target-counter(attr(href url), page);
+    color:#777; font-size:.85em}
+}
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">Nanodiscos magnéticos · Sección 0</p>
+<h1>MCMC en GPU: por qué el número de réplicas cambia el costo, y qué se hizo
+al respecto</h1>
+<p class="lede">Informe completo de la sección: lo que se buscó, lo que se
+midió, cada hipótesis que se descartó y cada error que se cometió. Es el
+registro largo; las seis páginas interactivas de las que sale quedan en
+<code>paginas/</code>.</p>
+
+<p class="meta">Generado el 2026-10-23 · repositorio
+<code>canamejoy/Spin-State-GenerationAndInference</code> · todas las cifras
+provienen de los JSON en <code>resultados/</code></p>
+
+<nav class="toc">
+<b>Contenido</b>
+<ol>
+  <li><a href="#s1">El objeto de estudio</a></li>
+  <li><a href="#s2">El hallazgo: la regla del ancho de vector</a></li>
+  <li><a href="#s3">El dentado</a></li>
+  <li><a href="#s4">Todo lo que se descartó</a></li>
+  <li><a href="#s5">Las mitigaciones sin kernel propio</a></li>
+  <li><a href="#s6">El kernel propio</a></li>
+  <li><a href="#s7">Metodología, y los errores que costó aprenderla</a></li>
+  <li><a href="#s8">Los números finales</a></li>
+  <li><a href="#s85">Cuántas réplicas hacen falta: τ, y la convención</a></li>
+  <li><a href="#s9">Registro de errores y correcciones</a></li>
+  <li><a href="#s10">Lo que queda abierto</a></li>
+  <li><a href="#s11">Inventario de la sección</a></li>
+</ol>
+</nav>
+
+<h2 id="s1">1 · El objeto de estudio</h2>
+
+<h3>1.1 La física</h3>
+
+<p>Un nanodisco magnético: una red cúbica de espines clásicos recortada en
+forma de disco. La configuración de referencia es <code>Rd = 18.30</code> de
+radio y <code>L = 5</code> capas, lo que da <code>N = 39</code> de lado y
+<b>5245 sitios activos</b> dentro del disco de 7605 de la caja.</p>
+
+<p>El Hamiltoniano lleva cinco términos, y la fidelidad a la referencia del
+proyecto importa porque uno de ellos es fácil de equivocar:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>término</th><th>forma</th><th>nota</th></tr></thead>
+  <tbody>
+    <tr><td>Intercambio</td><td><code>−J Σ s·s'</code></td>
+        <td>primeros vecinos; las capas 2 y 4 son cero, que es lo que hace
+        exacto el tablero de ajedrez</td></tr>
+    <tr><td>DMI <b>interfacial</b></td>
+        <td>solo enlaces en el plano <code>x</code> e <code>y</code>, con
+        signo menos</td>
+        <td class="warn">no es intercambiable con la forma de todos los ejes:
+        sobre la misma configuración la energía total difiere un <b>50 %</b></td></tr>
+    <tr><td>Anisotropía cúbica</td>
+        <td><code>K₁/S⁴ · Σ(sᵢsⱼ)² + K₂/S⁶ · (sₓsᵥs_z)²</code></td>
+        <td>serie K₁/K₂ de libro sobre cosenos directores; confirmado contra
+        <code>sim_core</code> a precisión de máquina</td></tr>
+    <tr><td>Anisotropía de superficie</td>
+        <td><code>K_anS</code> donde el sitio tiene menos de seis vecinos
+        en el disco</td>
+        <td>es un campo por sitio, no un escalar</td></tr>
+    <tr><td>Campo externo</td><td><code>−H·s</code></td>
+        <td>ángulo <code>g</code>, entra como <code>cos g</code> y
+        <code>sin g</code></td></tr>
+  </tbody>
+</table></div>
+
+<h3>1.2 El algoritmo</h3>
+
+<p>Metropolis de un solo sitio con propuesta uniforme sobre la esfera, pero
+actualizando <b>por tablero de ajedrez</b>: los sitios se colorean por
+<code>(x+y+z) mod 2</code> y se actualiza un color completo a la vez. Con solo
+primeros vecinos eso es un <b>reordenamiento exacto</b> del barrido secuencial,
+no una aproximación — y es la propiedad que más tarde permite leer el halo sin
+sincronización.</p>
+
+<p>Un barrido son dos medios pasos (par, impar). El cronograma de producción es
+<b>200 temperaturas</b> de 20.0 a 0.1 K, con <b>20 000 barridos</b> por
+temperatura repartidos dos tercios en termalización y uno en medición: en total
+<b>4 000 000 de barridos por réplica</b>.</p>
+
+<div class="note"><strong>Por qué se mide en µs por réplica-barrido y no en
+reloj pelado.</strong> El reloj mezcla dos cosas: cuántas réplicas hay y cuánto
+cuesta cada una. Un lote de 1024 réplicas tarda más que uno de 10 y es mucho
+más eficiente. Dividir por réplicas y por barridos aísla la eficiencia, que es
+lo que cambia. En este informe se dan las dos cosas, porque la tasa es la que
+compara y el reloj es el que se paga.</div>
+
+<h3>1.3 Qué se paraleliza</h3>
+
+<p>Hay tres ejes posibles y no valen lo mismo:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>eje</th><th>ancho</th><th>veredicto</th></tr></thead>
+  <tbody>
+    <tr><td>Dentro de una réplica (el tablero)</td>
+        <td>~2600 sitios por color</td>
+        <td>obligatorio; es corrección, no velocidad</td></tr>
+    <tr><td><b>Réplicas</b></td><td>lo elegimos nosotros</td>
+        <td class="best">el único eje ancho, y el objeto de este estudio</td></tr>
+    <tr><td>Estados (conjuntos de parámetros)</td><td>pocos, los fija la física</td>
+        <td>entran como una columna que se difunde, no como una ramificación:
+        cuatro estados en un lote cuestan lo mismo que 100 réplicas de uno
+        (<b>+0.3 %</b>)</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note"><strong>Y 100 réplicas nunca fue un límite de hardware.</strong>
+Era el número que alguien eligió. El límite real es el rendimiento, y ahí
+empieza el problema de esta sección.</div>
+
+<h2 id="s2">2 · El hallazgo: la regla del ancho de vector</h2>
+
+<h3>2.1 La curva no es convexa</h3>
+
+<p>La primera hipótesis era la obvia: existe un número óptimo de réplicas por
+GPU, y la curva de costo tiene forma de U. Al medirla con ventanas
+<b>contiguas</b> de lote —y eso es lo único que hace visible la estructura
+fina— apareció algo distinto: la curva es <b>dentada</b>. Diecinueve puntos, el
+mínimo en <code>B = 512</code>, y su vecino inmediato un <b>57 % más caro</b>.
+No se puede interpolar.</p>
+
+<p>En un barrido parejo de cincuenta lotes el mejor fue <code>B = 850</code>
+con <b>7.33 s por réplica</b> en una corrida completa, y el peor
+<b>15.22 s</b>: más del doble, con el mismo trabajo y la misma física.</p>
+
+<h3>2.2 La regla</h3>
+
+<p>La estructura fina no es ruido. Depende de la divisibilidad por dos del
+número de elementos del arreglo. Con <code>v₂(n)</code> = cuántas veces
+<code>n</code> se divide por dos:</p>
+
+<div class="key">
+  <p style="text-align:center;font-size:1.2rem;font-family:var(--mono)">
+  elementos = B · L · N² · 3 &nbsp;&nbsp;⟹&nbsp;&nbsp;
+  ancho = min(4, 2<sup>v₂(B)+v₂(L)</sup>)</p>
+  <p>Como <code>N</code> es siempre impar, <code>v₂(elementos) = v₂(B) +
+  v₂(L)</code>. Hay castigo cuando <b><code>v₂(B) + v₂(L) ≥ 2</code></b>.
+  <b>89 de 89 rejillas predichas sin un fallo.</b></p>
+</div>
+
+<div class="note warn"><strong>Y «múltiplo de cuatro» significa cosas
+<em>opuestas</em> para <code>B</code> y para <code>L</code>.</strong>
+Que <code>B</code> lo sea dispara el costo alto en ese lote. Que <code>L</code>
+lo sea vuelve la red <b>indiferente</b> al lote — pero pagando el costo alto en
+<b>todas</b> las celdas. La inmunidad compra previsibilidad, no velocidad.
+<br><br>Medido: en la T4, <code>L</code> divisible por cuatro está
+<b>estrictamente dominado</b> — peor en el mejor caso, peor en el esperado y
+peor en el peor caso. En la H100 es un canje estrecho: se entrega 1.9 % de
+valor esperado para recortar la varianza.</div>
+
+<h3>2.3 El mecanismo</h3>
+
+<p>XLA le da a cada hilo <b>cuatro elementos consecutivos</b> en vez de uno. Un
+warp pide entonces 512 bytes para entregar 128 útiles: rompe la coalescencia de
+memoria. El volcado de PTX lo confirma — <code>ld.global.v4 = 0</code>, o sea
+que no son cargas vectoriales de 128 bits sino <b>cuatro cargas escalares</b>
+por hilo.</p>
+
+<p>Se reprodujo <b>en CUDA puro, sin compilador</b>: el reparto consecutivo
+cuesta <b>+14.9 %</b> y el kernel de JAX paga <b>+14.25 %</b>.</p>
+
+<div class="note warn"><strong>Esto corrige una narrativa anterior.</strong>
+«Es el compilador, no el hardware» era una <b>falsa dicotomía</b>. XLA toma la
+decisión —qué ancho, y consecutivo en vez de escalonado— y <b>el sistema de
+memoria pone el precio</b>. Por eso el castigo correlaciona con la tarjeta.</div>
+
+<div class="note"><strong>Y hay un umbral de huella.</strong> La regla no se
+enciende por debajo de unos <b>5 MB</b> de conjunto de trabajo. Un experimento
+anterior fijó los sitios en 2125 creyendo controlar la variable correcta, y con
+eso fijó también la huella en 2.1 MB — midiendo en un régimen <b>donde el
+efecto no existe</b>. Ver el registro de errores.</div>
+
+<h3>2.4 No se puede apagar</h3>
+
+<p>Si existiera un flag para desactivar la vectorización no habría regla que
+encontrar. Se volcó la lista completa de flags del build instalado: de los
+<b>16 flags <code>xla_gpu</code></b>, <b>ninguno</b> controla la
+vectorización. <code>--xla_cpu_prefer_vector_width</code> existe, pero solo
+para CPU.</p>
+
+<p>Forzando un elemento por hilo el castigo desaparece (−0.07 %) y
+<code>B = 64</code> pasa a ser el más rápido — pero eso exige reescribir el
+kernel, que es precisamente lo que acabó haciéndose en la sección 6.</p>
+
+<h3>2.5 Alcance verificado</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>afirmación</th><th>dónde está medida</th></tr></thead>
+  <tbody>
+    <tr><td>El costo alto existe en los múltiplos de cuatro</td>
+        <td>T4, L4, A100, H100, H200 — <b>5 GPU, 4 arquitecturas</b>
+        (+42 / +38 / +21 / +12 / +14 %)</td></tr>
+    <tr><td>Las capas deciden (<code>v₂(L)</code>)</td>
+        <td>H100 y T4 — 2 arquitecturas</td></tr>
+    <tr><td>La geometría que emite el compilador</td>
+        <td><b>89 de 89 rejillas</b> predichas sin fallo</td></tr>
+    <tr><td>La causa es la coalescencia, no el ancho en sí</td>
+        <td>CUDA puro: +14.9 % contra +14.25 % de JAX</td></tr>
+    <tr><td>El ancho de banda <b>no</b> es la variable</td>
+        <td>control en H200: mismos 132 multiprocesadores, <b>1.43×</b> el
+        ancho de banda, y el castigo <b>no bajó</b> (+14.0 % contra
+        +12.1 %)</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="s3">3 · El dentado</h2>
+
+<p>Encima del ancho de vector hay una segunda estructura: dos lotes <b>del
+mismo ancho predicho</b> pueden diferir un <b>20 %</b>, y en H100 se midió una
+ondulación de <b>27 a 35 %</b> entre lotes adyacentes. Esto es lo que impide
+tratar la curva como suave.</p>
+
+<h3>3.1 El mecanismo, hallado</h3>
+
+<p>La fusión que lleva el dentado es de tipo <code>kCustom</code> con
+<code>"kind":"__triton"</code>: XLA delega ese kernel a Triton, que <b>re-teja
+el kernel para cada forma</b> con su propio modelo de costo.</p>
+
+<div class="key">
+  <p>La rejilla es <code>grid = Π ⌈dim/tile⌉</code>, <b>predicha 8 de 8</b>. Y
+  el tile no es fijo: <code>tile_B</code> toma valores 4, 8, 16, 32 y hasta
+  <code>B</code> según el lote.</p>
+  <p>Del modelo de costo se derivó además una restricción: el costo cuenta
+  sectores de 32 bytes, un tile escribe <code>3·tx</code> flotantes contiguos,
+  y de ahí <code>tx ≡ 0 (mod 8)</code> — verificado <b>18 de 18</b>, con
+  <code>tx ∈ {8,16}</code> únicamente. Con el presupuesto de 1536 elementos
+  (<code>tb·ty·tx = 512</code>) quedan solo <b>12 candidatos</b>.</p>
+</div>
+
+<div class="note bad"><strong>Pero no tiene forma cerrada, y eso costó tres
+reglas falsas.</strong> Se intentó predecir qué tile elige Triton:
+<br>· <code>B mod 4</code> — <b>retirada</b>: asumía <code>tile_B</code> = 4
+siempre, y varía.
+<br>· <code>B mod 8 ∈ {5,7}</code> — <b>pre-registrada en git</b> antes de
+medir, puntuó <b>9 de 12</b> y murió.
+<br>· <code>B mod 16</code> — <b>refutada con datos ya en disco</b>
+(contraejemplos en B = 45, 47, 75, 77, 79, 91, 93, 95), sin gastar una corrida.
+<br><br>La conclusión operativa es que un candidato se elige
+<b>compilando y leyendo la firma de tiles</b>, no con una regla. Validado a
+escala de producción: <b>+15.0 %</b> entre dos lotes que la firma distingue.</div>
+
+<h3>3.2 Dónde se va el tiempo, por HLO</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>operación</th><th>fracción del anneal</th></tr></thead>
+  <tbody>
+    <tr><td>Los seis <code>roll</code> (alinear vecinos)</td>
+        <td class="bad"><b>31.5 %</b></td></tr>
+    <tr><td>Threefry (el generador aleatorio)</td>
+        <td class="bad"><b>17.1 %</b></td></tr>
+    <tr><td>La física propiamente dicha</td><td class="n">20.3 %</td></tr>
+    <tr><td>Resto (reducciones, acumuladores, scan)</td><td class="n">31.1 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Un solo kernel —<code>fusion_1458</code>— explica el <b>67.8 %</b> de la
+diferencia entre <code>B = 65</code> y <code>B = 75</code>, y es el único cuya
+rejilla no escala proporcionalmente. Ese reparto es lo que después justificó
+atacar los <code>roll</code> y el RNG primero.</p>
+
+<h2 id="s4">4 · Todo lo que se descartó</h2>
+
+<p>Esta es la parte larga del trabajo. Cada fila es una hipótesis que parecía
+razonable, con la medición que la cerró.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>hipótesis</th><th>qué la cerró</th><th>veredicto</th></tr></thead>
+  <tbody>
+    <tr><td>Hay un <b>número óptimo</b> y la curva es convexa</td>
+        <td>19 puntos contiguos: mínimo en 512, vecino +57 %</td>
+        <td class="bad">falsa — la curva es dentada</td></tr>
+    <tr><td>Lo que importa es <b>B × sitios</b> (el producto)</td>
+        <td>se pidió que seis posiciones coincidieran en tres geometrías; en
+        <code>Rd = 24</code> la predicción salió <b>invertida las seis
+        veces</b>, en <code>Rd = 12</code> acertó tres de seis</td>
+        <td class="bad">falsa — la curva no se transfiere entre redes</td></tr>
+    <tr><td>Es el <b>hardware</b></td>
+        <td>la forma se midió dentro de un dispositivo con identificador
+        auditable; la variación entre dispositivos está acotada en
+        <b>1.5 %</b>; para explicar un salto del 57 % harían falta
+        dispositivos 38× más dispares</td>
+        <td class="bad">falsa</td></tr>
+    <tr><td>Es el <b>ancho de banda</b> de memoria</td>
+        <td>H200 contra H100: mismos 132 multiprocesadores, <b>1.43×</b> el
+        ancho de banda, castigo igual (+14.0 % contra +12.1 %)</td>
+        <td class="bad">falsa</td></tr>
+    <tr><td>Es el <b>número de multiprocesadores</b></td>
+        <td>correlación <b>−0.998</b> sobre cinco dispositivos y gana 7 de 9
+        comparaciones por pares</td>
+        <td class="warn">sobrevive como correlación, <b>no como mecanismo</b>:
+        cinco puntos con cuatro variables colineales no bastan</td></tr>
+    <tr><td>Es el <b>paso entre réplicas</b> en bytes</td>
+        <td>la regla <code>v₂(paso) ≥ 4 ⟹ inmune</code> predice las ocho
+        geometrías, pero <code>v₂(paso) = 2 + v₂(L)</code>, así que decía
+        <code>L</code> divisible por cuatro con otras palabras</td>
+        <td class="warn">cierta y <b>por la razón equivocada</b></td></tr>
+    <tr><td>Es la <b>transferencia</b> CPU→GPU</td>
+        <td>por construcción: <code>pack()</code> devuelve
+        <code>jnp.asarray</code>, <code>init_spins</code> devuelve un arreglo
+        de dispositivo y una semilla de JAX ya lo es — no hay copia dentro de
+        la región medida</td>
+        <td class="bad">falsa, por dos caminos independientes</td></tr>
+    <tr><td>Es la <b>cuantización de olas</b></td>
+        <td>medido: el costo de un lanzamiento es <b>~122 µs plano</b> entre 1
+        y 597 bloques; no hay escalones</td>
+        <td class="bad">falsa</td></tr>
+    <tr><td>Son conflictos de <b>canal de memoria</b> / partition camping</td>
+        <td>el mecanismo es de libro pero NVIDIA lo declara muerto después de
+        Fermi; el trabajo más cercano es el de L2 no uniforme en la L40</td>
+        <td class="warn">sin evidencia propia</td></tr>
+    <tr><td>Es el <b>emisor de reducciones</b> o el costo de lanzamiento</td>
+        <td>descartados en el barrido de hipótesis de <code>lotes.html</code></td>
+        <td class="bad">falsas</td></tr>
+    <tr><td>El <b>desperdicio de carriles</b> explica el costo del kernel
+        propio</td>
+        <td>aplanar a 2048 redujo el desperdicio a la mitad; se predijo
+        <b>−50 %</b> y se midió <b>−2.9 %</b></td>
+        <td class="bad">falsa — el costo es el direccionamiento</td></tr>
+    <tr><td>XLA emite <b>conjuntos de kernels distintos</b> para lotes
+        distintos</td>
+        <td>el volcado de PTX propio: firmas idénticas
+        (<code>ld_scalar = 69</code>, <code>st = 16</code>)</td>
+        <td class="bad">falsa — son los mismos kernels renombrados</td></tr>
+    <tr><td>El eje de <b>estados</b> aporta paralelismo</td>
+        <td>leído en el código: <code>pack</code> + <code>shard</code> ponen
+        <b>un estado por GPU</b></td>
+        <td class="bad">falsa</td></tr>
+    <tr><td>Dos <code>pmap</code> sobre pares de GPU <b>disjuntos</b> se
+        solapan</td>
+        <td>medido: <b>+83.8 %</b> — serializan</td>
+        <td class="bad">falsa</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="s5">5 · Las mitigaciones sin kernel propio</h2>
+
+<h3>5.1 Elegir el lote</h3>
+
+<p>Con <code>L</code> impar, mantener <code>v₂(B) + v₂(L) &lt; 2</code> es
+exactamente <b>evitar los múltiplos de cuatro</b>, y cuesta cero: es cambiar un
+número entero. En la geometría de referencia y en H100 el recomendado es
+<code>B = 850</code> (7.33 s/réplica); <code>B = 705</code> cuesta 5 % más y
+cualquier lote en [385, 465] entre 9 % y 13 % más.</p>
+
+<div class="note warn"><strong>Y apuntar a una meseta, no a un punto.</strong>
+En la H100 los lotes 1025, 2049 y 4097 difieren solo <b>2.2 %</b> entre sí. Un
+punto exacto es frágil frente al dentado; una meseta no.</div>
+
+<h3>5.2 El protocolo de partición</h3>
+
+<p>Si el número que se necesita es múltiplo de cuatro, se parte en
+<code>B/2+1</code> y <code>B/2−1</code>: dos olas, las dos impares, la suma
+exacta. Medido sobre 4 H100 con el kernel de producción:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>por dispositivo</th><th>partición</th><th>ganancia</th></tr></thead>
+  <tbody>
+    <tr><td class="n">400 (1 GPU)</td><td>201 + 199</td>
+        <td class="best"><b>−28.3 %</b></td></tr>
+    <tr><td class="n">200 (2 GPU)</td><td>101 + 99</td>
+        <td class="best"><b>−21.7 %</b></td></tr>
+    <tr><td class="n">100 (4 GPU)</td><td>53 + 47</td>
+        <td class="best"><b>−26.8 %</b></td></tr>
+  </tbody>
+</table></div>
+
+<p>Dos olas con las mitades impares gana en los tres brazos, y <b>más olas
+empeora</b>: el lote por dispositivo cae a la zona empinada de
+<code>a/B</code>, con <code>a ≈ 122 µs</code> por lanzamiento. Confirmado en
+escalera completa de 4 GPU con observables incluidos: <b>−27.0 %</b>, contra el
+−26.8 % medido solo con el paso.</p>
+
+<div class="note"><strong>Y gana por lanzamientos, no por ancho.</strong>
+<code>51+49</code> <b>empata</b> con <code>50+50</code>, así que el ancho 2 es
+gratis. Una sola ola de 99 o 101 gana 8–10 % a cualquiera de los dos. Lo que el
+protocolo compra es evitar el ancho 4, no el ancho 2.</div>
+
+<h3>5.3 Lo que se intentó y no funcionó</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>intento</th><th>resultado</th><th>por qué</th></tr></thead>
+  <tbody>
+    <tr><td><b>La capa tonta</b>: añadir una capa enmascarada para cambiar
+        <code>v₂(L)</code></td>
+        <td class="bad">6 de 6 celdas pierden, media <b>−20.6 %</b></td>
+        <td>la física es exacta (energía a 0.00e+00) pero una capa extra cuesta
+        <code>1/L</code>, o sea 25 % en <code>L = 4</code>: cuesta lo mismo que
+        el ancho ahorra</td></tr>
+    <tr><td>Elegir <code>L</code> divisible por cuatro para ser inmune</td>
+        <td class="bad">estrictamente dominado en T4</td>
+        <td>la inmunidad consiste en pagar ancho 4 en <b>todas</b> las celdas;
+        sirve solo si el requisito es varianza cero</td></tr>
+    <tr><td>Rellenar la red hasta una potencia de dos</td>
+        <td class="bad">peor dos veces</td>
+        <td>más sitios que calcular, y el relleno no cambia el ancho</td></tr>
+    <tr><td>Optimización bayesiana del lote</td>
+        <td class="bad">se perdió el óptimo: <code>B = 435</code> (8.01 s)
+        contra <code>B = 850</code> (7.33 s), <b>9.3 % peor</b></td>
+        <td>el modelo ya incorporaba la regla del ancho, así que el residuo era
+        el dentado — que no tiene estructura que un modelo suave capture. Dejó
+        además un coeficiente mal estimado: reportó +48.8 % de recargo para el
+        ancho 4 a partir de <b>3 puntos</b>, los tres en los extremos</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="s6">6 · El kernel propio</h2>
+
+<p>Si la decisión es del compilador y no es configurable, la salida de fondo es
+<b>no entregarle el bucle</b>. Eso significa escribir el kernel a mano.</p>
+
+<h3>6.1 Tres intentos fallidos en Pallas</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>intento</th><th>resultado</th><th>por qué</th></tr></thead>
+  <tbody>
+    <tr><td>Pallas sobre <code>mosaic_gpu</code></td>
+        <td class="bad">+15 a +31 %</td>
+        <td>ocho rechazos distintos del backend; el único tile admisible es
+        <b>degenerado</b> (1×1), así que cada sitio se trae siete veces</td></tr>
+    <tr><td>Pallas sobre Triton, rejilla 2-D</td><td class="bad">+26.3 %</td>
+        <td>4096 carriles para 1521 sitios</td></tr>
+    <tr><td>Pallas sobre Triton, aplanado a 2048</td><td class="bad">+21.0 %</td>
+        <td>la mitad de carriles desperdiciados, pero solo <b>−2.9 %</b> de
+        mejora: refuta que el desperdicio fuera la causa</td></tr>
+  </tbody>
+</table></div>
+
+<p>Los tres <b>exactos</b> a redondeo de <code>f32</code> y los tres más
+lentos. El diagnóstico correcto fue: el costo es el <b><i>gather</i></b> —
+1521 sitios × 7 vecinos × 3 componentes = <b>31 941 direcciones calculadas por
+carril</b>, contra siete lecturas contiguas coalescidas que produce
+<code>jnp.roll</code>.</p>
+
+<h3>6.2 El que funcionó, y por qué</h3>
+
+<p>Triton crudo, invocado desde JAX con <code>jax_triton.triton_call</code> —
+así el kernel vive en el <b>mismo programa XLA</b> que el anneal de producción
+y la comparación no es entre frameworks.</p>
+
+<div class="key">
+  <p><b>No hace menos lecturas: sigue emitiendo 21.</b> Cambia la <b>forma de
+  la dirección</b>.</p>
+  <p>Pallas calculaba <b>una dirección por carril</b>, así que el compilador no
+  podía probar contiguidad y emitía accesos dispersos. Este kernel pide
+  <code>xc + 1</code>: un <b>vector desplazado sobre un tramo contiguo</b>. Es
+  el mismo patrón de acceso que produce un <code>roll</code>, pero el plano
+  desplazado <b>nunca se materializa</b>: cae en registros, la actualización
+  entera ocurre ahí y solo se escribe el resultado.</p>
+</div>
+
+<p>Dos detalles lo hacen posible:</p>
+
+<ul>
+  <li><b>El tablero de ajedrez hace innecesaria toda sincronización.</b> Todo
+  vecino de un sitio actualizado tiene la <b>paridad opuesta</b>, así que
+  ningún bloque lo escribe durante ese medio paso. El halo se lee de memoria
+  global <b>sin barrera</b> — y esa es la verdadera razón de ser del tablero,
+  que hasta entonces se tenía solo por corrección física.</li>
+  <li><b>El dato se reordena a <code>(B, 3, L, N, N)</code></b>, con la
+  componente como plano en vez de como eje más rápido, para que un tramo en
+  <code>x</code> tenga paso 1. La transposición se paga una vez, fuera del
+  bucle de pasos.</li>
+</ul>
+
+<p>Después se llevaron también los <b>observables</b> a Triton: energía y
+magnetización como <b>parciales por bloque</b> (no atómicos, para que el
+resultado no dependa del orden en que terminan los bloques), y la carga
+topológica emitiendo los cuatro argumentos de sus dos arcotangentes para que
+JAX los cierre — porque Triton 3.8 <b>no tiene <code>atan2</code></b> fuera de
+libdevice, y la rama importa: el denominador puede volverse negativo en una
+plaqueta frustrada.</p>
+
+<h3>6.3 La validación de física</h3>
+
+<p>Ningún tiempo se miró antes de pasar esto. Son cinco pruebas en dos
+niveles.</p>
+
+<h4>Nivel 1 — exactitud (no hay estadística)</h4>
+
+<p>Se le dan a los dos motores <b>los mismos números aleatorios</b>, así la
+única diferencia posible es la aritmética. Cada espín debe salir idéntico:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>prueba</th><th>resultado</th></tr></thead>
+  <tbody>
+    <tr><td><i>stencil</i> contra <code>sim_core.substep</code>, sublattice par</td>
+        <td class="best"><b>0 de 182 520</b> espines distintos;
+        <code>dE</code> a 1.4·10⁻⁶</td></tr>
+    <tr><td>idem, sublattice impar</td>
+        <td class="best"><b>0 de 182 520</b></td></tr>
+    <tr><td>observables de Triton contra los de JAX, mismo estado</td>
+        <td class="best">E a <b>1.2·10⁻⁷</b> relativo, |M| a 2.0·10⁻⁷,
+        Q a 8.4·10⁻⁸ absoluto</td></tr>
+  </tbody>
+</table></div>
+
+<h4>Nivel 2 — muestreo (estadística)</h4>
+
+<p>Cada motor con <b>su propio</b> generador: Threefry contra Philox. Son
+cadenas de Markov distintas, así que no pueden coincidir espín a espín; lo que
+debe coincidir es la distribución.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>prueba</th><th>resultado</th></tr></thead>
+  <tbody>
+    <tr><td>E/sitio a equilibrio, T = 20, 5, 1</td>
+        <td class="best"><b>0.09 – 0.23 σ</b></td></tr>
+    <tr><td>norma del espín (la propuesta en la esfera)</td>
+        <td class="best">1.000000 ± 2.4·10⁻⁷</td></tr>
+    <tr><td>curvas reducidas completas (E, M, Cv, χ) en 24 temperaturas,
+        contra el <b>control de producción contra sí misma</b></td>
+        <td class="best">0.99 / 1.90 contra un control de 0.87 / 2.53 —
+        o sea dentro del propio ruido de la vara</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key"><p><b>El control es la pieza metodológica importante.</b>
+Correr <b>producción contra sí misma</b> con otra semilla da el <b>ruido propio
+de la vara de medir</b>. Fue lo que destapó el bug del RNG y, tras arreglarlo,
+lo que lo cerró. Sin ese control, un desvío de 4.94 σ parecía culpa del kernel
+nuevo.</p></div>
+
+<h3>6.4 El bug del RNG, encontrado por el control</h3>
+
+<div class="note bad"><strong>Qué pasaba.</strong> El kernel aceptaba
+<b>1.1 % menos</b> propuestas que producción, y las <b>cinco</b> temperaturas
+caían del mismo lado. El nivel 1 pasaba perfecto —0 espines distintos— porque
+en esa prueba el RNG del kernel <b>no se usa</b>: se le pasan los números de
+JAX. Solo el nivel 2 podía verlo.
+<br><br><strong>Cómo se acotó.</strong> Un diagnóstico a β→0, donde toda
+propuesta se acepta y por tanto la salida <i>es</i> la propuesta, descartó la
+propuesta: media por componente dentro de 1 σ de cero y
+<code>|s| = 1.000000</code>. Quedaba el uniforme.
+<br><br><strong>La causa, mía.</strong> Sorteaba los tres gaussianos y el
+uniforme con <b>claves Philox adyacentes</b> (<code>sd+0</code> …
+<code>sd+3</code>) sobre un <b>contador compartido</b>. Eso le da al uniforme
+una entrada común con la dirección propuesta, así que correlaciona con
+<code>dE</code> y sesga el test de Metropolis a la baja. El patrón correcto de
+un generador por contador es el inverso: <b>una clave, contadores
+distintos</b> (<code>off·4 + j</code>).
+<br><br><strong>Tras el arreglo.</strong> Las razones de aceptación se
+reparten a los dos lados de 1 (0.996, 0.998, 0.994, 1.029, 0.997), todas dentro
+de 1 σ, y la ventana corta pasó de <b>1.45/4.94</b> a <b>0.99/1.90</b>, por
+debajo del propio control. Sin costo en velocidad.</div>
+
+<h3>6.5 El piso de lote, medido</h3>
+
+<div class="note warn"><strong>El kernel pierde con lotes flacos.</strong>
+Con 12–13 réplicas por tarjeta va <b>+47.7 %</b> y <b>+54.7 %</b> más lento que
+producción, sobre cuatro millones de barridos y con los dos conteos
+concordando. Está construido para lotes anchos: con 12 réplicas su rejilla baja
+a unos 600 bloques de 128 hilos —unos 77 000 hilos para una tarjeta que quiere
+mucho más— mientras los kernels de XLA usan bloques mayores.
+<br><br>El cruce está entre <b>13 y 25 réplicas por dispositivo</b>.</div>
+
+<div class="tw"><table>
+  <thead><tr><th>réplicas por dispositivo</th><th>H100</th><th>T4</th></tr></thead>
+  <tbody>
+    <tr><td class="n">12</td><td class="bad">+47.7 %</td><td>—</td></tr>
+    <tr><td class="n">13</td><td class="bad">+54.7 %</td><td>—</td></tr>
+    <tr><td class="n">25</td><td class="n">−45.5 %</td><td class="n">−58.7 %</td></tr>
+    <tr><td class="n">50</td><td class="n">−63.9 %</td><td class="n">−57.0 %</td></tr>
+    <tr><td class="n">125</td><td class="n">−63.4 %</td><td>—</td></tr>
+    <tr><td class="n">250</td><td class="n">−66.9 %</td><td class="n">−51.4 %</td></tr>
+    <tr><td class="n">500</td><td class="best">−82.2 %</td><td class="n">−59.8 %</td></tr>
+    <tr><td class="n">2500</td><td class="n">−79.2 %</td><td class="n">−58.5 %</td></tr>
+    <tr><td class="n">5000</td><td class="n">−78.1 %</td><td class="bad">−49.6 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note warn"><strong>Y la ventaja no crece igual en toda
+tarjeta.</strong> Al ensanchar el lote, en H100 va de −63.9 % a <b>−78.1 %</b>;
+en T4 <b>se encoge</b> de −57.0 % a <b>−49.6 %</b>. La tasa del motor
+optimizado en T4 <b>empeora</b> monótonamente con el ancho (7.282 → 9.007 →
+9.201 µs) mientras en H100 mejora y se estanca (0.873 → 0.677 → 0.677).
+<br><br>Así que <b>«más estados, mejor aprovechamiento» vale en H100 y no se
+traslada a la T4.</b> La hipótesis razonable es la jerarquía de memoria —4 MB
+de L2 y 320 GB/s contra 50 MB y 3.35 TB/s, con 456 MB de conjunto de trabajo a
+5000 réplicas— pero <b>eso no se midió</b>. Lo medido es el signo.</div>
+
+<h3>6.6 Portabilidad: lo que bloqueó la T4 no era la T4</h3>
+
+<div class="note"><strong>La primera corrida en T4 murió así:</strong>
+<code>ptxas fatal : Unsupported .version 8.8; current version is '8.7'</code>.
+No era la GPU ni el kernel — la T4 es capacidad de cómputo <b>7.5</b>, de sobra
+para Triton. Triton <b>trae su propio <code>ptxas</code></b> (CUDA 12.9, ISA
+8.8) y emite PTX para esa versión, mientras XLA ensambla con el de la rueda
+<code>nvidia-cuda-nvcc-cu12</code> (CUDA 12.8). Una versión menor de diferencia
+y no compila nada.
+<br><br>El arreglo: inventariar todos los <code>ptxas</code> de la máquina y
+fijarle a Triton el de XLA con <code>TRITON_PTXAS_PATH</code>, <b>antes de
+importar <code>jax</code></b>, porque el backend fija su cadena al
+inicializarse. En Modal nunca apareció porque allí quedó
+<code>jax 0.10.2</code>; Kaggle resuelve <code>0.11.1</code>.</div>
+
+<h2 id="s7">7 · Metodología, y los errores que costó aprenderla</h2>
+
+<p>Buena parte de esta sección no es física: es aprender a medir sin
+engañarse. Cada regla de abajo existe porque antes se violó.</p>
+
+<h3>7.1 Qué kernel se cronometra</h3>
+
+<div class="note bad"><strong>Un bucle pelado de <code>substep</code>
+sub-reporta la ganancia.</strong> La misma búsqueda de particiones dio
+<b>−1.3 %</b> con un bucle de <code>substep</code> y <b>−28.3 %</b> con
+<code>eng["anneal"]</code>: un factor de <b>veinte</b>. XLA fusiona a nivel de
+programa, así que un paso aislado no compila igual que dentro del anneal
+completo. Regla: cronometrar siempre el kernel de producción.</div>
+
+<h3>7.2 El sobrecoste de lanzamiento</h3>
+
+<p>Una llamada cuesta <b>~122 µs planos</b>, sin importar el tamaño de la
+rejilla. Nunca se cronometra un paso suelto: el bucle va dentro de
+<code>lax.fori_loop</code>. Eso es lo que destapó una falsa victoria —ver el
+registro— y es también por qué más olas empeoran el protocolo de partición.</p>
+
+<h3>7.3 El piso de resolución</h3>
+
+<p>La extrapolación desde celdas cortas trae <b>±2.5 %</b> de ruido por punto.
+Las estructuras por encima de ~5 % son reales; por debajo no se resuelven con
+esa celda. Este piso se violó dos veces y las dos costaron una conclusión
+equivocada.</p>
+
+<h3>7.4 La compilación fuera del cronómetro</h3>
+
+<p>Se compila con <code>.lower().compile()</code>, que compila <b>sin
+ejecutar</b>. Una versión anterior calentaba con una llamada real, lo que en
+una escalera de cuatro millones de barridos <b>duplica la factura</b> — y eso
+agotó una cuenta.</p>
+
+<h3>7.5 Puntuar las extrapolaciones en vez de confiar en ellas</h3>
+
+<p>Diez celdas extrapoladas se midieron después a longitud completa:</p>
+
+<div class="tw"><table>
+  <thead><tr><th>celda</th><th>extrapolado</th><th>medido</th><th>error</th></tr></thead>
+  <tbody>
+    <tr><td>1× T4 estándar</td><td class="n">55.9 min ×20</td>
+        <td class="n">56.4</td><td class="best">+0.9 %</td></tr>
+    <tr><td>1× T4 optimizado</td><td class="n">25.7 ×20</td>
+        <td class="n">24.3</td><td class="n">−5.4 %</td></tr>
+    <tr><td>2× T4 estándar</td><td class="n">28.4 ×20</td>
+        <td class="n">28.4</td><td class="best">−0.1 %</td></tr>
+    <tr><td>2× T4 optimizado</td><td class="n">11.7 ×20</td>
+        <td class="n">11.4</td><td class="n">−2.7 %</td></tr>
+    <tr><td>1× H100 optimizado</td><td class="n">22.57 ×5</td>
+        <td class="n">22.58</td><td class="best">+0.04 %</td></tr>
+    <tr><td>2× H100 estándar</td><td class="n">35.82 ×5</td>
+        <td class="n">35.80</td><td class="best">−0.06 %</td></tr>
+    <tr><td>2× H100 optimizado</td><td class="n">11.85 ×5</td>
+        <td class="n">11.78</td><td class="best">−0.6 %</td></tr>
+    <tr><td>4× H100 estándar</td><td class="n">18.79 ×5</td>
+        <td class="n">18.57</td><td class="n">−1.2 %</td></tr>
+    <tr><td>4× H100 optimizado</td><td class="n">6.87 ×5</td>
+        <td class="n">6.33</td><td class="bad">−7.9 %</td></tr>
+    <tr><td>1× H100 estándar, 500 répl.</td><td class="n">127.09 ×5</td>
+        <td class="n">126.9 ×2.5</td><td class="best">−0.1 %</td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>Peor error 7.9 %, ocho de diez bajo el 3 %, y el ×20 acertó dentro del
+  5.4 %.</b></p>
+  <p><b>Nueve de diez erraban por exceso</b> — las medidas salieron más
+  rápidas. Y el peor error es la celda <b>más corta</b> (6.33 min), no la del
+  factor más grande: <b>el error sigue a lo corta que es la celda en reloj, no
+  al tamaño del factor</b>. Esa es la regla que salió de aquí.</p>
+</div>
+
+<h3>7.6 Verificar la física en la corrida que produce el reloj</h3>
+
+<div class="note bad"><strong>Un hueco que hubo que cerrar.</strong> El banco
+de tiempos cronometraba cuatro celdas y las reportaba <b>sin evidencia propia
+de física</b>: la verificación vivía en otra corrida, y el argumento se reducía
+a «el mismo archivo corrió allá y su suma SHA-256 coincide». Es una cadena de
+evidencia real, pero no es una medición. Ahora un paso <code>verify</code> corre
+<b>primero</b> y se niega a cronometrar nada si la física falla. Cuesta segundos
+contra decenas de minutos de reloj.</div>
+
+<h3>7.7 Un <i>linter</i> es más barato que una GPU</h3>
+
+<div class="note bad"><strong>Dos corridas de Kaggle murieron por cosas que se
+ven en seco.</strong> Una porque el cuadernillo nunca escribía un módulo
+(un rango de celdas mal cortado), otra por pasar un argumento que la función no
+tenía (<code>So=So</code>). Hasta entonces solo se comprobaba que los archivos
+<b>parsearan</b>, y parsear solo prueba que es Python sintáctico. Ahora el
+generador corre <b>pyflakes</b> y compara los argumentos de cada llamada contra
+<code>inspect.signature</code> antes de empujar.</div>
+
+<h3>7.8 Otras reglas que quedaron</h3>
+
+<ul>
+  <li><b>Ventanas de lote contiguas.</b> Es lo único que hace visible la
+  estructura fina; un barrido disperso la promedia y la esconde.</li>
+  <li><b>Identidad física del dispositivo registrada.</b> Las corridas viejas
+  guardaron solo <code>"cuda:0"</code>, así que el control existía por diseño
+  pero <b>no es auditable</b>. Las posteriores graban modelo y UUID.</li>
+  <li><b>Brazos intercalados</b> (63, 64, 65, 63, 64, 65, …), para que una GPU
+  que se calienta reparta su deriva entre todos los brazos.</li>
+  <li><b>Pre-registrar una regla antes de medirla.</b> Se hizo con
+  <code>B mod 8</code>: se escribió en git y luego puntuó 9 de 12. Sin
+  pre-registro habría sido fácil recordarla como un acierto parcial.</li>
+  <li><b>Un par aislado es evidencia débil.</b> El par 64-vs-65 funciona cuando
+  el efecto domina el dentado —la T4 con su +80 %— y falla cuando no: en H100
+  el mismo par mide +1.5 %, +1.8 % o +2.5 % con traslape, y según con qué se
+  compare puede leerse +4.1 % o +14.5 %.</li>
+</ul>
+
+<h2 id="s8">8 · Los números finales</h2>
+
+<p>Escalera de producción completa: 200 temperaturas × 20 000 barridos =
+4 000 000 de barridos por réplica. «Estándar» es el motor de JAX de siempre;
+«optimizado» es el kernel de Triton.</p>
+
+<h3>8.1 Un estado (50 réplicas)</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>hardware</th><th>estándar</th><th>optimizado</th>
+    <th>cambio</th></tr></thead>
+  <tbody>
+    <tr><td>CPU, 24 hilos</td><td class="n">31.4 h</td><td>—</td><td>—</td></tr>
+    <tr><td>1× T4</td><td class="n">56.4 min</td><td class="n">24.3 min</td>
+        <td class="n">−57.0 %</td></tr>
+    <tr><td>2× T4</td><td class="n">28.4 min</td><td class="n">11.4 min</td>
+        <td class="n">−59.9 %</td></tr>
+    <tr><td>1× H100</td><td class="n">8.1 min</td>
+        <td class="best"><b>2.9 min</b></td><td class="n">−63.9 %</td></tr>
+    <tr><td>2× H100</td><td class="n">4.8 min</td><td class="n">2.6 min</td>
+        <td class="n">−45.5 %</td></tr>
+    <tr><td>4× H100</td><td class="n">3.6 min</td>
+        <td class="bad">5.3 min</td><td class="bad">+47.7 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Las diez celdas de GPU son cronómetro a 200 temperaturas. La fila de 4 GPU
+es el piso de lote: 12 réplicas por tarjeta.</p>
+
+<h3>8.2 Diez estados (500 réplicas)</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>hardware</th><th>estándar</th><th>optimizado</th></tr></thead>
+  <tbody>
+    <tr><td>CPU, 24 hilos</td><td class="n">13.1 d</td><td>—</td></tr>
+    <tr><td>1× T4</td><td class="n">12.4 h ×20</td><td class="n">5.0 h ×20</td></tr>
+    <tr><td>2× T4</td><td class="n">4.8 h ×20</td><td class="n">2.3 h ×20</td></tr>
+    <tr><td>1× H100</td><td class="n">2.1 h ×2.5</td>
+        <td class="n">22.6 min</td></tr>
+    <tr><td>2× H100</td><td class="n">35.8 min</td><td class="n">11.8 min</td></tr>
+    <tr><td>4× H100</td><td class="n">18.6 min</td>
+        <td class="best"><b>6.3 min</b></td></tr>
+  </tbody>
+</table></div>
+
+<h3>8.3 Cien estados (5000 réplicas)</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>hardware</th><th>estándar</th><th>optimizado</th></tr></thead>
+  <tbody>
+    <tr><td>CPU, 24 hilos</td><td class="bad">130.7 d</td><td>—</td></tr>
+    <tr><td>1× T4</td><td class="n">4.2 d ×100</td><td class="n">2.1 d ×100</td></tr>
+    <tr><td>2× T4</td><td class="n">2.6 d ×100</td><td class="n">25.8 h ×100</td></tr>
+    <tr><td>1× H100</td><td class="n">17.2 h ×100</td><td class="n">3.8 h ×100</td></tr>
+    <tr><td>2× H100</td><td class="n">8.9 h ×100</td><td class="n">1.9 h ×100</td></tr>
+    <tr><td>4× H100</td><td class="n">2.7 h ×100</td>
+        <td class="best"><b>57.6 min ×100</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="key">
+  <p><b>La escala por estados es la que funciona.</b> El motor optimizado gana
+  <b>1.10×</b> al pasar de 1 a 4 GPU con <b>un</b> estado, y <b>3.91×</b> con
+  cien. Misma máquina y mismo kernel: lo único que cambia es que hay trabajo
+  suficiente para llenar las tarjetas.</p>
+  <p>Y por eso las tarjetas extra se pagan con <b>más estados</b>, no
+  repartiendo uno. Un estado por tarjeta es paralelo trivial: sin
+  <code>pmap</code>, sin repartos y sin lotes flacos.</p>
+</div>
+
+<div class="note warn"><strong>Dos lecturas que no favorecen al kernel y hay
+que decir.</strong>
+El <b>−82.2 %</b> a 500 réplicas por tarjeta son <b>dos efectos sumados</b>: el
+optimizado mejoró (0.873 → 0.677 µs) <b>y</b> el estándar empeoró
+(2.416 → 3.813) porque <code>v₂(500) = 2</code> le dispara su propio castigo.
+Parte de esa cifra es que 500 es un lote malo <b>para el estándar</b>.
+<br><br>Y el estándar aparenta escalar <b>superlinealmente</b> de 1 a 2 GPU
+(2.1 h → 35.8 min, un 3.55× con el doble de hardware), lo cual es imposible:
+<code>v₂(500) = 2</code> lo castiga y <code>v₂(250) = 1</code> lo libera.
+<b>No escaló mejor: escapó de su propio castigo.</b> Lo mismo de 2 a 4 GPU con
+5000 réplicas.</div>
+
+<h3>8.4 El cronograma: 50 réplicas × 20k contra 100 × 15k</h3>
+
+<p>Pregunta aparte, medida en su propia página. El brazo de <b>50 × 20k</b> es
+<b>29.6 % más barato</b> —no 33 %, porque el costo por barrido sube 5.6 % al
+ser la mitad de barridos de medición en vez de un tercio— y entrega lo
+mismo.</p>
+
+<div class="note"><strong>Y la conclusión salió al revés de lo que
+parecía.</strong> El brazo barato <b>no degrada χ: la mide mejor</b>. El otro
+la subestima sistemáticamente donde τ es largo, y eso corre el pico 0.6–0.9 K.
+<br><br>Eso además es <b>un defecto del estándar actual</b>: la ventana de
+5000 barridos submuestrea χ para el estado <i>lines</i> en toda la región de
+transición, no solo en la comparación.</div>
+
+<h2 id="s85">8.5 · Cuántas réplicas hacen falta de verdad: τ</h2>
+
+<p>Todo lo anterior trata el número de réplicas como una variable libre de
+costo. No lo es: las réplicas existen para la estadística, y cuántas hacen
+falta lo decide el <b>tiempo de autocorrelación</b>.</p>
+
+<p>τ es cuántos barridos hay que esperar para que una medición sea
+independiente de la anterior. Se calcula como
+<code>τ_int = ½ + Σρ(k)</code> con la ventana de Madras–Sokal (cortar en el
+primer <code>M ≥ 5τ</code>), por FFT.</p>
+
+<div class="key">
+  <p><b>τ no depende solo de la temperatura: depende del estado.</b> Medido en
+  los cuatro estados del conjunto de datos, va de <b>9</b> para el uniforme a
+  <b>482</b> para <i>lines</i>. La ventana de 5000 barridos de medición
+  <b>submuestrea χ</b> para <i>lines</i> en toda la región de transición.</p>
+  <p>Con eso, el desequilibrio real de reparto entre estados es <b>2.2×</b>, no
+  el 50× que se afirmó primero con una sola temperatura. Un reparto
+  proporcional a τ necesitaría <b>298 réplicas</b> en vez de 400, un 26 %
+  menos.</p>
+</div>
+
+<h2 id="s86">8.6 · La convención de 20k barridos y 50 réplicas</h2>
+
+<p>Se buscó en la literatura si el cronograma del proyecto es defendible.</p>
+
+<div class="note bad"><strong>No existe un estándar.</strong> Los estudios
+publicados de redes de skyrmiones varían en órdenes de magnitud y cada uno
+declara el suyo: 10⁵ + 10⁵ con <b>3 corridas</b>; 2×10⁵ por espín con la mitad
+de termalización; y así. No hay una cifra canónica a la que apelar.</div>
+
+<div class="key"><p><b>Pero el cronograma es defendible, y precisamente por las
+réplicas.</b> Con τ = 482 para <i>lines</i>, una ventana de 6667 barridos de
+medición da apenas <b>10.4 muestras independientes por réplica</b>. Son muy
+pocas — y es exactamente por eso que hacen falta las 50 réplicas: ×50 da
+<b>519 muestras independientes</b>, que ya es una estadística razonable.
+<br>El argumento correcto no es «20 000 barridos bastan», sino «20 000 barridos
+<b>por réplica</b> bastan <b>porque hay 50 réplicas</b>».</p></div>
+
+<h2 id="s9">9 · Registro de errores y correcciones</h2>
+
+<p>Lista completa, en el orden en que ocurrieron. Se incluye porque un informe
+que solo trae los aciertos no permite juzgar los aciertos.</p>
+
+<h3>9.1 Errores de interpretación</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>#</th><th>lo que se afirmó</th><th>qué lo corrigió</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td>«Hay un óptimo y la curva es convexa»</td>
+        <td>19 puntos contiguos: el vecino del mínimo cuesta +57 %</td></tr>
+    <tr><td class="n">2</td><td>«Es el compilador, <b>no</b> el hardware»</td>
+        <td>falsa dicotomía: XLA decide, el sistema de memoria pone el
+        precio</td></tr>
+    <tr><td class="n">3</td><td>«El paso entre réplicas causa la inmunidad»</td>
+        <td>cierto pero vacío: <code>v₂(paso) = 2 + v₂(L)</code>, era
+        <code>L</code> con otro nombre</td></tr>
+    <tr><td class="n">4</td><td>«Elegí <code>L</code> divisible por cuatro y el
+        lote deja de importar»</td>
+        <td>verificado en <b>una</b> GPU mientras se afirmaba en general; y la
+        inmunidad cuesta pagar ancho 4 en todas las celdas</td></tr>
+    <tr><td class="n">5</td><td>«XLA emite conjuntos de kernels distintos»</td>
+        <td>el volcado de PTX propio: firmas idénticas. El «+55 %» que lo
+        sostenía era un artefacto de emparejar por nombre — las fusiones
+        <code>_2</code> y <code>_3</code> intercambian identidad</td></tr>
+    <tr><td class="n">6</td><td>«El desperdicio de carriles explica el costo del
+        kernel»</td>
+        <td>predicho −50 %, medido <b>−2.9 %</b></td></tr>
+    <tr><td class="n">7</td><td>«El eje de estados aporta paralelismo»</td>
+        <td>leído en el código: un estado por GPU. Lo señaló el usuario</td></tr>
+    <tr><td class="n">8</td><td>«Hay un desperdicio de 50× en el reparto por
+        τ»</td>
+        <td>medidos los cuatro estados: es <b>2.2×</b>. La cifra vieja era de
+        una sola temperatura</td></tr>
+    <tr><td class="n">9</td><td>«BP + réplicas debería dejar de usarse»</td>
+        <td>sobre-afirmación: el ganador cambia con el número de GPU</td></tr>
+    <tr><td class="n">10</td><td>«Los 8 puntos entre el paso y la escalera son
+        el bucle de medición»</td>
+        <td>los kernels de observables recuperan <b>4.5</b> de los 8</td></tr>
+    <tr><td class="n">11</td><td>«El 1.1 % de déficit de aceptación es 2 a
+        6 σ»</td>
+        <td>mal calculado: el error de una razón es
+        <code>√2·√((1−p)/(N·p))</code>, hasta <b>3.4 %</b>. Eran ~1.6 σ. Lo que
+        de verdad señalaba algo era la <b>prueba de signos</b> (cinco de cinco
+        del mismo lado, p ≈ 3 %)</td></tr>
+    <tr><td class="n">12</td><td>«La extrapolación ×20 de la T4 es un
+        <b>piso</b> por estrangulamiento térmico»</td>
+        <td>medida a 200 T: acertó al 5 % y erró <b>por exceso</b>. La celda
+        corta ya medía el reloj sostenido</td></tr>
+    <tr><td class="n">13</td><td>«Los datos de H100 están todos medidos»</td>
+        <td>solo los de <b>un estado</b>; los de diez eran ×5</td></tr>
+  </tbody>
+</table></div>
+
+<h3>9.2 Predicciones que fallaron</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>#</th><th>predicción</th><th>medición</th></tr></thead>
+  <tbody>
+    <tr><td class="n">14</td><td>El protocolo de partición pierde 2.7 % contra
+        <code>B = 201</code></td><td>empató (+0.14 %)</td></tr>
+    <tr><td class="n">15</td><td><code>51+49</code> gana 5–7 % a
+        <code>50+50</code></td>
+        <td>empató; la anomalía de <code>B = 50</code> era ruido de celda
+        corta, no una estructura</td></tr>
+    <tr><td class="n">16</td><td>Regla <code>B mod 4</code> para ordenar
+        lotes</td><td class="bad">retirada: <code>tile_B</code> varía</td></tr>
+    <tr><td class="n">17</td><td>Regla <code>B mod 8 ∈ {5,7}</code>,
+        <b>pre-registrada en git</b></td><td class="bad">9 de 12 — murió</td></tr>
+    <tr><td class="n">18</td><td>Regla <code>B mod 16</code></td>
+        <td class="bad">refutada con datos ya en disco, <b>sin gastar una
+        corrida</b></td></tr>
+    <tr><td class="n">19</td><td>Victoria de Triton del −6.5 %</td>
+        <td class="bad">retirada: la medición de un paso era dominada por el
+        despacho; amortizada sobre 200 pasos es <b>+26.3 % más lenta</b></td></tr>
+    <tr><td class="n">20</td><td>Los observables en Triton valen +0.8 puntos
+        (prueba de 4 temperaturas)</td>
+        <td>la escalera real dice <b>+4.5</b>. Con el número corto se habrían
+        descartado</td></tr>
+  </tbody>
+</table></div>
+
+<h3>9.3 Errores de diseño experimental</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>#</th><th>error</th><th>consecuencia</th></tr></thead>
+  <tbody>
+    <tr><td class="n">21</td><td>Se controló <b>la cantidad equivocada</b>:
+        fijar los sitios en 2125 fijó también la huella en 2.1 MB</td>
+        <td>el brazo medía en un régimen <b>donde el efecto no existe</b>; la
+        red de referencia vive en 5.1 MB</td></tr>
+    <tr><td class="n">22</td><td>La red de <code>L = 8</code> del experimento de
+        la capa tonta tiene 4232 sitios</td>
+        <td>cae <b>entre</b> los dos regímenes, así que el ahorro que el truco
+        iba a comprar puede ser menor que el que se midió</td></tr>
+    <tr><td class="n">23</td><td>Identidad del dispositivo guardada solo como
+        <code>"cuda:0"</code></td>
+        <td>el control existía por diseño pero <b>no es auditable</b>: nadie
+        puede verificar desde los datos qué GPU fue</td></tr>
+    <tr><td class="n">24</td><td><code>B = 50</code> figuraba como «~9.15 s»
+        interpolado</td><td>medido de verdad: <b>9.79 s</b></td></tr>
+    <tr><td class="n">25</td><td>La ganancia del protocolo se aplicó a todos
+        los brazos de GPU</td>
+        <td>el castigo depende del lote <b>por dispositivo</b>; lo señaló el
+        usuario</td></tr>
+    <tr><td class="n">26</td><td>Se cambió la fuente de la ganancia de
+        <code>anneal</code> al kernel simplificado</td>
+        <td>la gráfica pasó a leer 14.7 min donde antes 12.5; lo detectó el
+        usuario</td></tr>
+    <tr><td class="n">27</td><td>El banco de tiempos no verificaba física en su
+        propia corrida</td>
+        <td>el argumento se reducía a «el mismo archivo con la misma SHA-256
+        corrió en otra parte»; lo señaló el usuario</td></tr>
+  </tbody>
+</table></div>
+
+<h3>9.4 Errores de implementación que costaron una corrida</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>#</th><th>error</th><th>detalle</th></tr></thead>
+  <tbody>
+    <tr><td class="n">28</td><td><code>KeyError: 'surf'</code></td>
+        <td>la clave de la geometría es <code>"surface"</code></td></tr>
+    <tr><td class="n">29</td><td><code>jnp.ascontiguousarray</code> no
+        existe</td><td>en esa versión de JAX</td></tr>
+    <tr><td class="n">30</td><td><code>tl.math.atan2</code> no existe en Triton
+        3.8</td><td>solo en libdevice; se resolvió emitiendo los cuatro
+        argumentos y cerrando en JAX</td></tr>
+    <tr><td class="n">31</td><td><code>triton_call</code> añade un puntero por
+        cada <code>out_shape</code></td>
+        <td>volver condicional una salida dejó <code>de_ptr</code> sin ligar:
+        <code>'NoneType' object has no attribute '_unflatten_ir'</code>. La
+        lista de argumentos debe quedar fija</td></tr>
+    <tr><td class="n">32</td><td><code>tl.randn4x</code> y una constante de
+        semilla que desborda <code>int32</code></td>
+        <td>el desempaquetado de la tupla falla; cuatro sorteos de un tensor
+        son seguros</td></tr>
+    <tr><td class="n">33</td><td>Rango de celdas mal cortado
+        (<code>A[1:8]</code>)</td>
+        <td>el cuadernillo de Kaggle <b>nunca escribió</b>
+        <code>triton_bench.py</code> y murió en su <code>import</code></td></tr>
+    <tr><td class="n">34</td><td><code>So=So</code> donde la función no tenía
+        ese parámetro</td>
+        <td>otra corrida de Kaggle muerta, <b>después</b> de instalar y pasar
+        la prueba de humo</td></tr>
+    <tr><td class="n">35</td><td><code>PARTIAL.pop</code> borró el registro de
+        un brazo medido</td>
+        <td>marcó como extrapolada una celda que sí se había cronometrado</td></tr>
+    <tr><td class="n">36</td><td>Reemplazo de un bloque HTML cortado en su
+        <b>primer</b> <code>&lt;/div&gt;</code></td>
+        <td>el bloque tenía <code>div</code> anidados, así que sobrevivió la
+        cola con un párrafo ya refutado y un <code>div</code> huérfano</td></tr>
+    <tr><td class="n">37</td><td><code>git push | tail</code></td>
+        <td>la tubería devuelve el estado de <code>tail</code> y enmascara el
+        fallo del push</td></tr>
+    <tr><td class="n">38</td><td>Parseo del estado de Kaggle leyendo la
+        línea 1</td>
+        <td>que era un aviso de versión del CLI, no el estado</td></tr>
+    <tr><td class="n">39</td><td><code>id</code> del cuadernillo distinto del
+        <i>slug</i> real</td><td>HTTP 409 al empujar</td></tr>
+    <tr><td class="n">40</td><td><code>sys.executable</code> para lanzar
+        Modal</td><td>era el Python del sistema, sin el paquete instalado</td></tr>
+  </tbody>
+</table></div>
+
+<h3>9.5 Errores de presupuesto</h3>
+
+<div class="note bad"><strong>Una cuenta agotada y una estimación 3× corta.</strong>
+Cada brazo de medición se ejecutaba <b>dos veces</b> —calentar y medir— y en
+una escalera de cuatro millones de barridos eso duplica la factura. La
+estimación fue de ~1 GPU-hora y el consumo real 3.2, agotando los $14.52 que
+quedaban. El arreglo fue compilar con <code>.lower().compile()</code>, que
+compila sin ejecutar: la corrida siguiente, de tamaño comparable, costó
+<b>$5.73</b>.
+<br><br>Tarifa derivada de lo facturado: <b>$4.95 por GPU-hora</b> de H100,
+incluyendo el arranque del contenedor. Esa cifra es la que después permitió
+decidir qué celdas medir y cuáles dejar extrapoladas.</div>
+
+<h3>9.6 El bug con consecuencias físicas</h3>
+
+<p>Uno solo de todos los anteriores afectó a la física, y está en la
+sección 6.4: las <b>claves Philox adyacentes sobre un contador compartido</b>,
+que sesgaban la aceptación un 1.1 % a la baja. Lo encontró el control de
+producción contra sí misma; el resto de pruebas lo dejaba pasar.</p>
+
+<div class="note"><strong>Y la lección que lo generaliza.</strong> Cuando una
+comparación estadística marca un valor atípico, <b>la primera cosa que hay que
+poner a prueba es la vara de medir</b>, corriendo la referencia contra sí
+misma. No empezar sospechando del código nuevo ni defendiéndolo.</div>
+
+<h2 id="s10">10 · Lo que queda abierto</h2>
+
+<div class="tw"><table>
+  <thead><tr><th>pregunta</th><th>estado</th></tr></thead>
+  <tbody>
+    <tr><td>¿Cuál de los 12 candidatos de tile elige Triton?</td>
+        <td class="warn">sin resolver. La minimización de carriles puntúa
+        36 %. Se elige compilando y leyendo la firma</td></tr>
+    <tr><td>¿Qué dispara la rama <code>tb = B</code>?</td>
+        <td class="warn">sin resolver. Hay dos bandas limpias, [59,63] y
+        [121,127], 2.4–3.5× más planas; cinco predictores refutados</td></tr>
+    <tr><td>El ~23 % residual del kernel pesado</td>
+        <td class="warn">sin atribuir</td></tr>
+    <tr><td>¿Por qué la ventaja del kernel <b>se encoge</b> en T4 al ensanchar
+        el lote?</td>
+        <td class="warn">el signo está medido; el mecanismo <b>no</b>. La
+        hipótesis es la jerarquía de memoria, sin medir</td></tr>
+    <tr><td>El umbral de huella (~5 MB) que enciende la regla</td>
+        <td class="warn">predicción falsable pendiente: barriendo
+        <code>n_active</code> a <code>v₂</code> fijo, el castigo debería
+        encenderse cerca de <b>3233 sitios</b> a <code>B = 60</code></td></tr>
+    <tr><td>El techo de XLA: deja <b>1.8×</b> sobre la mesa</td>
+        <td class="n">cuantificado, y es parte de lo que el kernel propio
+        recupera</td></tr>
+    <tr><td>El bucle de medición como siguiente objetivo de kernel</td>
+        <td class="n">los observables en Triton recuperaron 4.5 de 8 puntos;
+        el resto está en los ocho acumuladores y el <code>scan</code></td></tr>
+    <tr><td>Nsight Compute en la GPU local</td>
+        <td class="bad">imposible: la RTX 5070 Laptop es <code>sm_120</code> y
+        el Nsight de apt (2024.1) precede a Blackwell</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="s11">11 · Inventario de la sección</h2>
+
+<div class="tw"><table>
+  <thead><tr><th>carpeta</th><th>qué hay</th></tr></thead>
+  <tbody>
+    <tr><td><code>informe/</code></td>
+        <td>este documento, en HTML y en PDF</td></tr>
+    <tr><td><code>paginas/</code></td>
+        <td>las <b>6</b> páginas interactivas de las que sale este informe:
+        <code>resumen</code>, <code>lotes</code>, <code>operaciones</code>,
+        <code>reparto</code>, <code>replicas</code>,
+        <code>cronograma</code></td></tr>
+    <tr><td><code>codigo/</code></td>
+        <td><code>sim_core.py</code> (el motor de referencia),
+        <code>triton_halo.py</code> (el kernel propio, 784 líneas),
+        <code>triton_bench.py</code> (el banco portátil con el
+        <code>verify</code>), <code>app.py</code> (los puntos de entrada de
+        Modal), más los módulos de ablación y planificación</td></tr>
+    <tr><td><code>cuadernillos/</code></td>
+        <td><b>14</b> notebooks, incluidos los de Kaggle autocontenidos que
+        embuten los módulos con su SHA-256</td></tr>
+    <tr><td><code>resultados/</code></td>
+        <td><b>74</b> JSON de curvas y mediciones en Modal,
+        <b>16</b> de Kaggle, más la tasa de CPU</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note"><strong>Sobre la duplicación.</strong> Las páginas están
+<b>copiadas</b>, no movidas: <code>docs/pages/</code> sigue siendo lo que sirve
+GitHub Pages, así que moverlas rompería el sitio vivo. Cuando se decida el
+destino final de la sección, se resuelve de un lado o del otro.</div>
+
+<h3>Cómo reproducir las mediciones</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>medición</th><th>comando</th></tr></thead>
+  <tbody>
+    <tr><td>El paso, por lote</td>
+        <td><code>modal run app.py::triton_halo</code></td></tr>
+    <tr><td>La escalera, los dos motores</td>
+        <td><code>modal run app.py::triton_full</code></td></tr>
+    <tr><td>Un estado, 1/2/4 GPU</td>
+        <td><code>modal run app.py::state_ladder --reps 50</code></td></tr>
+    <tr><td>La regla del ancho contra el kernel</td>
+        <td><code>modal run app.py::triton_width</code></td></tr>
+    <tr><td>El control estadístico</td>
+        <td><code>modal run app.py::triton_check</code></td></tr>
+    <tr><td>Portabilidad y T4</td>
+        <td>los cuadernillos <code>kaggle_triton_*.ipynb</code>, empujados con
+        <code>kaggle kernels push</code></td></tr>
+  </tbody>
+</table></div>
+
+<hr>
+
+<p class="meta">Compilación excluida del cronómetro en toda medición
+(<code>.lower().compile()</code>). Identidad física de cada GPU registrada en
+las corridas posteriores a 2026-10. Ventanas de lote contiguas. Brazos
+intercalados. Todas las cifras de este informe provienen de los JSON en
+<code>resultados/</code> y pueden rastrearse hasta la corrida que las produjo.</p>
+
+</div>

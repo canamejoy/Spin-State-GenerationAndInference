@@ -1,0 +1,402 @@
+<title>Resumen de resultados</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f7f5f2; --surface:#fffefc; --ink:#1c1a17; --muted:#6b645b; --rule:#e2ddd5;
+  --up:#c0392b; --dn:#2471a3; --accent:#1a7a6a; --warn:#b8651b; --dead:#9a9289;
+  --display:"Spectral",Georgia,serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#16161a; --surface:#1f1f24; --ink:#eceae6; --muted:#9d968c; --rule:#34343c;
+  --up:#e8604f; --dn:#4a9fe0; --accent:#39b8a2; --warn:#dc9346; --dead:#6a6560;
+  color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#16161a; --surface:#1f1f24; --ink:#eceae6; --muted:#9d968c; --rule:#34343c;
+  --up:#e8604f; --dn:#4a9fe0; --accent:#39b8a2; --warn:#dc9346; --dead:#6a6560;
+  color-scheme:dark;}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);
+     font-size:16px;line-height:1.6;margin:0}
+.wrap{max-width:880px;margin:0 auto;padding-inline:20px;padding-block:44px 64px}
+h1{font-family:var(--display);font-size:clamp(1.9rem,5vw,2.7rem);line-height:1.1;
+   margin:0 0 .35em;text-wrap:balance;font-weight:600}
+h2{font-family:var(--display);font-size:clamp(1.25rem,3vw,1.6rem);line-height:1.2;
+   margin:2.2em 0 .5em;text-wrap:balance;font-weight:600}
+h3{font-size:1rem;margin:1.5em 0 .35em;font-weight:600}
+p{margin:0 0 .9em;max-width:68ch}
+ul{max-width:66ch;padding-left:1.25em;margin:0 0 .9em}
+li{margin:.3em 0}
+.lede{font-size:1.1rem;color:var(--muted);max-width:62ch}
+.eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;
+         text-transform:uppercase;color:var(--accent);margin:0 0 .6em}
+code,.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.n{font-weight:500}
+hr{border:0;border-top:1px solid var(--rule);margin:2.4rem 0}
+.key{background:var(--surface);border:1px solid var(--rule);
+     border-left:3px solid var(--accent);border-radius:10px;
+     padding:16px 18px;margin:1.4em 0}
+.key p{margin:0;max-width:64ch}
+.key p+p{margin-top:.6em}
+.eq{font-family:var(--mono);font-size:1.08rem;text-align:center;
+    margin:.6em 0 .3em;color:var(--accent);font-weight:500}
+.note{border-left:3px solid var(--rule);padding:.1rem 0 .1rem 1rem;
+      margin:1.2em 0;color:var(--muted);max-width:64ch;font-size:.94rem}
+.note strong{color:var(--ink)}
+.note.warn{border-left-color:var(--warn)}
+table{border-collapse:collapse;width:100%;font-size:.9rem;margin:.9em 0}
+th,td{text-align:right;padding:7px 9px;border-bottom:1px solid var(--rule)}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--mono);font-size:.68rem;letter-spacing:.07em;
+   text-transform:uppercase;color:var(--muted);font-weight:500}
+td.n{font-variant-numeric:tabular-nums}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.best td{color:var(--accent);font-weight:600}
+td.bad{color:var(--up);font-weight:600}
+td.good{color:var(--accent);font-weight:600}
+.chartbox{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+          padding:16px;margin:1.3em 0}
+.chartbox canvas{width:100%;height:auto;display:block;max-width:100%}
+.cap{font-size:.84rem;color:var(--muted);margin:10px 0 0}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;
+     margin:1.2em 0}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+      padding:14px 16px;min-width:0}
+.card h3{margin-top:0}
+.card p{font-size:.93rem;margin-bottom:0}
+.big{font-family:var(--mono);font-size:1.5rem;font-weight:500;
+     font-variant-numeric:tabular-nums;display:block;margin:.1em 0 .2em}
+.big.up{color:var(--up)} .big.ok{color:var(--accent)}
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">Nanodiscos magnéticos · Monte Carlo en GPU</p>
+<h1>Resumen de resultados</h1>
+<p class="lede">El costo de una simulación depende de un número que no debería
+importar: cuántas réplicas se ponen en cada GPU. Encontramos por qué, y la
+condición exacta que lo dispara.</p>
+
+<div class="key">
+  <p><b>El hallazgo.</b> No es el hardware, no son las semillas, no es la
+  memoria. Es el <b>compilador</b> XLA, que decide cuántos elementos del arreglo
+  procesa cada hilo de la GPU <b>a partir de la forma del arreglo</b>. La
+  condición es exacta:</p>
+  <p class="eq">v₂(B) + v₂(L) ≥ 2 &nbsp;⟹&nbsp; costo alto</p>
+  <p style="color:var(--muted);font-size:.93rem"><code>B</code> = réplicas por
+  GPU, <code>L</code> = capas de la red, y <code>v₂(n)</code> = cuántas veces
+  <code>n</code> se puede dividir por dos (v₂ de 64 es 6; de 65 es 0, porque es
+  impar).</p>
+</div>
+
+<div class="note"><strong>Actualización.</strong> El hallazgo de abajo sigue
+en pie y es la <b>diagnosis</b>: la regla existe, está explicada y se predice
+sin fallo. Lo que cambió es el <b>remedio</b>. Se escribió un kernel a mano que
+<b>no paga ninguna de las dos causas</b>, con lo que elegir <code>B</code> deja
+de hacer falta — <a href="#kernel">al final de esta página</a>, y en detalle en
+<code>operaciones.html</code>.</div>
+
+<h2>La prueba principal: una réplica de diferencia</h2>
+<p>Con cinco capas, <code>B</code> = 64 cae del lado caro
+(<code>v₂</code> = 0+6 = 6) y <code>B</code> = 65 del lado libre
+(0+0 = 0). Se midió el <b>tiempo total de ejecución</b> de una celda idéntica
+—misma red, mismo cronograma, mismas semillas, misma GPU física— en
+<b>cuatro cuentas de Kaggle a la vez</b>, cada una en su propia Tesla T4, con
+<b>tres repeticiones intercaladas</b> (63, 64, 65, 63, 64, 65, …).</p>
+
+<div class="chartbox">
+  <canvas id="c" width="860" height="330"
+    aria-label="Tiempo total por celda en B=63, 64 y 65, cuatro cuentas, tres repeticiones"></canvas>
+  <p class="cap">Cada punto es una ejecución completa: <b>36 mediciones</b>
+  (4 cuentas × 3 repeticiones × 3 lotes). En <b>rojo</b> <code>B</code> = 64;
+  en <b>azul</b> y <b>verde</b> sus dos vecinos. La banda gris va del vecino más
+  lento al <code>B</code> = 64 más rápido: <b>no hay una sola medición
+  dentro</b>.</p>
+</div>
+
+<div class="tw"><table>
+  <thead><tr><th>cuenta (T4 distinta)</th><th><code>B</code>=63</th>
+    <th><code>B</code>=64</th><th><code>B</code>=65</th>
+    <th>64 vs 65</th></tr></thead>
+  <tbody>
+    <tr><td>camilaordonez</td><td class="n">61.3 s</td><td class="bad">89.0 s</td>
+        <td class="good">49.9 s</td><td class="bad">+78 %</td></tr>
+    <tr><td>alegriaandres</td><td class="n">67.7 s</td><td class="bad">104.1 s</td>
+        <td class="good">58.4 s</td><td class="bad">+78 %</td></tr>
+    <tr><td>alegriacarlos</td><td class="n">61.9 s</td><td class="bad">90.3 s</td>
+        <td class="good">50.6 s</td><td class="bad">+78 %</td></tr>
+    <tr><td>andrescanamejoy</td><td class="n">65.0 s</td><td class="bad">100.1 s</td>
+        <td class="good">56.3 s</td><td class="bad">+78 %</td></tr>
+    <tr class="best"><td><b>promedio</b></td><td class="n">64.0 ± 3.1 s</td>
+        <td class="n">95.9 ± 6.4 s</td><td class="n">53.8 ± 3.6 s</td>
+        <td><b>+78 %</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="two">
+  <div class="card"><h3>Por celda de prueba</h3>
+    <span class="big up">+42 s</span>
+    <p>95.9 s contra 53.8 s — y el caso rápido hace <em>más</em> trabajo, 65
+    réplicas contra 64.</p></div>
+  <div class="card"><h3>En una corrida de producción</h3>
+    <span class="big up">+47 min</span>
+    <p>1.78 h contra 1.00 h de GPU, por una réplica de diferencia.</p></div>
+</div>
+
+<div class="note"><strong>Por qué es reproducible y no casualidad.</strong>
+Cuatro GPUs físicas distintas, cuatro sesiones independientes, doce ejecuciones
+por lote. Los cuatro porcentajes caben en <b class="n">3.1 puntos</b>
+(+79.0, +80.5, +81.4, +82.1 por réplica-barrido). <code>B</code> = 64 pierde
+contra <b>los dos</b> vecinos, sin una sola medición solapada. Las dos ramas se
+corrieron <b>intercaladas</b>, así que una GPU que se calienta reparte la deriva
+en vez de cargarla sobre un brazo; y el código es idéntico en las cuatro
+cuentas, verificado byte a byte por SHA-256.</div>
+
+<h2>Los dos efectos, y cuánto vale cada uno</h2>
+<p>Hay <b>dos</b> fenómenos distintos encima del mismo eje, y conviene no
+confundirlos: el de arriba lo entendemos, el de abajo no.</p>
+
+<div class="two">
+  <div class="card"><h3>Efecto del ancho &nbsp;<span style="color:var(--accent)">explicado</span></h3>
+    <span class="big">14 – 29 %</span>
+    <p>XLA le da a cada hilo <b>4 elementos consecutivos</b> en vez de 1. Un
+    warp pide entonces 512 bytes para entregar 128 útiles: rompe la coalescencia
+    de memoria. Lo reprodujimos en CUDA puro, sin compilador: el reparto
+    consecutivo cuesta <b class="n">+14.9 %</b> y el kernel de JAX paga
+    <b class="n">+14.25 %</b>.</p></div>
+  <div class="card"><h3>Dentado &nbsp;<span style="color:var(--accent)">mecanismo hallado</span></h3>
+    <span class="big">27 – 35 %</span>
+    <p>Dos lotes <b>del mismo ancho</b> pueden diferir un 20 %. La causa es que
+    <b>Triton re-teja el kernel</b> para cada forma, con su propio modelo de
+    costo: la rejilla es <code>Π ⌈dim/tile⌉</code>, predicha <b>8 de 8</b>, y el
+    tile cambia de 4 a 32 según el lote. <b>No tiene forma cerrada</b> — se
+    elige compilando y leyendo la firma, no con una regla. Descartamos antes:
+    cuantización de olas, conflictos de canal, el emisor de reducciones y el
+    costo de lanzamiento.</p></div>
+</div>
+
+<div class="note warn"><strong>El 78 % es el producto de los dos.</strong>
+El ancho solo vale 29 % en esa T4, y el dentado pone el resto. Es el
+<em>peor emparejamiento construible</em>, no un solo mecanismo — por eso un
+promedio de ventana da +42 % y este par da +78 %.</div>
+
+<h3>Cómo cambia cada uno al crecer el lote</h3>
+<div class="tw"><table>
+  <thead><tr><th>región del eje (H100)</th><th>efecto del ancho</th>
+    <th>dentado</th></tr></thead>
+  <tbody>
+    <tr><td>ventana densa 48–64</td><td class="n">+12.1 %</td><td class="n">28.0 %</td></tr>
+    <tr><td>alrededor de <code>B</code> = 256</td><td class="n">+33.4 %</td><td class="n">35.0 %</td></tr>
+    <tr><td>alrededor de <code>B</code> = 512</td><td class="bad">−10.7 %</td><td class="n">27.5 %</td></tr>
+    <tr><td>alrededor de <code>B</code> = 1024</td><td class="n">+6.7 %</td><td class="n">34.7 %</td></tr>
+  </tbody>
+</table></div>
+
+<p><b>El dentado es estable en 27–35 % en todo el rango. El efecto del ancho se
+vuelve errático</b> y en <code>B</code> = 512 incluso <b>cambia de signo</b>: la
+celda de ancho 4 resulta más rápida que sus vecinas. Así que la regla
+<b>predice bien entre lotes vecinos y a lotes chicos</b>, y pierde poder
+predictivo a lotes grandes, donde el fenómeno que no entendemos es dos o tres
+veces más grande que el que sí.</p>
+
+<div class="note"><strong>El compilador sigue haciendo lo que decimos, incluso
+ahí.</strong> Leímos la geometría de lanzamiento que emite XLA en
+<code>B</code> = 511, 512 y 513: la regla predijo grillas de 91 082, 22 815 y
+91 439, y midió <b>exactamente</b> esas tres. Lo que falla a lote grande no es
+el mecanismo, es que el dentado lo tapa.</div>
+
+<h2 id="kernel">El desenlace: un kernel que no paga ninguna de las dos</h2>
+
+<p>Las dos causas del costo —el ancho de vector y el dentado— son
+<b>decisiones del compilador</b> sobre un bucle que el motor de JAX le entrega.
+Un kernel escrito a mano en Triton crudo, que no le entrega ese bucle, no paga
+ninguna. Mismo Hamiltoniano, verificado: <b>0 de 182 520</b> espines distintos
+contra el motor de siempre con la misma aleatoriedad, y las dos cadenas a
+equilibrio dentro de <b>0.23 σ</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>castigo por <code>v₂(B) + v₂(L) ≥ 2</code></th>
+    <th>motor estándar</th><th>kernel</th></tr></thead>
+  <tbody>
+    <tr><td>H100, 5 capas</td><td class="bad">+17.8 %</td>
+        <td class="best">+0.3 %</td></tr>
+    <tr><td>T4, 5 capas</td><td class="bad">+49.9 %</td>
+        <td class="best">+0.8 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Y en reloj de pared, sobre la escalera de producción completa
+(200 temperaturas × 20 000 barridos):</p>
+
+<div class="tw"><table>
+  <thead><tr><th>trabajo</th><th>hardware</th><th>estándar</th>
+    <th>kernel</th></tr></thead>
+  <tbody>
+    <tr><td>1 estado, 50 réplicas</td><td>1× H100</td>
+        <td class="n">8.1 min</td><td class="best"><b>2.9 min</b></td></tr>
+    <tr><td>10 estados, 500 réplicas</td><td>4× H100</td>
+        <td class="n">18.6 min</td><td class="best"><b>6.3 min</b></td></tr>
+    <tr><td>100 estados, 5000 réplicas</td><td>4× H100</td>
+        <td class="n">2.7 h</td><td class="best"><b>57.6 min</b></td></tr>
+    <tr><td>100 estados, 5000 réplicas</td><td>CPU, 24 hilos</td>
+        <td class="bad">130.7 d</td><td class="n">—</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note warn"><strong>Dos límites, medidos.</strong>
+El kernel <b>pierde</b> por debajo de unas <b>13 a 25 réplicas por
+dispositivo</b>: con 12 por tarjeta su rejilla deja la GPU medio vacía y va
+<b>+47.7 %</b> más lento que el estándar. Así que repartir un solo estado entre
+muchas GPU no sirve; las tarjetas extra se pagan con <b>más estados</b>.
+<br><br>Y la ventaja <b>no crece igual en toda tarjeta</b>. Al ensanchar el
+lote, en H100 va de −63.9 % a <b>−78.1 %</b>; en T4 <b>se encoge</b> de
+−57.0 % a <b>−49.6 %</b>. «Más estados, mejor aprovechamiento» vale en H100 y
+no se traslada a la T4.</div>
+
+<h2>Lo que recomendamos</h2>
+<div class="key">
+  <p><b>Si no quieres mantener un kernel propio:</b> elegir las capas por
+  física, y después elegir <code>B</code> evitando los múltiplos de cuatro. Con
+  <code>L</code> impar eso es exactamente mantener
+  <code>v₂(B) + v₂(L) &lt; 2</code>, y cuesta cero: es cambiar un número
+  entero. Y si el número que necesitas es múltiplo de cuatro, <b>pártelo en
+  <code>B/2+1</code> y <code>B/2−1</code></b>: vale entre −22 % y −30 %, y se
+  sostuvo en la escalera completa de 4 GPU (−27.0 %).</p>
+  <p><b>Si sí:</b> el kernel gana <b>−66 %</b> contra ese protocolo y no exige
+  elegir nada, siempre que haya <b>25 réplicas por tarjeta o más</b>.</p>
+  <p>Y <b>medir la curva de cada geometría nueva</b> — unos <b>$0.60</b> y media
+  hora. El óptimo no se extrapola de una red a otra: lo probamos pidiendo que
+  seis posiciones coincidieran en tres geometrías y la predicción falló, en un
+  caso con los seis invertidos.</p>
+</div>
+
+<div class="note"><strong>Un cuidado.</strong> Lo que dispara el costo alto es
+que <b><code>B</code></b> sea múltiplo de cuatro. Que <b><code>L</code></b> lo
+sea hace lo contrario: vuelve la red indiferente al lote, pero <em>pagando el
+costo alto en todas las celdas</em>. Medimos ese canje y es malo — con
+<code>L</code> divisible por cuatro no hay arreglo gratis, y la única salida es
+medir esa curva.</div>
+
+<h2>Alcance de lo verificado</h2>
+<div class="tw"><table>
+  <thead><tr><th>afirmación</th><th>dónde está medida</th></tr></thead>
+  <tbody>
+    <tr><td>El costo alto existe en los múltiplos de cuatro</td>
+        <td>T4, L4, A100, H100, H200 — <b>5 GPUs, 4 arquitecturas</b></td></tr>
+    <tr><td>Las capas deciden (<code>v₂(L)</code>)</td>
+        <td>H100 y T4 — <b>2 arquitecturas</b></td></tr>
+    <tr><td>La geometría que emite el compilador</td>
+        <td><b>98 valores de grilla predichos sin un solo fallo</b></td></tr>
+    <tr><td>La causa (coalescencia, no el ancho en sí)</td>
+        <td>CUDA puro sin compilador: +14.9 % contra +14.25 % de JAX</td></tr>
+    <tr><td>El dentado</td>
+        <td class="bad">reproducible; mecanismo = el re-tejado de Triton,
+        sin forma cerrada</td></tr>
+    <tr><td>El kernel reproduce la física</td>
+        <td class="best">0/182 520 espines con la misma aleatoriedad;
+        ≤0.23 σ a equilibrio; verificado también <b>en T4</b></td></tr>
+    <tr><td>El kernel elimina el castigo</td>
+        <td><b>H100 y T4</b>, sobre <code>L</code> = 4, 5, 6 y 8</td></tr>
+    <tr><td>El piso de lote del kernel</td>
+        <td>H100: pierde a 12–13 réplicas/tarjeta, gana desde 25</td></tr>
+    <tr><td>Los relojes de la tabla de arriba</td>
+        <td>10 extrapolaciones puntuadas contra su medición:
+        peor error <b>7.9 %</b>, ocho bajo el 3 %</td></tr>
+  </tbody>
+</table></div>
+
+<hr>
+<p style="color:var(--muted);font-size:.88rem">Compilación excluida del
+cronómetro en toda medición (<code>.lower().compile()</code> antes de arrancar).
+Identidad física de cada GPU registrada. Ventanas de lotes <b>contiguas</b>, que
+es lo único que hace visible la estructura fina. El detalle completo —cada
+hipótesis descartada con su medición— está en la página
+<code>lotes.html</code>; el kernel y sus mediciones en
+<code>operaciones.html</code>, y los datos crudos en
+<code>notebooks/simulation/results/curves/</code>.</p>
+
+</div>
+
+<script>
+"use strict";
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+/* Tiempo TOTAL por celda, en segundos: us/replica-barrido x B x 60000 / 1e6.
+   Se grafica en segundos a propósito -- es la cifra que se interpreta sola. */
+const SW = 60000;
+const RUNS = [
+  {acc:"camilaordonez",   b63:[15.88,16.36,16.38], b64:[23.18,23.19,23.19], b65:[12.82,12.79,12.78]},
+  {acc:"alegriaandres",   b63:[17.70,18.00,18.07], b64:[27.05,27.11,27.15], b65:[14.88,15.00,15.03]},
+  {acc:"alegriacarlos",   b63:[16.19,16.42,16.52], b64:[23.44,23.52,23.60], b65:[12.88,13.01,13.06]},
+  {acc:"andrescanamejoy", b63:[17.02,17.22,17.35], b64:[25.94,26.06,26.18], b65:[14.32,14.45,14.56]},
+];
+const ARMS = [["b63",63,"dn"],["b64",64,"up"],["b65",65,"accent"]];
+const secs = (us,B) => us*B*SW/1e6;
+
+function draw(){
+  const cv = document.getElementById("c");
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 860, h = 330;
+  cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  cv.style.height = h+"px";
+  const g = cv.getContext("2d");
+  g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const all = RUNS.flatMap(r => ARMS.flatMap(([k,B]) => r[k].map(v => secs(v,B))));
+  const hi = Math.ceil(Math.max(...all)/20)*20 + 20;
+  const m = {l:52,r:14,t:20,b:54};
+  const py = v => m.t + (1 - v/hi)*(h-m.t-m.b);
+  const colW = (w-m.l-m.r)/RUNS.length;
+  const MUT=css("--muted"), RULE=css("--rule"), INK=css("--ink");
+  const COL = {up:css("--up"), accent:css("--accent"), dn:css("--dn")};
+  const mean = a => a.reduce((x,y)=>x+y,0)/a.length;
+
+  // banda de no-traslape: del vecino mas lento al B=64 mas rapido
+  const worstLow = Math.max(...RUNS.flatMap(r => [...r.b63.map(v=>secs(v,63)),
+                                                  ...r.b65.map(v=>secs(v,65))]));
+  const fast64 = Math.min(...RUNS.flatMap(r => r.b64.map(v=>secs(v,64))));
+  g.fillStyle = MUT; g.globalAlpha = .12;
+  g.fillRect(m.l, py(fast64), w-m.l-m.r, py(worstLow)-py(fast64));
+  g.globalAlpha = 1;
+
+  g.font = "11px "+css("--mono")+", monospace";
+  g.strokeStyle = RULE; g.fillStyle = MUT;
+  g.textAlign = "right"; g.textBaseline = "middle";
+  for (let v=0; v<=hi; v+=20){
+    g.beginPath(); g.moveTo(m.l,py(v)); g.lineTo(w-m.r,py(v)); g.stroke();
+    g.fillText(v+" s", m.l-8, py(v));
+  }
+  RUNS.forEach((r,i) => {
+    const x0 = m.l + i*colW;
+    if (i){ g.strokeStyle=RULE; g.beginPath();
+            g.moveTo(x0,m.t); g.lineTo(x0,h-m.b); g.stroke(); }
+    ARMS.forEach(([k,B,cn],ai) => {
+      const vals = r[k].map(v => secs(v,B));
+      const cx = x0 + colW*(0.22+ai*0.28), mu = mean(vals);
+      g.strokeStyle = COL[cn]; g.lineWidth = 2.4;
+      g.beginPath(); g.moveTo(cx-15,py(mu)); g.lineTo(cx+15,py(mu)); g.stroke();
+      g.fillStyle = COL[cn];
+      vals.forEach((v,j) => { g.beginPath();
+        g.arc(cx+(j-1)*5, py(v), 3.2, 0, 7); g.fill(); });
+      g.textAlign="center"; g.textBaseline="bottom";
+      g.font = "500 11px "+css("--mono")+", monospace";
+      g.fillText(mu.toFixed(0)+" s", cx, py(mu)-8);
+    });
+    g.fillStyle = MUT; g.textAlign="center"; g.textBaseline="top";
+    g.font = "10px "+css("--mono")+", monospace";
+    g.fillText(r.acc.slice(0,15), x0+colW/2, h-m.b+10);
+  });
+  g.fillStyle = INK; g.textAlign="left"; g.textBaseline="top";
+  g.font = "12px "+css("--body")+", sans-serif";
+  g.fillText("Tesla T4 · tiempo total por celda · 4 GPUs × 3 repeticiones", m.l+6, m.t+4);
+  g.font = "11px "+css("--mono")+", monospace";
+  g.fillStyle = COL.dn;     g.fillText("● B=63", m.l+6, m.t+24);
+  g.fillStyle = COL.up;     g.fillText("● B=64", m.l+76, m.t+24);
+  g.fillStyle = COL.accent; g.fillText("● B=65", m.l+146, m.t+24);
+}
+draw();
+let t; window.addEventListener("resize", () => { clearTimeout(t); t=setTimeout(draw,120); });
+if (window.matchMedia){
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  (mq.addEventListener ? mq.addEventListener.bind(mq,"change") : mq.addListener.bind(mq))(draw);
+}
+</script>

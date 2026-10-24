@@ -1,0 +1,425 @@
+{
+ "question": "Why does the mod-4 batch penalty exist, given raw CUDA never reproduces it?",
+ "answer": "XLA vectorises the loop by 4 elements per thread when the kernel's element count is divisible by 4, which it is exactly when B is. The vectorised code is slower for this memory-bound kernel.",
+ "device": "NVIDIA H100 80GB HBM3",
+ "lattice": {
+  "Rd": 18.3,
+  "L": 5,
+  "N": 39
+ },
+ "evidence": {
+  "launch_geometry": {
+   "note": "From the module's own thunk_sequence.txt. Block size is 128 for every heavy kernel at every B; only the grid changes, and it changes by a factor of 3.93-3.94 exactly when B is a multiple of 4.",
+   "heavy_kernel_grids": {
+    "59": {
+     "loop_select_fusion_1": 10517,
+     "loop_and_fusion_2": 3506
+    },
+    "60": {
+     "loop_select_fusion_1": 2674,
+     "loop_and_fusion_2": 892
+    },
+    "63": {
+     "loop_maximum_fusion_1": 11230,
+     "loop_and_fusion_2": 3744
+    },
+    "64": {
+     "loop_maximum_fusion_1": 2852,
+     "loop_and_fusion_2": 951
+    }
+   },
+   "grid_prediction": {
+    "formula_scalar": "ceil(B*L*N^2*3 / 128)",
+    "formula_vector4": "ceil(B*L*N^2*3 / 4 / 128)",
+    "checks": [
+     {
+      "B": 59,
+      "predicted": 10517,
+      "observed": 10517,
+      "path": "scalar"
+     },
+     {
+      "B": 60,
+      "predicted": 2674,
+      "observed": 2674,
+      "path": "vector4"
+     },
+     {
+      "B": 63,
+      "predicted": 11230,
+      "observed": 11230,
+      "path": "scalar"
+     },
+     {
+      "B": 64,
+      "predicted": 2852,
+      "observed": 2852,
+      "path": "vector4"
+     }
+    ],
+    "result": "exact in 4 of 4"
+   },
+   "kernel_counts_differ": {
+    "59": 43,
+    "60": 45,
+    "63": 43,
+    "64": 40
+   },
+   "fusion_structure_differs": "loop_maximum_negate_fusion_1 at B=59,60 but loop_maximum_fusion_1 at B=63,64"
+  },
+  "per_kernel_profile": {
+   "note": "Traced GPU time by kernel name. The penalty is inside kernel execution, not on the host.",
+   "traced_gpu_us_per_replica": {
+    "multiples_of_4": 6555.7,
+    "others": 5688.1,
+    "penalty_pct": 15.3
+   },
+   "biggest_movers_B63_to_B64_ms": {
+    "loop_and_fusion_2": [
+     30.81,
+     58.98
+    ],
+    "loop_and_fusion_3": [
+     26.2,
+     55.08
+    ]
+   },
+   "raw_exp3e": {
+    "rows": [
+     {
+      "B": 51,
+      "us": 2.442360400326795,
+      "wall_s": 0.2989449129999997,
+      "n_kernels": 1,
+      "block_sizes": [],
+      "gpu_us_total": 309091.26100002433,
+      "top": [
+       [
+        "loop_maximum_negate_fusion_1",
+        35868.55999999905
+       ],
+       [
+        "fusion_1360",
+        33240.013999999945
+       ],
+       [
+        "input_concatenate_fusion_12",
+        20271.959000000163
+       ],
+       [
+        "fusion_1358",
+        17802.390000000003
+       ],
+       [
+        "input_concatenate_fusion_10",
+        16474.712000000007
+       ],
+       [
+        "loop_and_fusion_2",
+        16136.495999999976
+       ],
+       [
+        "input_concatenate_fusion_11",
+        15989.892999999787
+       ],
+       [
+        "input_concatenate_fusion_9",
+        15716.807000000028
+       ]
+      ]
+     },
+     {
+      "B": 52,
+      "us": 2.7948555448717936,
+      "wall_s": 0.34879797199999985,
+      "n_kernels": 1,
+      "block_sizes": [],
+      "gpu_us_total": 355648.9030000097,
+      "top": [
+       [
+        "loop_maximum_negate_fusion_1",
+        60796.445000000014
+       ],
+       [
+        "loop_and_fusion_3",
+        37727.28300000013
+       ],
+       [
+        "loop_and_fusion_2",
+        31361.56899999985
+       ],
+       [
+        "fusion_1412",
+        28940.889999999938
+       ],
+       [
+        "input_concatenate_fusion_12",
+        20471.67099999986
+       ],
+       [
+        "loop_select_fusion_2",
+        19699.464999999924
+       ],
+       [
+        "fusion_1403",
+        18103.014000000083
+       ],
+       [
+        "input_concatenate_fusion_10",
+        17177.21000000004
+       ]
+      ]
+     },
+     {
+      "B": 53,
+      "us": 2.286762555031581,
+      "wall_s": 0.2908761970000171,
+      "n_kernels": 1,
+      "block_sizes": [],
+      "gpu_us_total": 298563.287999993,
+      "top": [
+       [
+        "loop_maximum_negate_fusion_1",
+        33459.19699999993
+       ],
+       [
+        "fusion_1390",
+        26897.35799999995
+       ],
+       [
+        "loop_and_fusion_2",
+        23073.25799999998
+       ],
+       [
+        "loop_and_fusion_3",
+        21481.09400000008
+       ],
+       [
+        "input_concatenate_fusion_12",
+        20821.736000000285
+       ],
+       [
+        "fusion_1388",
+        18281.277
+       ],
+       [
+        "input_concatenate_fusion_10",
+        17561.448999999957
+       ],
+       [
+        "input_concatenate_fusion_11",
+        16701.44000000001
+       ]
+      ]
+     },
+     {
+      "B": 59,
+      "us": 2.2437236793786344,
+      "wall_s": 0.31771127300001467,
+      "n_kernels": 1,
+      "block_sizes": [],
+      "gpu_us_total": 328379.10400002135,
+      "top": [
+       [
+        "loop_maximum_negate_fusion_1",
+        37067.087999999916
+       ],
+       [
+        "loop_and_fusion_3",
+        28028.90499999995
+       ],
+       [
+        "fusion_1378",
+        25905.810000000023
+       ],
+       [
+        "loop_and_fusion_2",
+        24423.440999999875
+       ],
+       [
+        "input_concatenate_fusion_12",
+        22880.49400000032
+       ],
+       [
+        "input_concatenate_fusion_10",
+        18915.264999999916
+       ],
+       [
+        "fusion_1376",
+        18879.105999999978
+       ],
+       [
+        "input_concatenate_fusion_11",
+        17970.287999999946
+       ]
+      ]
+     },
+     {
+      "B": 60,
+      "us": 2.6897223958333902,
+      "wall_s": 0.3873200250000082,
+      "n_kernels": 1,
+      "block_sizes": [],
+      "gpu_us_total": 396828.31299995224,
+      "top": [
+       [
+        "loop_maximum_negate_fusion_1",
+        51688.967999999935
+       ],
+       [
+        "loop_and_fusion_3",
+        34449.66299999999
+       ],
+       [
+        "loop_and_fusion_2",
+        29620.004000000063
+       ],
+       [
+        "fusion_1382",
+        26833.523999999987
+       ],
+       [
+        "input_concatenate_fusion_12",
+        23294.625000000735
+       ],
+       [
+        "loop_select_fusion_1",
+        22150.711999999978
+       ],
+       [
+        "input_concatenate_fusion_10",
+        19322.108999999975
+       ],
+       [
+        "fusion_1380",
+        18686.857000000015
+       ]
+      ]
+     },
+     {
+      "B": 63,
+      "us": 2.208623617724801,
+      "wall_s": 0.3339438909999899,
+      "n_kernels": 1,
+      "block_sizes": [],
+      "gpu_us_total": 346046.5689999754,
+      "top": [
+       [
+        "loop_maximum_fusion_1",
+        35815.31800000043
+       ],
+       [
+        "loop_and_fusion_2",
+        30813.15500000003
+       ],
+       [
+        "fusion_1374",
+        30183.706000000046
+       ],
+       [
+        "loop_and_fusion_3",
+        26201.150999999794
+       ],
+       [
+        "input_concatenate_fusion_12",
+        24299.386000000093
+       ],
+       [
+        "fusion_1372",
+        21273.12799999993
+       ],
+       [
+        "input_concatenate_fusion_10",
+        20179.701999999965
+       ],
+       [
+        "input_concatenate_fusion_11",
+        19656.92199999988
+       ]
+      ]
+     },
+     {
+      "B": 64,
+      "us": 2.541788098958294,
+      "wall_s": 0.3904186519999939,
+      "n_kernels": 1,
+      "block_sizes": [],
+      "gpu_us_total": 397693.38100003137,
+      "top": [
+       [
+        "loop_and_fusion_2",
+        58982.54399999994
+       ],
+       [
+        "loop_and_fusion_3",
+        55076.17999999986
+       ],
+       [
+        "loop_maximum_fusion_1",
+        31474.432000000033
+       ],
+       [
+        "fusion_1386",
+        28930.735999999884
+       ],
+       [
+        "input_concatenate_fusion_14",
+        24451.598999999842
+       ],
+       [
+        "loop_select_fusion_1",
+        23563.581000000046
+       ],
+       [
+        "fusion_1384",
+        20176.082000000013
+       ],
+       [
+        "input_concatenate_fusion_10",
+        19890.68900000003
+       ]
+      ]
+     }
+    ],
+    "Rd": 18.3,
+    "L": 5,
+    "N": 39,
+    "sweeps": 2400,
+    "device": {
+     "repr": "cuda:0",
+     "kind": "NVIDIA H100 80GB HBM3",
+     "platform": "gpu",
+     "n_devices": 1,
+     "smi": [
+      "NVIDIA H100 80GB HBM3, GPU-18c99b67-28bd-37ea-4fc2-037825ae7ee2, 81559 MiB, 1980 MHz, 580.95.05, 5"
+     ]
+    }
+   }
+  },
+  "host_path_excluded": "Every argument is a device array before the timer: pack() returns jnp.asarray (parallel_axes.py:61), init_spins returns a jnp array, a PRNGKey is a device array. No host-to-device copy occurs inside the timed region, and Python dispatch is one fixed cost per call amortised over seconds of kernel time. The traced GPU-time penalty of +15.3% matching the wall-clock penalty confirms this independently."
+ },
+ "derivation": {
+  "element_count": "elements = B * L * N^2 * 3, and N^2 * 3 is always odd, so v2(elements) = v2(B) + v2(L).",
+  "trigger": "XLA takes the 4-wide vectorised path when v2(elements) >= 2.",
+  "cases": [
+   {
+    "L": "odd, v2(L)=0",
+    "vectorises_when": "B divisible by 4",
+    "consequence": "mod-4 penalty"
+   },
+   {
+    "L": "2 mod 4, v2(L)=1",
+    "vectorises_when": "B even",
+    "consequence": "penalty on every even B"
+   },
+   {
+    "L": "0 mod 4, v2(L)>=2",
+    "vectorises_when": "always, any B",
+    "consequence": "no B dependence, immune"
+   }
+  ],
+  "reconciles": "v2(stride) = 2 + v2(L), so v2(stride) >= 4 is exactly L divisible by 4, which is exactly the measured immunity. L=1,3 gave +13.8/+14.4%; L=2,6 gave +12.9/+19.7%; L=4,8,12,16 gave -2.9/-7.9/-5.6/-5.4%.",
+  "why_raw_cuda_showed_nothing": "The hand-written kernel always assigns one site per thread for every B, so no B-dependent codegen decision exists. That is why the stride, arena-alignment and RNG probes were all flat.",
+  "open_prediction": "Falsifiable and untested: for L = 2 mod 4 the penalty should appear on EVERY even B, not only multiples of 4. The window used (52,53,59,60,63,64) has only ODD non-multiples, so it could not distinguish. Measuring B=58 against B=59 on L=2 or L=6 would confirm or kill the mechanism."
+ }
+}

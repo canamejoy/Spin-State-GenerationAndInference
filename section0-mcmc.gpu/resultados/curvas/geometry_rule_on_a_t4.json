@@ -1,0 +1,105 @@
+{
+ "question": "Does the GEOMETRY half of the rule hold off an H100? Every measurement of the layer dependence had run on one device, and XLA's code generator consults the target compute capability.",
+ "design": "A matched pair on a Turing T4, two architecture generations from Hopper and the device with the largest known penalty. L=5 (odd, must keep the mod-4 penalty) against L=4 (divisible, must lose it). Footprints matched to 0.1% in active sites and 2.8% in elements per replica, so the comparison is not confounded by the footprint threshold that blinded arm A of experiment 4.",
+ "device": "Tesla T4 (40 SMs, 320 GB/s, 4 MB L2, sm_75)",
+ "schedule": {
+  "batches": [
+   57,
+   58,
+   59,
+   60,
+   61,
+   62,
+   63,
+   64
+  ],
+  "repeats": 2,
+  "n_temps": 20,
+  "n_therm": 500,
+  "n_meas": 250,
+  "sweeps_per_cell": 15000,
+  "compilation": "excluded, .lower().compile() before timing"
+ },
+ "arm_L5": {
+  "Rd": 18.3,
+  "L": 5,
+  "N": 39,
+  "n_active": 5245,
+  "us": {
+   "57": 15.417,
+   "58": 16.646,
+   "59": 15.512,
+   "60": 17.6,
+   "61": 15.825,
+   "62": 16.615,
+   "63": 15.535,
+   "64": 22.447
+  },
+  "mod4_penalty": 0.257,
+  "mod4_overlap": false,
+  "width4_penalty": 0.257,
+  "width4_overlap": false,
+  "width_ladder": {
+   "1": 15.572,
+   "2": 16.63,
+   "4": 20.023
+  },
+  "vs_width1": {
+   "2": 0.068,
+   "4": 0.286
+  },
+  "verdict": "The rule holds. The three-width ladder is visible on this device."
+ },
+ "arm_L4": {
+  "Rd": 20.4,
+  "L": 4,
+  "N": 43,
+  "n_active": 5252,
+  "us": {
+   "57": 20.203,
+   "58": 20.814,
+   "59": 20.329,
+   "60": 20.878,
+   "61": 20.826,
+   "62": 19.435,
+   "63": 19.301,
+   "64": 21.034
+  },
+  "mod4_penalty": 0.04,
+  "mod4_overlap": false,
+  "note": "every cell is width 4 by the cap, so no width split exists",
+  "verdict": "84% of the penalty is gone (+25.7% -> +4.0%), which is the prediction. But a small CLEAN residual survives, and the width rule cannot explain it because all eight cells are width 4."
+ },
+ "findings": [
+  "The geometry half of the rule travels: going from L=5 to L=4 on a T4 cuts the mod-4 penalty from +25.7% to +4.0%, an 84% reduction, with footprints matched to 0.1%.",
+  "The width ladder is DEVICE-DEPENDENT in the direction the coalescing mechanism predicts. Width 2 costs +6.8% on a T4 against +0.09% on an H100; width 4 costs +28.6% against +14.25%. A bandwidth-starved card cannot absorb the 2x transaction waste that the H100 hides with instruction-level parallelism.",
+  "INCOMPLETE: the +4.0% residual at L=4 is real but marginal -- the gap between the slowest multiple of four and the fastest non-multiple is 0.052 us, about 0.25%, roughly three standard deviations. Dropping B=64 (a power of two) still leaves +3.6%, so it is not only the broad curve.",
+  "The natural hypothesis for the residual: on sm_75 XLA may take a path WIDER than 4 at higher v2. The width cap of 4 was established from H100 dumps only. This would also connect to the unexplained mod-8 structure seen in early measurements. UNTESTED -- it needs --xla_dump_to on a T4."
+ ],
+ "recommendation_revised": {
+  "problem": "'Pick a layer count divisible by four' was written from H100 data and is a BAD trade on a T4.",
+  "premium": {
+   "T4": {
+    "odd_L_good_cells": 15.572,
+    "odd_L_bad_cells": 20.023,
+    "L_div4_all_cells": 20.352,
+    "premium_vs_hitting_a_good_cell": 0.307,
+    "saving_vs_missing": 0.016
+   },
+   "H100": {
+    "odd_L_good_cells": 2.426,
+    "odd_L_bad_cells": 2.772,
+    "L_div4_all_cells": 2.563,
+    "premium_vs_hitting_a_good_cell": 0.056,
+    "saving_vs_missing": -0.075
+   }
+  },
+  "reading": "Immunity means paying width 4 in EVERY cell, and width 4 is exactly what hurts most on a low-bandwidth device. On an H100 the hedge costs 5.6% and saves 7.5%, so it is reasonable when you cannot control B. On a T4 it costs 30.7% and saves 1.6%, so it is close to always paying the worst case. The advice is device-dependent and the blanket version was wrong.",
+  "revised": "If you can choose B, choose an odd layer count and keep v2(B) + v2(L) < 2 -- that lands on the cheapest cells on both devices. Choose L divisible by four only when B is out of your hands, and on a high-bandwidth device."
+ },
+ "also": "'Immune' does not mean 'flat'. The eight L=4 cells span 9.0% on the T4 and 16.0% on the H100. What disappears is the mod-4 structure; the broad sawtooth, which has no mechanism, stays.",
+ "method": {
+  "entrypoint": "app.py::stride_discriminator --lattices geompair --device t4",
+  "local_error": "DeserializationError on the client: the python driving `modal run` lacks numpy. Harmless -- every cell completed and the result is committed to the volume."
+ }
+}
