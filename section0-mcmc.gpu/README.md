@@ -30,6 +30,21 @@ ancho = min(4, 2^(v2(B)+v2(L)))     →  castigo si v2(B) + v2(L) ≥ 2
 
 89 de 89 rejillas predichas sin un fallo, sobre 5 GPU y 4 arquitecturas.
 
+## Para la tesis
+
+`tesis/` lleva tres secciones redactadas contra los contratos de papersmith:
+Materials and Methods (el método), Results and Discussion (la gráfica insignia
+de 100 estados y la comparación con el estado del arte) y Related Work (el
+panorama). Su `README.md` dice qué cumple cada contrato y **qué falta** — las
+citas sin resolver y las figuras por dibujar.
+
+## Para correr la simulación
+
+`cuadernillos/simulacion_lista_para_correr.ipynb` — súbelo a Kaggle, Colab o
+córrelo local. No necesita el repositorio: lleva los tres módulos dentro con su
+`sha256` verificado. Se edita **sólo la primera celda**, donde los parámetros
+son un arreglo de arreglos y el cuadernillo cuenta cuántos estados hay.
+
 ## Contenido
 
 | carpeta | qué hay |

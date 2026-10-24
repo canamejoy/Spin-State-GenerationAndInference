@@ -1,0 +1,63 @@
+<svg viewBox="0 0 1000 470" width="100%" style="max-width:100%;font-family:system-ui,sans-serif" role="img" aria-label="100 estados (5000 réplicas) — solo GPU">
+<text x="8" y="22" font-size="17" font-weight="600" fill="currentColor">100 estados (5000 réplicas) — solo GPU</text>
+<text x="8" y="41" font-size="12.5" fill="currentColor" opacity=".72">100 estados, 5000 réplicas, escalera completa de producción (200 T × 20 000 barridos). ≈ = extrapolado desde una celda más corta</text>
+<rect x="880" y="48" width="11" height="11" rx="2" fill="#2e7d32"/>
+<text x="896" y="58" font-size="11.5" fill="currentColor" opacity=".8">optimizado</text>
+<rect x="794" y="48" width="11" height="11" rx="2" fill="#b00020"/>
+<text x="810" y="58" font-size="11.5" fill="currentColor" opacity=".8">estandar</text>
+<line x1="76" y1="408.0" x2="982" y2="408.0" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="412.0" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">0</text>
+<line x1="76" y1="366.2" x2="982" y2="366.2" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="370.2" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">13.9 h</text>
+<line x1="76" y1="324.3" x2="982" y2="324.3" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="328.3" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">27.8 h</text>
+<line x1="76" y1="282.5" x2="982" y2="282.5" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="286.5" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">41.7 h</text>
+<line x1="76" y1="240.6" x2="982" y2="240.6" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="244.6" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">2.3 d</text>
+<line x1="76" y1="198.8" x2="982" y2="198.8" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="202.8" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">2.9 d</text>
+<line x1="76" y1="156.9" x2="982" y2="156.9" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="160.9" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">3.5 d</text>
+<line x1="76" y1="115.1" x2="982" y2="115.1" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="119.1" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">4.1 d</text>
+<line x1="76" y1="73.2" x2="982" y2="73.2" stroke="currentColor" stroke-opacity=".14"/>
+<text x="67" y="77.2" font-size="11.5" text-anchor="end" fill="currentColor" opacity=".7">4.6 d</text>
+<line x1="76" y1="408.0" x2="982" y2="408.0" stroke="currentColor" stroke-opacity=".45"/>
+<rect x="105.1" y="102.6" width="58.0" height="305.4" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="134.1" y="96.6" font-size="11.5" text-anchor="middle" fill="currentColor">4.2 d</text>
+<text x="134.1" y="83.6" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="170.1" y="254.0" width="58.0" height="154.0" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="199.1" y="248.0" font-size="11.5" text-anchor="middle" fill="currentColor">2.1 d</text>
+<text x="199.1" y="235.0" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="166.6" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">1x T4</text>
+<rect x="286.3" y="220.4" width="58.0" height="187.6" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="315.3" y="214.4" font-size="11.5" text-anchor="middle" fill="currentColor">2.6 d</text>
+<text x="315.3" y="201.4" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="351.3" y="330.2" width="58.0" height="77.8" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="380.3" y="324.2" font-size="11.5" text-anchor="middle" fill="currentColor">25.8 h</text>
+<text x="380.3" y="311.2" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="347.8" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">2x T4</text>
+<rect x="467.5" y="356.2" width="58.0" height="51.8" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="496.5" y="350.2" font-size="11.5" text-anchor="middle" fill="currentColor">17.2 h</text>
+<text x="496.5" y="337.2" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="532.5" y="396.7" width="58.0" height="11.3" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="561.5" y="390.7" font-size="11.5" text-anchor="middle" fill="currentColor">3.8 h</text>
+<text x="561.5" y="377.7" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="529.0" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">1x H100</text>
+<rect x="648.7" y="381.1" width="58.0" height="26.9" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="677.7" y="375.1" font-size="11.5" text-anchor="middle" fill="currentColor">8.9 h</text>
+<text x="677.7" y="362.1" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="713.7" y="402.4" width="58.0" height="5.6" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="742.7" y="396.4" font-size="11.5" text-anchor="middle" fill="currentColor">1.9 h</text>
+<text x="742.7" y="383.4" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="710.2" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">2x H100</text>
+<rect x="829.9" y="399.7" width="58.0" height="8.3" rx="2.5" fill="#b00020" fill-opacity="0.6"/>
+<text x="858.9" y="393.7" font-size="11.5" text-anchor="middle" fill="currentColor">2.7 h</text>
+<text x="858.9" y="380.7" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<rect x="894.9" y="405.1" width="58.0" height="2.9" rx="2.5" fill="#2e7d32" fill-opacity="0.6"/>
+<text x="923.9" y="399.1" font-size="11.5" text-anchor="middle" fill="currentColor">57.6 min</text>
+<text x="923.9" y="386.1" font-size="10" text-anchor="middle" fill="currentColor" opacity=".55">×100</text>
+<text x="891.4" y="428" font-size="13" text-anchor="middle" font-weight="600" fill="currentColor">4x H100</text>
+<text x="76" y="460" font-size="11.5" fill="currentColor" opacity=".6">reloj de la escalera completa</text>
+</svg>
