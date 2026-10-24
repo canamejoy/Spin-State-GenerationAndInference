@@ -90,6 +90,13 @@ condición exacta que lo dispara.</p>
   impar).</p>
 </div>
 
+<div class="note"><strong>Actualización.</strong> El hallazgo de abajo sigue
+en pie y es la <b>diagnosis</b>: la regla existe, está explicada y se predice
+sin fallo. Lo que cambió es el <b>remedio</b>. Se escribió un kernel a mano que
+<b>no paga ninguna de las dos causas</b>, con lo que elegir <code>B</code> deja
+de hacer falta — <a href="#kernel">al final de esta página</a>, y en detalle en
+<code>operaciones.html</code>.</div>
+
 <h2>La prueba principal: una réplica de diferencia</h2>
 <p>Con cinco capas, <code>B</code> = 64 cae del lado caro
 (<code>v₂</code> = 0+6 = 6) y <code>B</code> = 65 del lado libre
@@ -196,12 +203,65 @@ ahí.</strong> Leímos la geometría de lanzamiento que emite XLA en
 91 439, y midió <b>exactamente</b> esas tres. Lo que falla a lote grande no es
 el mecanismo, es que el dentado lo tapa.</div>
 
+<h2 id="kernel">El desenlace: un kernel que no paga ninguna de las dos</h2>
+
+<p>Las dos causas del costo —el ancho de vector y el dentado— son
+<b>decisiones del compilador</b> sobre un bucle que el motor de JAX le entrega.
+Un kernel escrito a mano en Triton crudo, que no le entrega ese bucle, no paga
+ninguna. Mismo Hamiltoniano, verificado: <b>0 de 182 520</b> espines distintos
+contra el motor de siempre con la misma aleatoriedad, y las dos cadenas a
+equilibrio dentro de <b>0.23 σ</b>.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>castigo por <code>v₂(B) + v₂(L) ≥ 2</code></th>
+    <th>motor estándar</th><th>kernel</th></tr></thead>
+  <tbody>
+    <tr><td>H100, 5 capas</td><td class="bad">+17.8 %</td>
+        <td class="best">+0.3 %</td></tr>
+    <tr><td>T4, 5 capas</td><td class="bad">+49.9 %</td>
+        <td class="best">+0.8 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Y en reloj de pared, sobre la escalera de producción completa
+(200 temperaturas × 20 000 barridos):</p>
+
+<div class="tw"><table>
+  <thead><tr><th>trabajo</th><th>hardware</th><th>estándar</th>
+    <th>kernel</th></tr></thead>
+  <tbody>
+    <tr><td>1 estado, 50 réplicas</td><td>1× H100</td>
+        <td class="n">8.1 min</td><td class="best"><b>2.9 min</b></td></tr>
+    <tr><td>10 estados, 500 réplicas</td><td>4× H100</td>
+        <td class="n">18.6 min</td><td class="best"><b>6.3 min</b></td></tr>
+    <tr><td>100 estados, 5000 réplicas</td><td>4× H100</td>
+        <td class="n">2.7 h</td><td class="best"><b>57.6 min</b></td></tr>
+    <tr><td>100 estados, 5000 réplicas</td><td>CPU, 24 hilos</td>
+        <td class="bad">130.7 d</td><td class="n">—</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note warn"><strong>Dos límites, medidos.</strong>
+El kernel <b>pierde</b> por debajo de unas <b>13 a 25 réplicas por
+dispositivo</b>: con 12 por tarjeta su rejilla deja la GPU medio vacía y va
+<b>+47.7 %</b> más lento que el estándar. Así que repartir un solo estado entre
+muchas GPU no sirve; las tarjetas extra se pagan con <b>más estados</b>.
+<br><br>Y la ventaja <b>no crece igual en toda tarjeta</b>. Al ensanchar el
+lote, en H100 va de −63.9 % a <b>−78.1 %</b>; en T4 <b>se encoge</b> de
+−57.0 % a <b>−49.6 %</b>. «Más estados, mejor aprovechamiento» vale en H100 y
+no se traslada a la T4.</div>
+
 <h2>Lo que recomendamos</h2>
 <div class="key">
-  <p><b>Elegir las capas por física, y después elegir <code>B</code> evitando
-  los múltiplos de cuatro.</b> Con <code>L</code> impar eso es exactamente
-  mantener <code>v₂(B) + v₂(L) &lt; 2</code>, y cuesta cero: es cambiar un
-  número entero.</p>
+  <p><b>Si no quieres mantener un kernel propio:</b> elegir las capas por
+  física, y después elegir <code>B</code> evitando los múltiplos de cuatro. Con
+  <code>L</code> impar eso es exactamente mantener
+  <code>v₂(B) + v₂(L) &lt; 2</code>, y cuesta cero: es cambiar un número
+  entero. Y si el número que necesitas es múltiplo de cuatro, <b>pártelo en
+  <code>B/2+1</code> y <code>B/2−1</code></b>: vale entre −22 % y −30 %, y se
+  sostuvo en la escalera completa de 4 GPU (−27.0 %).</p>
+  <p><b>Si sí:</b> el kernel gana <b>−66 %</b> contra ese protocolo y no exige
+  elegir nada, siempre que haya <b>25 réplicas por tarjeta o más</b>.</p>
   <p>Y <b>medir la curva de cada geometría nueva</b> — unos <b>$0.60</b> y media
   hora. El óptimo no se extrapola de una red a otra: lo probamos pidiendo que
   seis posiciones coincidieran en tres geometrías y la predicción falló, en un
@@ -227,7 +287,19 @@ medir esa curva.</div>
         <td><b>98 valores de grilla predichos sin un solo fallo</b></td></tr>
     <tr><td>La causa (coalescencia, no el ancho en sí)</td>
         <td>CUDA puro sin compilador: +14.9 % contra +14.25 % de JAX</td></tr>
-    <tr><td>El dentado</td><td class="bad">reproducible, <b>sin mecanismo</b></td></tr>
+    <tr><td>El dentado</td>
+        <td class="bad">reproducible; mecanismo = el re-tejado de Triton,
+        sin forma cerrada</td></tr>
+    <tr><td>El kernel reproduce la física</td>
+        <td class="best">0/182 520 espines con la misma aleatoriedad;
+        ≤0.23 σ a equilibrio; verificado también <b>en T4</b></td></tr>
+    <tr><td>El kernel elimina el castigo</td>
+        <td><b>H100 y T4</b>, sobre <code>L</code> = 4, 5, 6 y 8</td></tr>
+    <tr><td>El piso de lote del kernel</td>
+        <td>H100: pierde a 12–13 réplicas/tarjeta, gana desde 25</td></tr>
+    <tr><td>Los relojes de la tabla de arriba</td>
+        <td>10 extrapolaciones puntuadas contra su medición:
+        peor error <b>7.9 %</b>, ocho bajo el 3 %</td></tr>
   </tbody>
 </table></div>
 
@@ -237,7 +309,8 @@ cronómetro en toda medición (<code>.lower().compile()</code> antes de arrancar
 Identidad física de cada GPU registrada. Ventanas de lotes <b>contiguas</b>, que
 es lo único que hace visible la estructura fina. El detalle completo —cada
 hipótesis descartada con su medición— está en la página
-<code>lotes.html</code>, y los datos crudos en
+<code>lotes.html</code>; el kernel y sus mediciones en
+<code>operaciones.html</code>, y los datos crudos en
 <code>notebooks/simulation/results/curves/</code>.</p>
 
 </div>
