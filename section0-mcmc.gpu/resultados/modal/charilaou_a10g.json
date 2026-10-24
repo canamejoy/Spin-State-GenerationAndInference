@@ -1,0 +1,201 @@
+{
+ "label": "charilaou_a10g",
+ "N": 128,
+ "LZ": 128,
+ "sites": 2097152,
+ "paper": {
+  "source": "arXiv:2106.11286",
+  "device": "Tesla V100 32GB",
+  "ns_per_update": {
+   "128^3": 1.63,
+   "512^3": 1.59,
+   "inset_min": 1.55
+  },
+  "updates_per_s": {
+   "128^3": 610000000.0,
+   "512^3": 630000000.0
+  },
+  "J": 1.0,
+  "K": 0.01,
+  "S": 1.0,
+  "Tc_over_J": 1.445,
+  "n_per_block": 8,
+  "mcs_therm": 10000,
+  "mcs_avg": 10000
+ },
+ "device": "NVIDIA A10",
+ "jax": "0.10.2",
+ "beta": 0.7689350249903883,
+ "verification": {
+  "host": [
+   [
+    "neighbour sum vs an explicit PBC loop",
+    true,
+    0.0
+   ],
+   [
+    "energy vs a direct bond enumeration",
+    true,
+    1.4051165211069044e-07
+   ],
+   [
+    "dE vs the total-energy difference of one flip",
+    true,
+    6.729769665980712e-07
+   ],
+   [
+    "every first neighbour is of the opposite colour",
+    true,
+    0.0
+   ]
+  ],
+  "ours": [
+   [
+    "one pass, parity 0, identical randomness",
+    true,
+    0.0
+   ],
+   [
+    "dE, parity 0",
+    true,
+    4.76837158203125e-07
+   ],
+   [
+    "one pass, parity 1, identical randomness",
+    true,
+    0.0
+   ],
+   [
+    "dE, parity 1",
+    true,
+    4.76837158203125e-07
+   ],
+   [
+    "|s| = So after an in-kernel pass",
+    true,
+    1.1920928955078125e-07
+   ]
+  ],
+  "theirs": [
+   [
+    "|s| = So throughout",
+    true,
+    1.1920928955078125e-07
+   ],
+   [
+    "energy falls from a random start (-101.8 -> -4695.7)",
+    true,
+    -45.12388031078853
+   ]
+  ]
+ },
+ "ours": [
+  {
+   "seconds": 0.16994889899999954,
+   "sweeps": 120,
+   "sites": 2097152,
+   "BY": 2,
+   "ns_per_update": 0.6753162503242474,
+   "updates_per_s": 1480787704.3086975,
+   "finite": true
+  },
+  {
+   "seconds": 0.17706371600000104,
+   "sweeps": 120,
+   "sites": 2097152,
+   "BY": 4,
+   "ns_per_update": 0.7035879929860475,
+   "updates_per_s": 1421286335.1405013,
+   "finite": true
+  },
+  {
+   "seconds": 0.17234964900000094,
+   "sweeps": 120,
+   "sites": 2097152,
+   "BY": 8,
+   "ns_per_update": 0.6848559737205543,
+   "updates_per_s": 1460161024.1747499,
+   "finite": true
+  }
+ ],
+ "theirs": [
+  {
+   "seconds": 6.1076365620000015,
+   "steps": 1200,
+   "n_per": 1,
+   "sites": 2097152,
+   "attempts": 2516582400,
+   "signature": "appended",
+   "ns_per_update": 2.426956717967988,
+   "updates_per_s": 412038662.4930286,
+   "finite": true
+  },
+  {
+   "seconds": 3.269378679999999,
+   "steps": 1200,
+   "n_per": 2,
+   "sites": 2097152,
+   "attempts": 1258291200,
+   "signature": "appended",
+   "ns_per_update": 2.598268731435139,
+   "updates_per_s": 384871660.07946205,
+   "finite": true
+  },
+  {
+   "seconds": 1.7285144449999983,
+   "steps": 1200,
+   "n_per": 4,
+   "sites": 2097152,
+   "attempts": 629145600,
+   "signature": "appended",
+   "ns_per_update": 2.74739971955617,
+   "updates_per_s": 363980527.7994079,
+   "finite": true
+  },
+  {
+   "seconds": 0.9744687739999982,
+   "steps": 1200,
+   "n_per": 8,
+   "sites": 2097152,
+   "attempts": 314572800,
+   "signature": "appended",
+   "ns_per_update": 3.097752806345616,
+   "updates_per_s": 322814653.8844359,
+   "finite": true
+  },
+  {
+   "seconds": 0.7361875130000008,
+   "steps": 1200,
+   "n_per": 16,
+   "sites": 2097152,
+   "attempts": 157286400,
+   "signature": "appended",
+   "ns_per_update": 4.680554154713954,
+   "updates_per_s": 213649915.57524532,
+   "finite": true
+  },
+  {
+   "seconds": 0.8327386160000003,
+   "steps": 1200,
+   "n_per": 32,
+   "sites": 2097152,
+   "attempts": 78643200,
+   "signature": "appended",
+   "ns_per_update": 10.588819071451827,
+   "updates_per_s": 94439237.58184402,
+   "finite": true
+  }
+ ],
+ "best_ours_ns": 0.6753162503242474,
+ "best_theirs_ns": 2.426956717967988,
+ "ratio_theirs_over_ours": 3.593807666856388,
+ "gpu": {
+  "repr": "cuda:0",
+  "kind": "NVIDIA A10",
+  "platform": "gpu",
+  "n_devices": 1,
+  "smi": [
+   "NVIDIA A10, GPU-124aa904-9d76-f08a-e1f0-50113c2ae809, 23028 MiB, 1695 MHz, 610.57.04, 4"
+  ]
+ }
+}
