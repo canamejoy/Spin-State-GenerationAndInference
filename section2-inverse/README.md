@@ -9,7 +9,7 @@ de parámetros pueden dar configuraciones de espín casi indistinguibles (estado
 degenerados), y la proyección `s_z` descarta la información de las componentes
 en el plano `s_x` y `s_y`.
 
-> Documentación de fondo: `docs/03_inverse_problem.md`
+> Documentación de fondo: `section2-inverse/docs/03_inverse_problem.md`
 > Paper: *Regression-Based Explainable Deep Learning for Estimating Hamiltonian
 > Parameters from Magnetic Nanodot Images*, Méndez-Rondón et al., enviado a
 > Elsevier.

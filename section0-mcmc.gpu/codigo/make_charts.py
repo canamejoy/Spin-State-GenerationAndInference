@@ -21,7 +21,8 @@ import json
 import math
 
 ROOT = "/home/andres/Spin-State-GenerationAndInference"
-CUR = f"{ROOT}/notebooks/simulation/results/curves"
+SEC = "section0-mcmc.gpu"
+CUR = f"{ROOT}/{SEC}/resultados/curvas"
 FULL = 200 * 20000              # the production ladder, per replica
 SW_MEASURED_H100_1 = 200 * 20000        # the 50-replica arms ran full length
 SW_MEASURED_H100_10 = 40 * 20000        # the 500-replica arms ran 40 of 200
@@ -49,10 +50,10 @@ CPU_FACTOR = "tasa"      # the CPU bar comes from a rate, not a ladder run
 
 def load():
     d = {}
-    c = json.load(open(f"{ROOT}/notebooks/simulation/results/cpu_rate_repeat.json"))
+    c = json.load(open(f"{ROOT}/{SEC}/resultados/cpu_rate_repeat.json"))
     d["cpu_us"] = min(r["us_per_replica_sweep"] for r in c["rows"])
     d["cpu_threads"] = c["threads"]
-    t4 = json.load(open(f"{ROOT}/results/kaggle/triton_bench_t4.json"))
+    t4 = json.load(open(f"{ROOT}/{SEC}/resultados/kaggle/triton_bench_t4.json"))
     a = t4["ladder"]["arms"]
     d["t4_1_50"] = (a["produccion"]["us_per_replica_sweep"],
                     a["kernel"]["us_per_replica_sweep"])
@@ -105,7 +106,7 @@ def load():
             pass
     # The ten-temperature run supplies every T4 cell...
     try:
-        st = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4.json"))
+        st = json.load(open(f"{ROOT}/{SEC}/resultados/kaggle/triton_states_t4.json"))
         for r in st["rows"]:
             k = f"t4_{r['devices']}_{r['replicas']}"
             d[k] = (r["estandar"]["us_per_replica_sweep"],
@@ -117,7 +118,7 @@ def load():
     # draws them solid.
     # 100 states on the T4, measured over two temperatures
     try:
-        c1 = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4_100.json"))
+        c1 = json.load(open(f"{ROOT}/{SEC}/resultados/kaggle/triton_states_t4_100.json"))
         for r in c1["rows"]:
             d[f"t4_{r['devices']}_{r['replicas']}"] = (
                 r["estandar"]["us_per_replica_sweep"],
@@ -125,7 +126,7 @@ def load():
     except FileNotFoundError:
         pass
     try:
-        fu = json.load(open(f"{ROOT}/results/kaggle/triton_states_t4_full.json"))
+        fu = json.load(open(f"{ROOT}/{SEC}/resultados/kaggle/triton_states_t4_full.json"))
         for r in fu["rows"]:
             k = f"t4_{r['devices']}_{r['replicas']}"
             d[k] = (r["estandar"]["us_per_replica_sweep"],

@@ -30,7 +30,7 @@ bias, not offered as a cell.
 
 Every variant evaluates the same energy as `sim_core` -- same interfacial DMI,
 same two cubic-anisotropy constants, same surface constant -- which
-`tests/test_ablation_equivalence.py` pins against the reference total energy.
+`common/tests/test_ablation_equivalence.py` pins against the reference total energy.
 Only the loop differs.
 """
 

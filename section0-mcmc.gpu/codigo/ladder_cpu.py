@@ -14,7 +14,7 @@ same formula `reduce_obs` applies per replica before averaging.
 
 **Randomness is addressed, not sequential.** Each temperature draws from
 `default_rng([seed, t_index])`, so a resumed run produces bit-identical results to
-an uninterrupted one -- the property `tests/test_ladder_checkpoint.py` pins,
+an uninterrupted one -- the property `common/tests/test_ladder_checkpoint.py` pins,
 because a checkpoint bug here costs eleven hours.
 """
 

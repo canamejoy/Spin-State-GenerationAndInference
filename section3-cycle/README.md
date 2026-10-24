@@ -12,7 +12,7 @@ Se mide por tres lentes complementarias: la **calidad de regresión** sobre los
 parámetros recuperados, la **fidelidad de la imagen** a nivel de píxel, y tres
 **observables físicos** de la configuración de espines.
 
-> Documentación de fondo: `docs/05_complete_cycle.md`
+> Documentación de fondo: `section3-cycle/docs/05_complete_cycle.md`
 
 ## Contenido
 

@@ -8,7 +8,7 @@ configuraciones termodinámicas distintas (estados degenerados, fases
 metaestables). Por eso el objetivo no es predecir una imagen sino aprender a
 muestrear de `p(X | θ)`.
 
-> Documentación de fondo: `docs/04_direct_problem.md`
+> Documentación de fondo: `section1-generative/docs/04_direct_problem.md`
 > Paper: *Image-Driven Estimation of Magnetic Configurations in Nanodots*,
 > Méndez-Rondón, Canamejoy-Alegría et al., en preparación.
 

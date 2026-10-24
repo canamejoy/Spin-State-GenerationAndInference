@@ -1,9 +1,9 @@
 import hashlib, io, json, os
 
 ROOT = "/home/andres/Spin-State-GenerationAndInference"
-MOD = f"{ROOT}/notebooks/simulation/modal"
-OUT = f"{ROOT}/notebooks/simulation"
-CUR = f"{MOD}/../results/curves"
+MOD = f"{ROOT}/section0-mcmc.gpu/codigo"
+OUT = f"{ROOT}/section0-mcmc.gpu/cuadernillos"
+CUR = f"{ROOT}/section0-mcmc.gpu/resultados/curvas"
 
 PTXAS_CELL = r'''import glob, os, re, subprocess
 

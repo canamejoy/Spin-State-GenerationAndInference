@@ -40,30 +40,50 @@ This project addresses both directions with a closed **cycle**:
 
 ```
 .
-├── docs/                              # Theory documentation
-│   ├── 01_hamiltonian.md              # Extended Heisenberg Hamiltonian & parameter decomposition
-│   ├── 02_monte_carlo.md              # MH-MC simulation & dataset generation pipeline
-│   ├── 03_inverse_problem.md          # Image→params regression, Xception, RAMs
-│   ├── 04_direct_problem.md           # Params→image: CVAE & DDPM architectures
-│   ├── 05_complete_cycle.md           # End-to-end cycle pipeline & evaluation
-│   ├── 06_datasets.md                 # Kaggle datasets, splits, preprocessing
-│   └── 07_metrics.md                  # All metrics: regression, image, physical
+├── section0-mcmc.gpu/                 # Monte Carlo on the GPU: why the replica
+│   │                                  #   count changes the cost, and the kernel
+│   ├── informe/                       #   START HERE — 32-page report, HTML + PDF
+│   ├── paginas/                       #   the six interactive pages
+│   ├── codigo/                        #   sim_core, triton_halo, triton_bench, app
+│   ├── cuadernillos/                  #   notebooks, including the Kaggle ones
+│   ├── resultados/                    #   ~130 measurement files
+│   └── docs/                          #   01_hamiltonian, 02_monte_carlo, 10, 11
 │
-├── notebooks/
-│   ├── utils/metrics.py               # Shared metric module — single source of truth
-│   ├── inverse/                       # Xception inverse model (image → θ)
-│   ├── generative/                    # DDPM / CVAE / NCSN training
-│   ├── cycle/                         # θ → DDPM → Xception → θ̂ evaluation
-│   ├── evaluation/                    # Model comparisons, robustness, sweeps
-│   ├── integration/                   # Cycle closure — training + evaluation (see its README)
-│   └── archive/                       # Frozen archive — superseded runs, do not edit
+├── section1-generative/               # Direct problem: params → image
+│   ├── modelos/                       #   CVAE and DDPM training
+│   ├── evaluacion/                    #   cross-model comparison, robustness
+│   └── docs/04_direct_problem.md
 │
-├── papers/                            # Bibliography + PDFs      (gitignored)
-├── main/                              # LaTeX source of the article
+├── section2-inverse/                  # Inverse problem: image → params
+│   ├── cuadernillos/                  #   Xception
+│   └── docs/03_inverse_problem.md
 │
-├── requirements.txt                   # Python dependencies
+├── section3-cycle/                    # End-to-end cycle: θ → DDPM → Xception → θ̂
+│   ├── ciclo/                         #   the cycle notebooks
+│   ├── integracion/                   #   training/ + evaluation/ (see its README)
+│   ├── archivo/                       #   superseded runs, kept as a record
+│   └── docs/05_complete_cycle.md
+│
+├── main/                              # The article
+│   ├── main.tex, Makefile, figures/   #   LaTeX source
+│   └── papers/                        #   bibliography PDFs      (gitignored)
+│
+├── common/                            # Shared across sections
+│   ├── utils/metrics.py               #   metric module — single source of truth
+│   ├── tests/                         #   59 tests
+│   ├── scripts/                       #   tooling (Modal budget guard)
+│   └── docs/                          #   06_datasets, 07_metrics, 08, 09, 12,
+│                                      #   latex/, planning/
+│
+├── openspec/                          # Change records (paths left historical)
+├── requirements.txt
 └── README.md
 ```
+
+> **Sections are the unit of organisation.** Each one holds its own notebooks,
+> results and documentation, so a section can be read without the others.
+> `section0-mcmc.gpu/informe/informe.pdf` is the model the other sections'
+> reports should follow.
 
 ---
 
@@ -77,7 +97,7 @@ Both datasets are publicly available on Kaggle:
 | External | `carloscanamejoy/dataset-spines-complete` | 218,256 | External cycle (generalisation test) |
 
 Each sample: a 39×39 grayscale $s_z$ magnetisation image + 8 Hamiltonian parameters.  
-See [docs/06_datasets.md](docs/06_datasets.md) for full details and preprocessing rules.
+See [common/docs/06_datasets.md](common/docs/06_datasets.md) for full details and preprocessing rules.
 
 ---
 
@@ -147,7 +167,7 @@ bottom edges. `topleft_crop` recovers the original 39×39 pixels exactly; maskin
 the canvas instead would average duplicated pixels on a half-pixel-displaced
 disk. `metrics.py` rejects a 40×40 array to make that mistake impossible.
 
-|M|, χ, C_v and E were removed — see [docs/07_metrics.md](docs/07_metrics.md)
+|M|, χ, C_v and E were removed — see [common/docs/07_metrics.md](common/docs/07_metrics.md)
 for the reasoning.
 
 ---
@@ -156,13 +176,13 @@ for the reasoning.
 
 | Document | Content |
 |---|---|
-| [01_hamiltonian.md](docs/01_hamiltonian.md) | Full Hamiltonian with all 8 parameters, physical ranges, emergent phases |
-| [02_monte_carlo.md](docs/02_monte_carlo.md) | MH-MC algorithm, simulated annealing, image generation pipeline |
-| [03_inverse_problem.md](docs/03_inverse_problem.md) | Regression formulation, Xception, RAMs interpretability, identifiability analysis |
-| [04_direct_problem.md](docs/04_direct_problem.md) | CVAE (ELBO, KLD, β-scheduling) and DDPM (forward/reverse process) |
-| [05_complete_cycle.md](docs/05_complete_cycle.md) | Full cycle pipeline, preprocessing rules, evaluation protocols |
-| [06_datasets.md](docs/06_datasets.md) | Dataset descriptions, splits, MinMaxScaler alignment rules |
-| [07_metrics.md](docs/07_metrics.md) | All metrics with formulas: regression, image, physical |
+| [01_hamiltonian.md](section0-mcmc.gpu/docs/01_hamiltonian.md) | Full Hamiltonian with all 8 parameters, physical ranges, emergent phases |
+| [02_monte_carlo.md](section0-mcmc.gpu/docs/02_monte_carlo.md) | MH-MC algorithm, simulated annealing, image generation pipeline |
+| [03_inverse_problem.md](section2-inverse/docs/03_inverse_problem.md) | Regression formulation, Xception, RAMs interpretability, identifiability analysis |
+| [04_direct_problem.md](section1-generative/docs/04_direct_problem.md) | CVAE (ELBO, KLD, β-scheduling) and DDPM (forward/reverse process) |
+| [05_complete_cycle.md](section3-cycle/docs/05_complete_cycle.md) | Full cycle pipeline, preprocessing rules, evaluation protocols |
+| [06_datasets.md](common/docs/06_datasets.md) | Dataset descriptions, splits, MinMaxScaler alignment rules |
+| [07_metrics.md](common/docs/07_metrics.md) | All metrics with formulas: regression, image, physical |
 
 ---
 

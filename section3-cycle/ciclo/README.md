@@ -11,7 +11,7 @@ cosine loss or guidance.
 | `cycle_complete_newmetrics.ipynb` | Internal test split | Complete |
 | `ciclo_texture_fidelity.ipynb` | Internal, texture/saturation split | Complete |
 
-See [`docs/05_complete_cycle.md`](../../docs/05_complete_cycle.md) for the theory and
+See [`section3-cycle/docs/05_complete_cycle.md`](../../section3-cycle/docs/05_complete_cycle.md) for the theory and
 evaluation protocol.
 
 ## Relationship to `section3-cycle/integracion/evaluation/`

@@ -42,7 +42,7 @@ ancho = min(4, 2^(v2(B)+v2(L)))     →  castigo si v2(B) + v2(L) ≥ 2
 
 ## Dos avisos
 
-**Las páginas están copiadas, no movidas.** `docs/pages/` sigue siendo lo que
+**Las páginas están copiadas, no movidas.** `section0-mcmc.gpu/paginas/` sigue siendo lo que
 sirve GitHub Pages; moverlas rompería el sitio vivo. Eso significa que esos
 archivos están dos veces en el repositorio, igual que los notebooks y los JSON.
 Está así a propósito, como paso intermedio: cuando se decida el destino final

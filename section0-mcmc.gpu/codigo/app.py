@@ -25,36 +25,36 @@ _base = (
 image = (
     _base
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/sim_core.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/sim_core.py",
         "/root/sim_core.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/ablation.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/ablation.py",
         "/root/ablation.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/run_ablation.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/run_ablation.py",
         "/root/run_ablation.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/ladder_cpu.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/ladder_cpu.py",
         "/root/ladder_cpu.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/device_ablation.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/device_ablation.py",
         "/root/device_ablation.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/parallel_axes.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/parallel_axes.py",
         "/root/parallel_axes.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/theta4.json",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/theta4.json",
         "/root/theta4.json",
     )
     # The same file Kaggle runs, so Modal and Kaggle execute identical code.
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/pair_test.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/pair_test.py",
         "/root/pair_test.py",
     )
 )
@@ -68,15 +68,15 @@ triton_image = (
     _base
     .pip_install("jax-triton", "absl-py")
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/sim_core.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/sim_core.py",
         "/root/sim_core.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/triton_halo.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/triton_halo.py",
         "/root/triton_halo.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/theta4.json",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/theta4.json",
         "/root/theta4.json",
     )
 )
@@ -94,11 +94,11 @@ pallas_image = (
     _base
     .pip_install("absl-py")
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/sim_core.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/sim_core.py",
         "/root/sim_core.py",
     )
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/theta4.json",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/theta4.json",
         "/root/theta4.json",
     )
 )
@@ -107,7 +107,7 @@ cuda_image = (
     _base
     .pip_install("cupy-cuda12x")
     .add_local_file(
-        "/home/andres/Spin-State-GenerationAndInference/notebooks/simulation/modal/sim_core.py",
+        "/home/andres/Spin-State-GenerationAndInference/section0-mcmc.gpu/codigo/sim_core.py",
         "/root/sim_core.py",
     )
 )
@@ -523,7 +523,7 @@ def gpu_nodp(tag: str = "gpu_sitewise_h100", max_sites: int = 400,
 #
 # 24 h is Modal's ceiling and these are ~11 h, so the checkpoint is not for the
 # timeout -- it is for a preemption or a crash eleven hours in. It saves after
-# every temperature, and `tests/test_ladder_checkpoint.py` pins that a resume is
+# every temperature, and `common/tests/test_ladder_checkpoint.py` pins that a resume is
 # bit-identical to an uninterrupted run.
 
 def _ladder(cell, cpus, n_temps, n_therm, n_meas, seed, tag):
@@ -6492,7 +6492,7 @@ def bayes_batch(lo: int = 10, hi: int = 1020, step: int = 5,
 # --------------------------------------------------------------------------
 # Phase 0 of the Pallas plan: can a kernel we write beat the JAX path?
 #
-# The gate. Everything in `docs/planning/standardisation_strategy.md` rests on
+# The gate. Everything in `common/docs/planning/standardisation_strategy.md` rests on
 # Pallas being able to express this stencil WITHOUT the six materialised copies
 # that `jnp.roll` forces, and on the result being faster. That is cheap to find
 # out, so it is found out first.
