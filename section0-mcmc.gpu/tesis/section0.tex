@@ -65,9 +65,8 @@ components named for the properties they deliver --- contiguous neighbour
 access, a synchronisation-free halo, counter-based proposals and deterministic
 observables. The simulator is validated against a reference implementation of
 the same chain under identical randomness, and its rate is reported per
-single-site update, the unit this literature established, together with the
-per-site arithmetic weight of each model so that the comparison can be read for
-what it is. At the production workload --- $200$ temperatures by
+single-site update against the processor baseline, which runs the same code and
+the same Hamiltonian on the same workload. At the production workload --- $200$ temperatures by
 \num{20000} sweeps for one hundred states at five thousand replicas --- it
 completes in \SI{57.6}{\minute} on four datacentre devices against
 \SI{130.7}{\day} on the processor baseline, a separation of
@@ -218,13 +217,34 @@ no spin of $\Lambda^{(c)}$, so the sites of one colour may be updated
 exact reordering of the sequential sweep, not an approximation of it. One sweep
 is $n_c$ passes, $c = 0$ through $n_c - 1$.
 
-Admissibility is decided by the parity of each shell's displacement sums.
-Shells $1$ and $3$ have odd sums, so every such neighbour falls in the opposite
-class of a two-colouring and the interaction graph stays bipartite. Shells $2$
-and $4$ have even sums and it does not. Shell $4$ further reaches distance two
-along a single axis, which no stride-two colouring separates, and therefore
-requires stride three on all three axes. The narrowest admissible colouring for
-each case is given in Table~\ref{tab:colourings}.
+Admissibility is decided, shell by shell, by what each displacement does to the
+parity of $x+y+z$. The shells are the displacement sets at squared distance
+$1$, $2$, $3$ and $4$, and each has a different arithmetic:
+
+\begin{itemize}
+\item \textbf{Shell 1}, $\mathcal{D}_1 = \{(\pm 1,0,0),(0,\pm 1,0),
+      (0,0,\pm 1)\}$, six displacements. Exactly one coordinate changes by one,
+      so $x+y+z$ changes by $\pm 1$ and the parity \emph{flips}. Every first
+      neighbour of a site is therefore of the other colour.
+\item \textbf{Shell 2}, the twelve permutations of $(\pm 1, \pm 1, 0)$. Two
+      coordinates change by one, so the sum changes by $0$ or $\pm 2$ and the
+      parity is \emph{preserved}: a second neighbour sits in the same class as
+      the site itself, and a two-colouring is no longer admissible.
+\item \textbf{Shell 3}, the eight sign choices of $(\pm 1, \pm 1, \pm 1)$. All
+      three coordinates change by one, so the sum changes by an odd number and
+      the parity flips again. Shell 3 is compatible with the two-colouring, and
+      $\{1,3\}$ together still are.
+\item \textbf{Shell 4}, the six displacements $(\pm 2,0,0)$ and permutations.
+      One coordinate changes by \emph{two}. The parity is preserved, and worse,
+      the displacement is invisible to any colouring built from residues
+      modulo two, because $x$ and $x \pm 2$ share every such residue. Stride
+      three on all three axes is the narrowest scheme that separates it.
+\end{itemize}
+
+So the colouring widens for an arithmetic reason, not an arbitrary one, and it
+widens in two steps: a second neighbour forces residues modulo two on each axis
+separately, giving $2^3 = 8$ classes, and a fourth neighbour forces residues
+modulo three, giving $3^3 = 27$. Table~\ref{tab:colourings} collects them.
 
 \begin{table}[htbp]
 \centering
@@ -260,6 +280,95 @@ proposal is the realisation of one of its passes as a single fused kernel. It is
 defined by four components, each named for the property it delivers, and it
 computes the weighted neighbour sum $\mathbf{v}_i$ of \eqref{eq:nsum} without
 ever materialising a translate of the configuration.
+
+\subsection{The matrix decomposition}
+\label{sec:matrices}
+
+Before any layout question, the chain of Section~\ref{sec:chain} is written as
+operations on arrays, because that is the form the kernel realises. Let $B$ be
+the number of replicas advanced together and let
+%
+\begin{equation}
+S \in \mathbb{R}^{B \times 3 \times L \times N \times N},
+\qquad
+S[b, a, z, y, x] = (\vs_i)_a \ \text{ for } i = (x,y,z) \text{ of replica } b,
+\label{eq:config-array}
+\end{equation}
+%
+so the component index $a \in \{0,1,2\}$ is an axis of the array and not a
+field of a record. Sites outside the disc occupy their place in the box and are
+excluded by a mask, which is cheaper than an index list and keeps every array
+rectangular.
+
+\paragraph{The translate.} For a displacement $\vd = (d_x,d_y,d_z)$ define the
+translate $T_{\vd}$ by
+%
+\begin{equation}
+(T_{\vd} S)[b,a,z,y,x]
+  = S[b, a, z + d_z, \ (y + d_y) \bmod N, \ (x + d_x) \bmod N],
+\label{eq:translate}
+\end{equation}
+%
+with the in-plane indices wrapping and the out-of-plane one \emph{gated}: a
+layer displaced past $z = 0$ or $z = L-1$ contributes zero rather than wrapping,
+which is the open boundary of Section~\ref{sec:model} expressed on the array.
+Each $T_{\vd} S$ has the same shape as $S$.
+
+\paragraph{The neighbour sum.} The weighted neighbour sum of \eqref{eq:nsum}
+becomes one array of the shape of $S$,
+%
+\begin{equation}
+V = \sum_{k \in \shells} J_k \sum_{\vd \in \mathcal{D}_k} T_{\vd} S ,
+\label{eq:V-array}
+\end{equation}
+%
+a sum of $\sum_k |\mathcal{D}_k|$ translates --- six for the first shell alone,
+twenty-six when all four are active.
+
+\paragraph{The proposal and the energy difference.} Let $T$ hold the trial
+spins, of the shape of $S$, and $\Delta = T - S$. Contracting the component
+axis turns the single-site energy difference \eqref{eq:deltaE} into one array
+with the component axis removed,
+%
+\begin{equation}
+\Delta E \in \mathbb{R}^{B \times L \times N \times N},
+\qquad
+\Delta E = -\sum_{a} \Delta[\,\cdot\,,a] \odot V[\,\cdot\,,a]
+  \;+\; \mathcal{A}(T) - \mathcal{A}(S)
+  \;-\; D\,\delta^{\mathrm{DM}} \;-\; \sum_a H_a\, \Delta[\,\cdot\,,a] ,
+\label{eq:dE-array}
+\end{equation}
+%
+where $\odot$ is the elementwise product. The anisotropy $\mathcal{A}$ is
+elementwise in the three components and carries $K^{\mathrm{eff}}$, itself an
+array of shape $B \times L \times N \times N$ rather than a scalar, which is how
+the surface constant of \eqref{eq:anisotropy} enters. The chiral term
+$\delta^{\mathrm{DM}}$ needs only the $\pm\hat{\mathbf{x}}$ and
+$\pm\hat{\mathbf{y}}$ translates already formed for $V$.
+
+\paragraph{The update.} With $M^{(c)}$ the boolean mask of colour class $c$ and
+$U$ an array of uniforms, both of shape $B \times L \times N \times N$, one pass
+is a single masked select,
+%
+\begin{equation}
+S \;\leftarrow\; \operatorname{where}\!\Bigl(
+  \underbrace{M^{(c)} \wedge \bigl[\Delta E \le 0 \ \vee \
+     U < e^{-\beta \Delta E}\bigr]}_{\text{accept, broadcast over } a},
+  \ T, \ S \Bigr).
+\label{eq:update-array}
+\end{equation}
+%
+The acceptance test is decided once per site and then broadcast along the
+component axis, so a spin is replaced in all three components or in none ---
+which is what makes the trial a rotation of the whole vector rather than three
+independent moves.
+
+Equations \eqref{eq:config-array}--\eqref{eq:update-array} are the
+specification. Read literally they would allocate one array of the shape of $S$
+per translate, and that allocation is exactly what the kernel of
+Sections~\ref{sec:layout}--\ref{sec:rng} avoids: it forms $V$ in registers and
+writes only the result of \eqref{eq:update-array}. The remaining subsections
+say how.
 
 \subsection{Contiguous neighbour access: the component-planar layout}
 \label{sec:layout}
@@ -325,7 +434,7 @@ counters is what guarantees they share no input.
 \subsection{Deterministic observables: block-partial reduction}
 \label{sec:reduction}
 
-The observables of \eqref{eq:observables} below are accumulated as
+The observables of Section~\ref{sec:observables} below are accumulated as
 \emph{per-block partial sums}, written to a small array and reduced afterwards.
 The reduction is therefore independent of the order in which blocks retire, so
 two evaluations of the same configuration agree to the last bit and the
@@ -339,52 +448,106 @@ arctangent whose branch matters, since its denominator may change sign on a
 frustrated plaquette. The kernel emits the four arguments of the two arctangents
 and the final transcendental is applied outside it.
 
-\subsection{The observables}
+\subsection{The observables, one by one}
 \label{sec:observables}
 
-Let $n_a = |\Lambda|$. For a configuration $\vs$, the simulator reports the
-energy per site, the magnetisation and its out-of-plane component, and the
-topological charge of the mid-layer:
+Six quantities are reported per temperature, and each is a reduction of the
+arrays of Section~\ref{sec:matrices} over a stated set of axes with a stated
+normalisation. Let $n_a = |\Lambda|$ be the number of sites inside the disc and
+let $\chi_\Lambda$ be its indicator, the mask of \eqref{eq:config-array}. Every
+reduction below is masked by $\chi_\Lambda$, so the sites that pad the box
+contribute nothing.
+
+\paragraph{Energy per site, $E$.} The total energy is evaluated with each bond
+counted \emph{once}, using only the $+\hat{\mathbf{x}}$, $+\hat{\mathbf{y}}$ and
+$+\hat{\mathbf{z}}$ translates --- never the six of $V$, which would count every
+bond twice:
 %
 \begin{equation}
-E = \frac{1}{n_a}\,\Ham(\vs), \qquad
-\vM = \frac{1}{n_a} \sum_{i \in \Lambda} \vs_i, \qquad
-Q = \frac{1}{4\pi} \sum_{p} \Omega_p ,
-\label{eq:observables}
+E = \frac{1}{n_a} \sum_{i \in \Lambda} \Bigl[
+  -\!\!\sum_{k \in \shells}\!\! J_k \!\!\!\sum_{\vd \in \mathcal{D}_k^{+}}\!\!\!
+     \vs_i \cdot \vs_{i+\vd}
+  + \mathcal{A}_i(\vs_i)
+  - D\, \varepsilon^{\mathrm{DM}}_i
+  - \vH \cdot \vs_i \Bigr],
+\label{eq:obs-E}
 \end{equation}
 %
-where the energy is evaluated with each bond counted once, using only the
-$+\hat{\mathbf{x}}$, $+\hat{\mathbf{y}}$ and $+\hat{\mathbf{z}}$ translates, and
-$\Omega_p$ is the signed solid angle of plaquette $p$,
+where $\mathcal{D}_k^{+}$ is the half of $\mathcal{D}_k$ with positive
+displacement and $\varepsilon^{\mathrm{DM}}_i$ the in-plane cross-product term.
+The reduction is over the three spatial axes, leaving one value per replica,
+divided by $n_a$.
+
+\paragraph{Magnetisation, $\lVert\vM\rVert$ and $M_z$.} The vector mean over
+in-disc sites,
 %
 \begin{equation}
-\Omega(\mathbf{a}, \mathbf{b}, \mathbf{c}) = 2 \arctan
+\vM = \frac{1}{n_a} \sum_{i \in \Lambda} \vs_i ,
+\qquad\text{reported as}\qquad
+\lVert \vM \rVert = \Bigl(\textstyle\sum_a M_a^2\Bigr)^{1/2}
+\quad\text{and}\quad M_z = M_2 .
+\label{eq:obs-M}
+\end{equation}
+%
+Both are kept because they answer different questions: $\lVert\vM\rVert$ cannot
+distinguish an in-plane from an out-of-plane texture, and $M_z$ is the component
+the images of the later sections actually record.
+
+\paragraph{Topological charge, $Q$.} Computed on the mid-layer with the
+Berg--L\"uscher plaquette form, which is quantised where a finite-difference
+curl is not. Each plaquette is split into two triangles and contributes the
+signed solid angle of each,
+%
+\begin{equation}
+Q = \frac{1}{4\pi} \sum_{p \in \mathcal{P}} \Bigl[
+  \Omega(\vs_{00}, \vs_{10}, \vs_{11})
++ \Omega(\vs_{00}, \vs_{11}, \vs_{01}) \Bigr],
+\qquad
+\Omega(\mathbf{a},\mathbf{b},\mathbf{c}) = 2 \arctan
   \frac{\mathbf{a} \cdot (\mathbf{b} \times \mathbf{c})}
        {1 + \mathbf{a}\!\cdot\!\mathbf{b} + \mathbf{b}\!\cdot\!\mathbf{c}
           + \mathbf{c}\!\cdot\!\mathbf{a}} ,
-\label{eq:solidangle}
+\label{eq:obs-Q}
 \end{equation}
 %
-each plaquette contributing
-$\Omega(\vs_{00},\vs_{10},\vs_{11}) + \Omega(\vs_{00},\vs_{11},\vs_{01})$ over
-the plaquettes whose four corners lie in the disc. This form is quantised,
-unlike a finite-difference curl.
+where $\mathcal{P}$ is the set of plaquettes whose \emph{four} corners lie in
+the disc --- a plaquette straddling the boundary is dropped entirely rather than
+partially counted. Two details decide whether this is right. The arctangent must
+be the two-argument form, because the denominator changes sign on a frustrated
+plaquette and a one-argument $\arctan$ would silently pick the wrong branch;
+and the kernel therefore emits the four arguments of the two arctangents and
+leaves the transcendental to be applied outside it
+(Section~\ref{sec:reduction}).
 
-The response functions are variances,
+\paragraph{Response functions, $C_v$ and $\chi$.} Both are variances, and both
+are accumulated about a reference value $E_{\mathrm{ref}}$, $M_{\mathrm{ref}}$
+taken once at the start of the measurement phase of each temperature:
 %
 \begin{equation}
-C_v = \frac{\langle (\Delta E)^2 \rangle}{k_B T^2 n_a},
+C_v = \frac{\langle (\Delta E)^2 \rangle - \langle \Delta E \rangle^2}
+           {k_B T^2 n_a},
 \qquad
-\chi = \frac{\langle (\Delta \lVert\vM\rVert)^2 \rangle}{k_B T},
-\label{eq:response}
+\chi = \frac{\langle (\Delta \lVert\vM\rVert)^2 \rangle
+             - \langle \Delta \lVert\vM\rVert \rangle^2}{k_B T},
+\label{eq:obs-response}
 \end{equation}
 %
-and they are accumulated about a reference value taken once per temperature. A
-constant shift leaves a variance unchanged, so this is exact, and it keeps every
-accumulated quantity at the scale of the fluctuation rather than of the total
---- which is what single precision requires here, since at low temperature one
-unit in the last place of $\langle E^2 \rangle$ exceeds the variance being
-measured.
+with $\Delta E = E - E_{\mathrm{ref}}$ and likewise for $M$. A constant shift
+leaves a variance unchanged, so centring is exact; what it buys is that both
+terms of the subtraction sit at the scale of the fluctuation instead of the
+total. That is not a refinement but a requirement here: in single precision at
+low temperature, one unit in the last place of $\langle E^2 \rangle$ exceeds the
+variance being measured, and the uncentred form returns a negative $C_v$.
+
+\paragraph{What the kernel accumulates.} The measurement phase therefore carries
+\emph{eight} accumulators per replica and temperature, not six: the four
+centred moments $\sum \Delta E$, $\sum \Delta E^2$,
+$\sum \Delta \lVert\vM\rVert$, $\sum \Delta \lVert\vM\rVert^2$, then $\sum M_z$
+and $\sum Q$, and finally the two references $E_{\mathrm{ref}}$ and
+$M_{\mathrm{ref}}$ needed to restore the absolute values. The reduction returns
+an array of shape $(n_T, 8, B)$ --- temperatures first, the observable index
+second, replicas last --- and the replica axis is averaged last, after the six
+reported quantities have been formed.
 
 \subsection{The combination}
 \label{sec:combination}
@@ -392,7 +555,7 @@ measured.
 One sweep applies the kernel of Sections~\ref{sec:layout}--\ref{sec:rng} once
 per colour class, $n_c$ times; one temperature applies the sweep
 $n_{\mathrm{th}}$ times to thermalise and $n_{\mathrm{me}}$ times while
-accumulating the observables of Section~\ref{sec:reduction}; and one simulation
+accumulating the observables of Section~\ref{sec:observables}; and one simulation
 scans a decreasing temperature ladder $\{T_m\}_{m=1}^{M}$, carrying the final
 configuration of each temperature into the next:
 %
@@ -505,9 +668,27 @@ it holds unchanged at eight and twenty-seven classes.
 
 \subsubsection{Contiguous neighbour access and the synchronisation-free halo}
 
-Table~\ref{tab:sota} reports the per-site update time the two components jointly
-achieve: \SI{0.129}{\nano\second} on one datacentre GPU
-(Table~\ref{tab:sota}, row 1), and \SI{0.033}{\nano\second} aggregated over
+\begin{table}[htbp]
+\centering
+\caption{Time per single-site update, per device, all taken at five thousand
+replicas per device so the rows share a basis. The processor baseline runs the
+same code, the same Hamiltonian and the same workload, which is what makes it a
+controlled comparison rather than a quotation.}
+\label{tab:rate}
+\begin{tabular}{llr}
+\toprule
+configuration & device & {ns / update} \\
+\midrule
+this work, one device   & H100       & \textbf{0.129} \\
+this work, one device   & T4         & 1.75 \\
+processor baseline      & 24 threads & 107.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:rate} reports the per-site update time the two components
+jointly achieve: \SI{0.129}{\nano\second} on one datacentre GPU
+(Table~\ref{tab:rate}, row 1), and \SI{0.033}{\nano\second} aggregated over
 four, which that table deliberately omits because it tabulates per-device rates
 only. At the geometry of Section~\ref{sec:model} that is $7.74$ site updates per
 nanosecond per device. The mechanism is the one the layout was defined for: the
@@ -592,7 +773,7 @@ simulator completes the hundred-state ladder in \SI{57.6}{\minute}; at one
 device (Figure~\ref{fig:flagship}, fourth bar) in \SI{3.8}{\hour}; and on two
 consumer GPUs (Figure~\ref{fig:flagship}, third bar) in \SI{25.8}{\hour}.
 Against the CPU baseline on the identical workload, \SI{130.7}{\day}, the
-separation is $834$-fold per site update (Table~\ref{tab:sota}, rows 1 and 3).
+separation is $834$-fold per site update (Table~\ref{tab:rate}, rows 1 and 3).
 Figure~\ref{fig:flagshipgpu} shows the same comparison without the CPU bar and
 on a linear axis.
 
@@ -668,120 +849,6 @@ last-level cache and a third of the bandwidth, against a working set of
 measured here, and only the sign is established.
 
 % ---------------------------------------------------------------------------
-\subsection{Comparison with published implementations}
-
-Accelerating lattice spin Monte Carlo on graphics hardware has two largely
-separate literatures, and reading a rate against either of them requires knowing
-which. The state of the art is surveyed in its own chapter; what follows is only
-the part needed to read Table~\ref{tab:sota} for what it is.
-
-The first line compresses the spin variable. If a spin takes two values it fits in one
-bit, and a machine word then holds dozens of independent lattice sites or dozens
-of independent replicas, updated by bitwise operations in a single instruction.
-Multi-spin coded implementations of the two-dimensional Ising model established
-both the method and the benchmark unit still in use, reporting a single-device
-rate on 2010 hardware and scaling across sixty-four devices to aggregate rates
-two orders of magnitude above one device~\cite{block2010}. Subsequent work
-sharpened the packing rather than the parallelism, and the most recent entries
-move to rack-scale systems and report aggregate lattice-update rates another two
-orders of magnitude higher~\cite{bisson2025}. A parallel strand pursues the same
-compression for spin glasses, where asynchronous multi-spin coding across
-replicas serves parallel tempering rather than a single long
-chain~\cite{fang2013}; the structural lesson there transfers directly --- when
-the physics requires many weakly coupled chains, the replica axis is a better
-place to find parallelism than the lattice, because it needs no halo at all.
-
-The second line keeps the vector spin. Weigel's surveys of lattice spin models
-on graphics hardware cover both the Metropolis update and cluster algorithms and
-report per-update rates for continuous models on hardware of their
-period~\cite{weigel2010,weigel2011}, obtained in part by running many
-independent systems concurrently --- the same replica-axis strategy, arrived at
-independently. The closest published work is Charilaou's Monte Carlo implementation of the
-three-dimensional anisotropic Heisenberg model~\cite{charilaou2021}, which
-carries continuous spins and an anisotropy and reports a per-update time
-together with a demonstration at one hundred million spins on a single device.
-It is the only entry whose Hamiltonian is of the same kind as the one in
-Section~\ref{sec:model}, and therefore the only one against which a per-update
-comparison carries meaning. Beyond Monte Carlo, the atomistic spin dynamics
-community maintains frameworks that integrate the Landau--Lifshitz--Gilbert
-equation on the same kind of lattice and with a comparable interaction
-set~\cite{spirit2019}; their figures are reported in iterations per second
-rather than per-update times, which makes them the natural comparison for a
-\emph{production workflow} and the wrong comparison for a \emph{sweep rate}.
-
-Table~\ref{tab:sota} places the simulator beside published GPU Monte Carlo spin
-codes on a common unit, the time per single-site update.
-
-\begin{table}[htbp]
-\centering
-\caption{Time per single-site update, per device. This work's rows are all taken
-at five thousand replicas per device, so they share a basis. Every published
-figure is read from the paper itself, not from a secondary source, and the
-rightmost column states the per-site arithmetic each model carries --- which is
-what decides whether a comparison in this unit means anything.}
-\label{tab:sota}
-\footnotesize
-\begin{tabular}{lllrl}
-\toprule
-implementation & model & device & {ns / update} & per-site work \\
-\midrule
-\textbf{this work} & Heisenberg $+$ iDMI $+$ cubic & H100
-  & \textbf{0.129} & heavy \\
- & $+$ surface $+$ field & & & \\
-this work & same & T4 & 1.75 & heavy \\
-this work, CPU baseline & same & 24 threads & 107.7 & heavy \\
-Charilaou~\cite{charilaou2021} & 3-D anisotropic Heisenberg & Tesla V100
-  & 1.55 & moderate \\
-Block \textit{et al.}~\cite{block2010} & 2-D Ising, multi-spin coding
-  & Tesla C1060 & 0.127 & minimal \\
-Weigel \& Yavors'kii~\cite{weigel2011} & lattice spin models, $k=100$
-  & GTX 480 & 0.03 & minimal \\
-Bisson \textit{et al.}~\cite{bisson2025} & 2-D Ising & GB200
-  & \num{5.5e-4} & minimal \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-The aggregate figures those works report are larger again and are not in the
-table, because they measure a different thing: $206$ updates per nanosecond over
-sixty-four devices~\cite{block2010} and $\num{1.15e5}$ over a
-rack~\cite{bisson2025}, against this work's \SI{0.033}{\nano\second} per update
-aggregated over four devices. A per-device row is the only one that compares.
-
-Against the published implementation whose Hamiltonian is closest --- an
-anisotropic Heisenberg model, the only entry carrying continuous spins and an
-anisotropy --- the raw ratio is twelvefold ($0.129$ against
-\SI{1.55}{\nano\second}, Table~\ref{tab:sota} rows 1 and 4). That ratio should
-not be quoted on its own, because the two rows are measured on hardware two
-generations apart: the published figure is from a Tesla V100 and this work's
-from an H100.
-
-The comparison that controls for the device is between row 4 and row 2. This
-work's consumer-class device returns \SI{1.75}{\nano\second} against the V100's
-$1.55$, and a V100 carries twice the multiprocessors and nearly three times the
-memory bandwidth of that device. Normalising on that basis, the formulation is
-ahead by something between a factor of two and three rather than twelve ---
-smaller than the raw ratio and attributable to the method rather than to the
-hardware.
-
-The Ising entries are faster per update, by up to two orders of magnitude on a
-per-device basis, and that is not evidence about this work in either direction.
-The per-site arithmetic differs by roughly two orders of magnitude: a bit-packed
-Ising flip is a handful of integer operations with no transcendental and one
-random number, while one update here performs on the order of $290$ arithmetic
-operations, one exponential, one reciprocal square root and four random draws,
-as the kernel of Section~\ref{sec:halo} makes explicit. Reading
-Table~\ref{tab:sota} as a ranking would be reading a unit the models do not
-share.
-
-What the table supports, read across rows 1 and 5, is narrower and more useful:
-the simulator reaches the per-device rate of a multi-spin coded Ising
-implementation on 2010 hardware --- $0.129$ against
-\SI{0.127}{\nano\second} --- while carrying a Hamiltonian some two orders of
-magnitude heavier per site. The comparison that is strictly controlled remains
-the one against the CPU baseline, where the code, the physics and the workload
-are identical, and there the figure is $834$-fold.
-
 % ===========================================================================
 \section{Limitations}
 % ===========================================================================
@@ -795,46 +862,6 @@ per sweep unchanged, and which the fused kernel of Section~\ref{sec:halo} does
 not yet implement beyond the first shell. And the single geometry in which the
 cost behaviour of Figure~\ref{fig:shape} was characterised.
 
-% ===========================================================================
-\begin{thebibliography}{9}
 
-\bibitem{block2010}
-B.~Block, P.~Virnau and T.~Preis,
-\textit{Multi-GPU accelerated multi-spin Monte Carlo simulations of the 2D
-Ising model}, arXiv:1007.3726 (2010).
-
-\bibitem{weigel2010}
-M.~Weigel,
-\textit{Simulating spin models on GPU}, arXiv:1006.3865 (2010).
-
-\bibitem{weigel2011}
-M.~Weigel and T.~Yavors'kii,
-\textit{GPU accelerated Monte Carlo simulations of lattice spin models},
-arXiv:1107.5463 (2011).
-
-\bibitem{fang2013}
-Y.~Fang, S.~Feng, K.-M.~Tam, Z.~Yun, J.~Moreno, J.~Ramanujam and M.~Jarrell,
-\textit{Parallel tempering simulation of the three-dimensional
-Edwards--Anderson model with compact asynchronous multispin coding on GPU},
-arXiv:1311.5582 (2013).
-
-\bibitem{spirit2019}
-G.~P.~M\"uller, M.~Hoffmann, C.~Disselkamp, D.~Sch\"urhoff, S.~Mavros,
-M.~Sallermann, N.~S.~Kiselev, H.~J\'onsson and S.~Bl\"ugel,
-\textit{Spirit: multifunctional framework for atomistic spin simulations},
-arXiv:1901.11350 (2019).
-
-\bibitem{charilaou2021}
-M.~Charilaou,
-\textit{GPU-accelerated Monte Carlo simulations of anisotropic Heisenberg
-ferromagnets}, arXiv:2106.11286 (2021).
-
-\bibitem{bisson2025}
-M.~Bisson, M.~Bernaschi, M.~Fatica, N.~G.~Fytas,
-I.~Gonz\'alez-Adalid Pemart\'in, V.~Mart\'in-Mayor and A.~Vasilopoulos,
-\textit{Massive-scale simulations of 2D Ising and Blume--Capel models on
-rack-scale multi-GPU systems}, arXiv:2502.18624 (2025).
-
-\end{thebibliography}
 
 \end{document}

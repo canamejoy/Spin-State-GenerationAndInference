@@ -29,10 +29,22 @@ instalación de TeX Live y va comentado; es cosmético.
 
 ## Qué lleva el PDF y qué no
 
-El PDF lleva **Materials and Methods** completa, **Results and Discussion**
-completa, y una **Position in the literature** condensada. El estado del arte
-completo no va ahí porque tiene sección propia; lo que va es sólo la parte que
-hace falta para leer la Tabla 5 (la comparación por volteo) sin malinterpretarla.
+El PDF lleva **Materials and Methods** completa, **Validation**, **Performance**
+y **Limitations**. En concreto, por pedido explícito:
+
+| se pidió | dónde está |
+|---|---|
+| la **descomposición matricial**, clara | §2.1 `The matrix decomposition` — la configuración como arreglo de rango 5, el operador de traslación con su compuerta en z, la suma de vecinos, ΔE contrayendo el eje de componentes, y la actualización como un `where` enmascarado. Ecs. (7)–(11) |
+| explicar las **subredes** | §1.2 — ahora desglosa capa por capa **qué le hace cada desplazamiento a la paridad de x+y+z**, que es lo que decide la admisibilidad, y por qué el coloreo se ensancha en dos pasos (2 → 8 → 27) |
+| el **desglose de cada métrica física** | §2.6 `The observables, one by one` — E, ‖M‖, M_z, Q, C_v y χ, cada una con sus ejes de reducción, su normalización y el cuidado numérico que exige. Ecs. (13)–(16) |
+
+**La comparación contra el estado del arte está FUERA por ahora**, a petición
+del autor, hasta hablarlo con el tutor. El código y las mediciones siguen en el
+repositorio (`codigo/bench_charilaou.py`,
+`resultados/kaggle/charilaou_t4*.json`, `resultados/modal/charilaou_a*.json`);
+solo no se redacta en la sección. Con ella fuera, la única línea base que queda
+en el PDF es la **CPU**, que es la comparación realmente controlada: mismo
+código, misma física, mismo workload.
 
 ## Por qué son tres y no una
 
