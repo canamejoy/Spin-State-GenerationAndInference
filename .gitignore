@@ -55,6 +55,9 @@ Thumbs.db
 *.pdf
 # ...but a section's own report IS a deliverable, not a downloaded paper.
 !section*/informe/*.pdf
+# and so is its written-up section, with the figures that section cites.
+!section*/tesis/*.pdf
+!section*/tesis/figuras/*.pdf
 
 papers/
 
@@ -110,3 +113,10 @@ main/figures/*.aux
 # Excel/LibreOffice lock files
 ~$*
 .~lock.*
+
+# LaTeX build artefacts
+*.aux
+*.out
+*.toc
+*.synctex.gz
+section*/tesis/*.log

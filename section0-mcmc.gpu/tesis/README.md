@@ -1,15 +1,38 @@
 # Sección 0 escrita para la tesis
 
-Tres secciones redactadas contra los contratos de papersmith
-(`~/papersmith-ai/sections/`). Están en **inglés** porque el paper de
+**El entregable es `section0.pdf`** (12 páginas, compilado con
+`~/texlive/2026/bin/x86_64-linux/pdflatex`). Su fuente es `section0.tex`, que
+transpone las tres secciones en markdown y les añade las cinco figuras de
+`figuras/` y la bibliografía resuelta.
+
+Las tres secciones en markdown están redactadas contra los contratos de
+papersmith (`~/papersmith-ai/sections/`). Están en **inglés** porque el paper de
 `main/main.tex` lo está (`elsarticle`); la conversación y las páginas
 interactivas son otra cosa.
 
 | archivo | contrato | prosa | estado |
 |---|---|---|---|
-| `01-materials-and-methods.md` | `sections/01` | 1595 palabras (560–3950) | ✅ dentro |
-| `03-results-and-discussion.md` | `sections/03` | 1793 palabras (1170–4150) | ✅ dentro |
-| `05-related-work.md` | `sections/05` | 1170 palabras (820–1700) | ✅ dentro |
+| `01-materials-and-methods.md` | `sections/01` | 1883 palabras (560–3950) | ✅ dentro |
+| `03-results-and-discussion.md` | `sections/03` | 1803 palabras (1170–4150) | ✅ dentro |
+| `05-related-work.md` | `sections/05` | 1153 palabras (820–1700) | ✅ dentro |
+
+## Cómo se recompila
+
+```bash
+export PATH="$HOME/texlive/2026/bin/x86_64-linux:$PATH"
+cd section0-mcmc.gpu/codigo && python make_tesis_figs.py   # las 5 figuras
+cd ../tesis && pdflatex section0.tex && pdflatex section0.tex
+```
+
+Dos pasadas, por las referencias cruzadas. `microtype` no está en esta
+instalación de TeX Live y va comentado; es cosmético.
+
+## Qué lleva el PDF y qué no
+
+El PDF lleva **Materials and Methods** completa, **Results and Discussion**
+completa, y una **Position in the literature** condensada. El estado del arte
+completo no va ahí porque tiene sección propia; lo que va es sólo la parte que
+hace falta para leer la Tabla 5 (la comparación por volteo) sin malinterpretarla.
 
 ## Por qué son tres y no una
 
@@ -90,50 +113,73 @@ discusión están repartidos: inferencial (*indicates, suggests*), asertivo
 cada una decide, no una lista de papers. Cierra con tres frentes abiertos y la
 brecha, y la Tabla 4 la hace legible como fila.
 
-## Lo que FALTA, y no está disimulado
+## Las cinco figuras
 
-**1. Las citas no están resueltas.** El contrato de Related Work pide
-`citations: resolution`, o sea claves resueltas por OpenAlex/Crossref con su
-DOI. La sección nombra autores y años en prosa pero **no lleva claves de cita**.
-Hay que pasarla por el resolutor de papersmith antes de que sirva para entregar.
+Las genera `codigo/make_tesis_figs.py` leyendo los archivos de medición de
+`resultados/`; nada está tecleado a mano salvo las etiquetas.
 
-**2. Las figuras no están dibujadas.**
-
-| figura | qué es | estado |
+| figura | qué es | archivo |
 |---|---|---|
-| Figura 1 | el diagrama de resumen del kernel | **por dibujar** — su caption ya está escrito y enumera los cuatro componentes en orden |
-| Figura 2 | costo por réplica contra el lote, los dos motores | el dato existe (`resultados/curvas/triton_halo.json`) |
-| Figura 3 | **la insignia**: 100 estados, CPU + T4 + H100 | el SVG existe: `resultados/curvas/chart_100estados_concpu.svg` |
-| Figura 4 | la misma sin CPU, eje lineal | `chart_100estados_sincpu.svg` |
+| 1 | el diagrama de resumen del kernel, obligatorio por contrato | `fig1_diagram.pdf` |
+| 2 | **la insignia**: 100 estados, CPU + T4 + H100, eje log | `fig2_flagship_cpu.pdf` |
+| 3 | la misma sin CPU y con eje lineal | `fig3_flagship_gpu.pdf` |
+| 4 | el piso de réplicas por dispositivo | `fig4_floor.pdf` |
+| 5 | costo contra el lote, una línea por número de capas | `fig5_shape.pdf` |
 
-**3. Results lleva 3 figuras y el contrato pide 5–14.** Con las 3 tablas son 6
-artefactos, pero está por debajo. Faltan las figuras de validación (las curvas
-reducidas contra el control) y la del piso de lote por dispositivo, que tienen
-dato y no gráfico.
+Las barras son **verticales** en las figuras 2 y 3, y el eje va en horas, no en
+segundos crudos.
 
-**4. Un dato del estado del arte está incompleto.** El trabajo más comparable
-—Heisenberg anisótropo en GPU, 1.55 ns por volteo— **no declara en qué GPU** se
-midió, y la página del abstract tampoco. La Tabla 3 lo dice («unstated GPU») en
-vez de rellenarlo. Para la versión final hay que sacarlo del PDF.
+## Lo que se corrigió al armar el PDF
 
-**5. La comparación con el estado del arte es honesta, no favorable.** La Tabla 3
-incluye las implementaciones de Ising que son **hasta cuatro órdenes de magnitud
-más rápidas por volteo** que la nuestra, y dice por qué esa comparación no mide
-nada: un volteo de Ising con empaquetado de bits son unas pocas operaciones
-enteras, y uno nuestro son ~290 operaciones aritméticas, una exponencial, una
-raíz inversa y cuatro sorteos. Lo que sí se sostiene es más estrecho y está
-dicho así: alcanzamos el ritmo por sitio de un Ising multi-spin de 2010 cargando
-un Hamiltoniano dos órdenes de magnitud más pesado, y le ganamos 12× al trabajo
-publicado con el Hamiltoniano más parecido.
+Tres cosas que estaban mal en el markdown y ahora lo están en los dos lados:
+
+**1. La afirmación sobre la condición de anchura estaba escogida a conveniencia.**
+Decía «0.3 % en el dispositivo de centro de datos […] medido sobre 4, 5, 6 y 8
+capas». El 0.3 % es sólo la celda L=5; la celda L=6 del mismo archivo
+(`resultados/curvas/triton_width.json`, campo `penalty`) mide **1.70 %**. Y en
+L=4 y L=8 la condición $v_2(B)+v_2(L)\ge 2$ **no se puede voltear variando B**,
+porque $v_2(L)\ge 2$ ya la satisface, así que esas dos capas no informan de
+nada. Ahora dice: 0.30 % y 1.70 % en el H100, 0.56 % y 0.97 % en el T4, como
+mucho 1.7 %, sin signo consistente.
+
+**2. Dos referencias de fila apuntaban mal.** La fila 2 de la tabla de
+comparación es el T4, no el agregado de cuatro dispositivos (que esa tabla omite
+a propósito, porque tabula ritmos por dispositivo). Y la línea base de CPU es la
+fila 3, no la 4 —la 4 es Charilaou.
+
+**3. El 12× sobre Charilaou se bajó a 2–3×.** El 12× crudo (0.129 contra
+1.55 ns) compara un H100 con un Tesla V100, dos generaciones aparte.
+Normalizando por nuestro T4 (1.75 ns) contra ese V100, que lleva el doble de
+multiprocesadores y casi el triple de ancho de banda, el método va adelante
+**entre 2× y 3×**, no 12×. Eso es lo que dice el PDF.
+
+## Lo que sigue faltando
+
+**Las claves de cita.** La bibliografía del PDF es un `thebibliography` a mano
+con los siete arXiv resueltos por `paper_resolve.py` de papersmith (título y
+autores reales, no de segunda mano). Para integrarla en `main/main.tex` hay que
+pasarla a BibTeX con sus DOI.
+
+**Results lleva 4 figuras y el contrato pide 5–14.** Con las 4 tablas son 8
+artefactos. Falta la figura de validación —las curvas reducidas contra el
+control del mismo motor consigo mismo—, que tiene dato y no gráfico.
+
+**La geometría es una sola.** El comportamiento de costo de la Figura 5 está
+caracterizado en una única geometría, y así lo dice la sección de limitaciones.
 
 ## Fuentes del estado del arte
 
-Localizadas por búsqueda; los enlaces quedan para el resolutor de citas.
+Resueltas con `paper_resolve.py` de papersmith y leídas del PDF, no de un
+resumen. Los siete PDF se bajaron para verificar las cifras de la Tabla 5.
 
-- Preis et al. (2010), Ising 2D multi-spin en GPU — `arXiv:1007.3726`
-- Weigel (2011), *Simulating spin models on GPU* — `arXiv:1006.3865`
+- Block, Virnau & Preis (2010), Ising 2D multi-spin en GPU — `arXiv:1007.3726`
+- Weigel (2010), *Simulating spin models on GPU* — `arXiv:1006.3865`
 - Weigel & Yavors'kii (2011), *GPU accelerated MC of lattice spin models* — `arXiv:1107.5463`
+- Fang et al. (2013), Edwards-Anderson 3D, multi-spin asíncrono — `arXiv:1311.5582`
+- Müller et al. (2019), *Spirit*, marco atomístico con CUDA — `arXiv:1901.11350`
 - Charilaou (2021), Heisenberg anisótropo en GPU — `arXiv:2106.11286`
-- Spirit (2019), marco atomístico con CUDA — `arXiv:1901.11350`
-- Ising/Blume-Capel a escala de rack (2025) — `arXiv:2502.18624`
-- Edwards-Anderson 3D, multi-spin asíncrono — `arXiv:1311.5582`
+- Bisson et al. (2025), Ising/Blume-Capel a escala de rack — `arXiv:2502.18624`
+
+El primero se citaba antes como «Preis et al.»; el resolutor da los autores
+reales, **Block, Virnau & Preis**. Y Charilaou **sí** declara la GPU —un Tesla
+V100—, lo dice el PDF aunque no el abstract; la Tabla 5 ya no pone «unstated».
