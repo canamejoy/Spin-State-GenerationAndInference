@@ -13,14 +13,20 @@ PARAMS_CELL = r'''# ════════════════════
 #
 #   índice  nombre   qué es                                        unidades
 #   ──────  ──────   ───────────────────────────────────────────   ────────
-#     0     T        temperatura objetivo: a esta se enfría        K
-#     1     Jex2     intercambio de la 2.ª capa de vecinos        (ver abajo)
-#     2     Jex3     intercambio de la 3.ª capa                   (ver abajo)
-#     3     Jex4     intercambio de la 4.ª capa                   (ver abajo)
-#     4     Kan1     anisotropía cúbica, constante de 1.er orden   meV
-#     5     KanS     anisotropía de superficie                     meV
-#     6     Hex      campo externo (magnitud)                      meV
-#     7     KDM      Dzyaloshinskii–Moriya interfacial             meV
+#     0     Jex2     intercambio de la 2.ª capa de vecinos        (ver abajo)
+#     1     Jex3     intercambio de la 3.ª capa                   (ver abajo)
+#     2     Jex4     intercambio de la 4.ª capa                   (ver abajo)
+#     3     Kan1     anisotropía cúbica, constante de 1.er orden   meV
+#     4     KanS     anisotropía de superficie                     meV
+#     5     Hex      campo externo (magnitud)                      meV
+#     6     KDM      Dzyaloshinskii–Moriya interfacial             meV
+#
+# LA TEMPERATURA NO ES UN PARÁMETRO. El enfriamiento es siempre el mismo,
+# de 20 K a 0.1 K en pasos de 0.1 K, para todos los estados — son 200
+# escalones, y np.linspace(20, 0.1, 200) los da exactos porque 19.9/199 = 0.1.
+# Fijarla hace que los estados sean comparables entre sí, y convierte la
+# temperatura de TRANSICIÓN en algo que se mide al final en vez de algo que se
+# declara al principio.
 #
 # El intercambio de PRIMEROS vecinos está normalizado a Jex = 1, que es la
 # escala de energía del modelo; los demás se dan relativos a él.
@@ -56,11 +62,11 @@ PARAMS_CELL = r'''# ════════════════════
 # capa: con capas superiores el cuadernillo usa el motor de JAX y lo avisa.
 
 PARAMETROS = [
-    # [  T  , Jex2, Jex3, Jex4,  Kan1  , KanS ,  Hex   ,  KDM   ]
-    [  2.10,  0.0,  0.0,  0.0,  0.2867,  0.0 ,  0.7691,  0.6535],  # uniform
-    [  2.10,  0.0,  0.0,  0.0,  0.1770,  0.139,  0.4830,  0.8800],  # helical
-    [  5.00,  0.0,  0.0,  0.0,  0.3500,  0.0 ,  0.2000,  0.9500],  # points
-    [  1.00,  0.0,  0.0,  0.0,  0.1000,  0.200,  0.9000,  0.3000],  # lines
+    # [ Jex2, Jex3, Jex4,  Kan1  , KanS ,  Hex   ,  KDM   ]
+    [  0.0,  0.0,  0.0,  0.2867,  0.0 ,  0.7691,  0.6535],  # uniform
+    [  0.0,  0.0,  0.0,  0.1770,  0.139,  0.4830,  0.8800],  # helical
+    [  0.0,  0.0,  0.0,  0.3500,  0.0 ,  0.2000,  0.9500],  # points
+    [  0.0,  0.0,  0.0,  0.1000,  0.200,  0.9000,  0.3000],  # lines
 ]
 
 # Nombres para las tablas y las figuras. Si se deja vacío se numeran solos.
@@ -77,8 +83,9 @@ ANGULO = 90.0    # dirección del campo externo, en grados sobre el plano x–z
 #  EL CRONOGRAMA
 # ══════════════════════════════════════════════════════════════════════════
 REPLICAS      = 50     # réplicas independientes POR ESTADO
-T_INICIAL     = 20.0   # temperatura caliente de partida del enfriamiento
-N_TEMPERATURAS = 200   # escalones del enfriamiento, de T_INICIAL a la T del estado
+T_INICIAL     = 20.0   # inicio del enfriamiento, en K
+T_FINAL       = 0.1    # fin del enfriamiento, en K
+N_TEMPERATURAS = 200   # escalones: 200 da pasos de exactamente 0.1 K
 BARRIDOS      = 20000  # barridos por temperatura (⅔ termalizan, ⅓ miden)
 SEMILLA       = 42
 
@@ -156,9 +163,12 @@ import numpy as np
 
 v2 = lambda n: (n & -n).bit_length() - 1 if n else 0
 P = np.asarray(PARAMETROS, dtype=float)
-if P.ndim != 2 or P.shape[1] != 8:
-    raise SystemExit(f"PARAMETROS debe ser un arreglo de arreglos de 8 "
-                     f"elementos; llegó con forma {P.shape}")
+if P.ndim != 2 or P.shape[1] != 7:
+    extra = ("  (¿sobra la temperatura? ya no es un parámetro: el "
+             "enfriamiento es siempre 20 K -> 0.1 K)" if P.ndim == 2
+             and P.shape[1] == 8 else "")
+    raise SystemExit(f"PARAMETROS debe ser un arreglo de arreglos de 7 "
+                     f"elementos; llegó con forma {P.shape}{extra}")
 
 N_ESTADOS = P.shape[0]
 nombres = list(NOMBRES) if NOMBRES else []
@@ -166,11 +176,11 @@ nombres += [f"estado-{i+1}" for i in range(len(nombres), N_ESTADOS)]
 nombres = nombres[:N_ESTADOS]
 
 print(f"{N_ESTADOS} estado(s) leídos de PARAMETROS")
-print(f"{'':>3} {'estado':<12}{'T':>7}{'Jex2':>7}{'Jex3':>7}{'Jex4':>7}"
+print(f"{'':>3} {'estado':<12}{'Jex2':>7}{'Jex3':>7}{'Jex4':>7}"
       f"{'Kan1':>9}{'KanS':>8}{'Hex':>9}{'KDM':>9}")
 for i, nm in enumerate(nombres):
-    T, J2, J3, J4, K1, KS, H, D = P[i]
-    print(f"{i+1:>3} {nm:<12}{T:>7.2f}{J2:>7.3f}{J3:>7.3f}{J4:>7.3f}"
+    J2, J3, J4, K1, KS, H, D = P[i]
+    print(f"{i+1:>3} {nm:<12}{J2:>7.3f}{J3:>7.3f}{J4:>7.3f}"
           f"{K1:>9.4f}{KS:>8.3f}{H:>9.4f}{D:>9.4f}")
 
 # ---- las capas de vecinos activas, y el coloreo que piden
@@ -255,12 +265,19 @@ if usar_triton:
                          "estándar: no se corre nada")
 
 # ---- parámetros de un estado, difundidos a las réplicas
+# El enfriamiento es el mismo para todos los estados, asi que se construye
+# UNA vez y no uno por estado.
+TEMPS = np.linspace(T_INICIAL, T_FINAL, int(N_TEMPERATURAS))
+print(f"enfriamiento: {TEMPS[0]:.1f} K -> {TEMPS[-1]:.1f} K en "
+      f"{len(TEMPS)} escalones de {TEMPS[0]-TEMPS[1]:.3f} K")
+
+
 def columnas(fila, b):
-    T, J2, J3, J4, K1, KS, H, D = fila
+    J2, J3, J4, K1, KS, H, D = fila
     c = lambda v: jnp.full((b, 1, 1, 1), float(v), jnp.float32)
     return dict(Jex=c(1.0), Jex2=c(J2), Jex3=c(J3), Jex4=c(J4),
                 Kan1=c(K1), Kan2=c(0.0), KanS=c(KS),
-                Hex=c(H), KDM=c(D), g=c(float(np.deg2rad(ANGULO)))), float(T)
+                Hex=c(H), KDM=c(D), g=c(float(np.deg2rad(ANGULO))))
 
 kB = 0.086173404
 surf = jnp.asarray(geo["surface"][None, ...])
@@ -310,8 +327,8 @@ else:
 
 def _arma(i, b):
     """Lo que un dispositivo necesita para el estado `i` con `b` replicas."""
-    Pc, T_obj = columnas(P[i], b)
-    temps = np.linspace(T_INICIAL, T_obj, int(N_TEMPERATURAS))
+    Pc = columnas(P[i], b)
+    temps = TEMPS
     return dict(Pcols=Pc, temps=temps,
                 betas=jnp.asarray(1.0 / (kB * temps), jnp.float32),
                 k1=jnp.where(surf, Pc["KanS"], Pc["Kan1"]),
@@ -439,10 +456,60 @@ print(f"{'estado':<12}{'T':>7}{'E/sitio':>11}{'|M|':>9}{'Mz':>9}"
       f"{'Cv':>10}{'χ':>10}{'Q':>9}")
 for nm in nombres:
     r = salida[nm]
-    j = -1                                   # la temperatura objetivo
+    j = -1                                   # el fondo de la escalera, 0.1 K
     print(f"{nm:<12}{r['T'][j]:>7.2f}{r['E'][j]:>11.5f}{r['M'][j]:>9.4f}"
           f"{r['Mz'][j]:>9.4f}{r['Cv'][j]:>10.4f}{r['chi'][j]:>10.4f}"
           f"{r['Q'][j]:>9.4f}")
+
+# ══════════════════════════════════════════════════════════════════════════
+#  LA TRANSICIÓN
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Con la escalera fija, la temperatura de transición deja de ser un dato de
+# entrada y pasa a ser algo que se mide. Se localiza por el PICO de las dos
+# funciones de respuesta, que es la definición operativa habitual en un
+# sistema finito:
+#
+#   Cv = ⟨(ΔE)²⟩ / (k_B T² N)     pico -> transición de ORDENAMIENTO
+#   χ  = ⟨(Δ|M|)²⟩ / (k_B T)      pico -> transición MAGNÉTICA
+#
+# Tres advertencias que hay que leer junto al número:
+#
+#   · La malla es de 0.1 K, así que el pico no se puede situar mejor que eso.
+#     Aquí NO se interpola: un ajuste parabólico sobre tres puntos ruidosos
+#     da una precisión aparente que el dato no tiene.
+#   · Esto es un sistema FINITO (5245 sitios). Lo que se ve es un máximo
+#     redondeado, no una divergencia, y su posición se desplaza con el tamaño:
+#     no es la T_c del límite termodinámico.
+#   · Si el pico cae en un extremo de la escalera, la transición está FUERA
+#     del rango recorrido y el número no significa nada. Se avisa.
+
+print()
+print(f"{'estado':<12}{'T(pico Cv)':>12}{'Cv máx':>10}"
+      f"{'T(pico χ)':>12}{'χ máx':>10}  aviso")
+transiciones = {}
+for nm in nombres:
+    r = salida[nm]
+    T = np.asarray(r["T"])
+    fila = {}
+    msg = []
+    for k, etiq in (("Cv", "Cv"), ("chi", "chi")):
+        v = np.asarray(r[k], dtype=float)
+        v = np.where(np.isfinite(v), v, -np.inf)
+        j = int(np.argmax(v))
+        fila[f"T_{etiq}"] = float(T[j])
+        fila[f"{etiq}_max"] = float(v[j])
+        if j == 0 or j == len(T) - 1:
+            msg.append(f"el pico de {etiq} cae en el borde")
+    transiciones[nm] = fila
+    print(f"{nm:<12}{fila['T_Cv']:>12.1f}{fila['Cv_max']:>10.4f}"
+          f"{fila['T_chi']:>12.1f}{fila['chi_max']:>10.4f}"
+          f"  {'; '.join(msg) if msg else 'ok'}")
+
+print()
+print(f"malla de {TEMPS[0]-TEMPS[1]:.1f} K, asi que cada pico vale "
+      f"+-{(TEMPS[0]-TEMPS[1])/2:.2f} K; sistema finito de "
+      f"{int(n_act)} sitios, el maximo es redondeado y no una divergencia")
 
 with open("resultados.json", "w") as f:
     json.dump(dict(parametros=P.tolist(), nombres=nombres,
@@ -451,7 +518,7 @@ with open("resultados.json", "w") as f:
                    cronograma=dict(replicas=REPLICAS, n_temperaturas=N_TEMPERATURAS,
                                    barridos=BARRIDOS, n_term=N_TERM, n_med=N_MED),
                    motor="optimizado" if usar_triton else "estandar",
-                   resultados=salida), f, indent=1)
+                   resultados=salida, transiciones=transiciones), f, indent=1)
 print("\nguardado resultados.json")
 '''
 
