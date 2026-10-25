@@ -64,7 +64,7 @@ def build_geometry(Rd: float = 18.30, L: int = 5):
                 n_surface=int(surface.sum()))
 
 
-def build_engine(geo, So=1.0):
+def build_engine(geo, So=1.0, with_mvec=False):
     """Returns (substep, energy, magnetization, topological_charge, anneal)."""
     L, N = geo["L"], geo["N"]
     even_j = jnp.asarray(geo["even"][None, ..., None])
@@ -119,6 +119,10 @@ def build_engine(geo, So=1.0):
         E = E - p["Hex"] * (sx * jnp.cos(p["g"]) + sz * jnp.sin(p["g"]))
         return jnp.sum(E * disco_j[..., 0], axis=(-3, -2, -1))
 
+    def mag_vec(spins):
+        """The magnetisation VECTOR, which `magnetization` collapses."""
+        return jnp.sum(spins * disco_j, axis=(1, 2, 3)) / n_act
+
     def magnetization(spins):
         M = jnp.sum(spins * disco_j, axis=(1, 2, 3)) / n_act
         return jnp.linalg.norm(M, axis=-1), M[:, 2]
@@ -168,8 +172,10 @@ def build_engine(geo, So=1.0):
             E_ref = energy(s, p, K1_eff)
             M_ref, _ = magnetization(s)
 
+            zv = jnp.zeros((b, 3))
+
             def meas(_, v):
-                s, k, sE, sE2, sM, sM2, sMz, sQ = v
+                s, k, sE, sE2, sM, sM2, sMz, sQ, sMv = v
                 k, k1, k2 = random.split(k, 3)
                 s = substep(s, k1, beta, even_j, p, K1_eff)
                 s = substep(s, k2, beta, odd_j, p, K1_eff)
@@ -178,10 +184,11 @@ def build_engine(geo, So=1.0):
                 dM = M - M_ref
                 Q = topo_charge(s)[:, L // 2]
                 return (s, k, sE + dE, sE2 + dE * dE,
-                        sM + dM, sM2 + dM * dM, sMz + Mz, sQ + Q)
+                        sM + dM, sM2 + dM * dM, sMz + Mz, sQ + Q,
+                        sMv + mag_vec(s))
 
-            s, k, sE, sE2, sM, sM2, sMz, sQ = jax.lax.fori_loop(
-                0, n_meas, meas, (s, k, z0, z0, z0, z0, z0, z0))
+            s, k, sE, sE2, sM, sM2, sMz, sQ, sMv = jax.lax.fori_loop(
+                0, n_meas, meas, (s, k, z0, z0, z0, z0, z0, z0, zv))
             obs = jnp.stack([sE / n_meas, sE2 / n_meas,
                              sM / n_meas, sM2 / n_meas,
                              sMz / n_meas, sQ / n_meas, E_ref, M_ref])
@@ -190,13 +197,19 @@ def build_engine(geo, So=1.0):
             # one replica's middle layer is 182 kB and is what the state-
             # transition figure needs.
             snap = s[0, L // 2, :, :, 2]
+            if with_mvec:
+                return (s, k), (obs, snap, sMv / n_meas)
             return (s, k), (obs, snap)
 
+        if with_mvec:
+            (s, _), (all_obs, snaps, mvec) = jax.lax.scan(
+                per_T, (spins, key), betas)
+            return all_obs, s, snaps, mvec
         (s, _), (all_obs, snaps) = jax.lax.scan(per_T, (spins, key), betas)
         return all_obs, s, snaps
 
     return dict(substep=substep, energy=energy, magnetization=magnetization,
-                topo_charge=topo_charge, anneal=anneal)
+                mag_vec=mag_vec, topo_charge=topo_charge, anneal=anneal)
 
 
 def init_spins(key, geo, batch, So=1.0):

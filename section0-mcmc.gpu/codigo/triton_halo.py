@@ -716,7 +716,9 @@ def build_obs_triton(geo, BY=4, BX=None, num_warps=4, So=1.0):
             N=N, LZ=LZ, BY=BY, BX=BX, NSTRIP=nst, SO=float(So))
         tot = jnp.sum(part, axis=1)
         M = tot[:, 1:4] / n_act
-        return tot[:, 0], jnp.linalg.norm(M, axis=1), M[:, 2]
+        # the whole vector comes back too: the kernel already computed
+        # Mx and My, and only this line was discarding them.
+        return tot[:, 0], jnp.linalg.norm(M, axis=1), M[:, 2], M
 
     def topo_mid(sp):
         B = sp.shape[0]
@@ -735,7 +737,14 @@ def build_obs_triton(geo, BY=4, BX=None, num_warps=4, So=1.0):
                 meta=dict(BY=BY, BX=BX, n_strip=nst, q_grid=(nqy, nqx)))
 
 
-def build_anneal_full(geo, BY=4, num_warps=4, So=1.0):
+def build_anneal_full(geo, BY=4, num_warps=4, So=1.0, with_mvec=False):
+    """`with_mvec` adds a fourth return: the mean magnetisation VECTOR per
+    temperature and replica, shape (n_T, B, 3).
+
+    It is opt-in because ten call sites unpack three values, and the vector is
+    not free -- it is one more accumulator carried through the measurement
+    loop. What it buys is a PER-REPLICA record: everything else this function
+    returns has been averaged over replicas by the time it is read."""
     """The anneal with BOTH the substep and the observables in Triton."""
     import jax
     import jax.numpy as jnp
@@ -759,30 +768,38 @@ def build_anneal_full(geo, BY=4, num_warps=4, So=1.0):
                 return pair(s, c, bt)
             s, c = jax.lax.fori_loop(0, n_therm, therm, (s, c))
 
-            E_ref, M_ref, _ = O["eM"](s, par, k1)
+            E_ref, M_ref, _, _ = O["eM"](s, par, k1)
             z0 = jnp.zeros(s.shape[0], jnp.float32)
 
+            zv = jnp.zeros((s.shape[0], 3), jnp.float32)
+
             def meas(_, v):
-                s, c, sE, sE2, sM, sM2, sMz, sQ = v
+                s, c, sE, sE2, sM, sM2, sMz, sQ, sMv = v
                 s, c = pair(s, c, bt)
-                E, M, Mz = O["eM"](s, par, k1)
+                E, M, Mz, Mv = O["eM"](s, par, k1)
                 dE = E - E_ref
                 dM = M - M_ref
                 Q = O["topo_mid"](s)
                 return (s, c, sE + dE, sE2 + dE * dE, sM + dM,
-                        sM2 + dM * dM, sMz + Mz, sQ + Q)
+                        sM2 + dM * dM, sMz + Mz, sQ + Q, sMv + Mv)
 
-            s, c, sE, sE2, sM, sM2, sMz, sQ = jax.lax.fori_loop(
-                0, n_meas, meas, (s, c, z0, z0, z0, z0, z0, z0))
+            s, c, sE, sE2, sM, sM2, sMz, sQ, sMv = jax.lax.fori_loop(
+                0, n_meas, meas, (s, c, z0, z0, z0, z0, z0, z0, zv))
             out = jnp.stack([sE / n_meas, sE2 / n_meas,
                              sM / n_meas, sM2 / n_meas,
                              sMz / n_meas, sQ / n_meas, E_ref, M_ref])
+            if with_mvec:
+                return (s, c), (out, s[0, 2, LZ // 2], sMv / n_meas)
             return (s, c), (out, s[0, 2, LZ // 2])
 
         # `int(seed)` forced concreteness, which is fine under `jax.jit`
         # with a Python int closed over but fails under `pmap`, where the
         # per-device seed arrives as a tracer. `asarray` accepts both.
         c0 = jnp.asarray(seed, jnp.int32) * jnp.int32(1000003)
+        if with_mvec:
+            (s, _), (all_obs, snaps, mvec) = jax.lax.scan(
+                per_T, (sp, c0), betas)
+            return all_obs, s, snaps, mvec
         (s, _), (all_obs, snaps) = jax.lax.scan(per_T, (sp, c0), betas)
         return all_obs, s, snaps
 

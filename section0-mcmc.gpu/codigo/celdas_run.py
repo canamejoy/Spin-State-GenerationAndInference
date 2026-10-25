@@ -190,7 +190,7 @@ for i, nm in enumerate(nombres):
 import sim_multishell as MS
 
 activas = sorted({k for i in range(N_ESTADOS)
-                  for k in MS.shells_of(*P[i, 1:4])})
+                  for k in MS.shells_of(*P[i, 0:3])})
 COLOREO, N_SUBREDES, _f = MS.pick_colouring(activas)
 print(f"\ncapas de vecinos activas: {activas}")
 print(f"  coloreo: {COLOREO}  ->  {N_SUBREDES} subredes")
@@ -232,10 +232,13 @@ N_MED  = BARRIDOS - N_TERM
 # y además generaliza el coloreo.
 if activas == [1]:
     geo = S.build_geometry(Rd=float(RD), L=int(CAPAS))
-    eng = S.build_engine(geo)
+    eng = S.build_engine(geo, with_mvec=True)
+    eng_mvec = True
 else:
     geo = MS.build_geometry(Rd=float(RD), L=int(CAPAS), shells=activas)
     eng = MS.build_engine(geo)
+    # el motor multicapa aun no emite el vector por replica
+    eng_mvec = False
 n_act = float(geo["n_active"])
 print(f"red: N={geo['N']}  capas={geo['L']}  sitios activos={geo['n_active']}"
       f"  de {geo['L']*geo['N']**2} de la caja")
@@ -335,7 +338,11 @@ def _arma(i, b):
                 par=(TH.pack_params(Pc, b) if usar_triton else None))
 
 
-def _guarda(nm, obs, snap, temps, dt, repl):
+mvectores = {}          # nombre -> (n_T, replicas, 3), o None
+
+
+def _guarda(nm, obs, snap, temps, dt, repl, mvec=None):
+    mvectores[nm] = None if mvec is None else np.asarray(mvec, np.float32)
     red = S.reduce_obs(np.asarray(obs), temps, n_act)
     salida[nm] = dict(T=temps.tolist(),
                       **{k: np.asarray(v).tolist() for k, v in red.items()
@@ -360,7 +367,8 @@ if MODO == "estados":
         sp = [S.init_spins(jax.random.PRNGKey(SEMILLA + i), geo, REPLICAS)
               for i in idx]
         if usar_triton:
-            ann = TH.build_anneal_full(geo, BY=4, num_warps=4)
+            ann = TH.build_anneal_full(geo, BY=4, num_warps=4,
+                                       with_mvec=True)
             par = jnp.stack([q["par"] for q in pz])
             g = lambda s, sd, bt, pr, kk: ann(s, sd, bt, pr, kk,
                                               N_TERM, N_MED)
@@ -372,11 +380,15 @@ if MODO == "estados":
                 s, jax.random.PRNGKey(sd), bt, pc, N_TERM, N_MED)
             arg = (jnp.stack(sp), sem, betas, Pst)
         t0 = time.perf_counter()
-        obs, final, snaps = jax.block_until_ready(jax.pmap(g)(*arg))
+        _o = jax.block_until_ready(jax.pmap(g)(*arg))
+        # only the Triton engine returns the magnetisation vector
+        obs, final, snaps, mvec = _o if (usar_triton or eng_mvec) \
+            else (*_o, None)
         dt = time.perf_counter() - t0
         for j, i in enumerate(idx):
             _guarda(nombres[i], np.asarray(obs)[j],
-                    np.asarray(snaps)[j][-1], pz[j]["temps"], dt, REPLICAS)
+                    np.asarray(snaps)[j][-1], pz[j]["temps"], dt, REPLICAS,
+                    None if mvec is None else np.asarray(mvec)[j])
 
 elif MODO == "replicas":
     # Las replicas de un estado repartidas. Todos los dispositivos comparten
@@ -388,7 +400,8 @@ elif MODO == "replicas":
         sp = S.init_spins(jax.random.PRNGKey(SEMILLA + i), geo, REPLICAS)
         sp = sp.reshape(n_dev, por_dev, *sp.shape[1:])
         if usar_triton:
-            ann = TH.build_anneal_full(geo, BY=4, num_warps=4)
+            ann = TH.build_anneal_full(geo, BY=4, num_warps=4,
+                                       with_mvec=True)
             g = lambda s, sd: ann(s, sd, q["betas"], q["par"], q["k1"],
                                   N_TERM, N_MED)
             arg = (jnp.stack([TH.planar(x) for x in sp]), sem)
@@ -398,21 +411,30 @@ elif MODO == "replicas":
                                             N_TERM, N_MED)
             arg = (sp, sem)
         t0 = time.perf_counter()
-        obs, final, snaps = jax.block_until_ready(jax.pmap(g)(*arg))
+        _o = jax.block_until_ready(jax.pmap(g)(*arg))
+        # only the Triton engine returns the magnetisation vector
+        obs, final, snaps, mvec = _o if (usar_triton or eng_mvec) \
+            else (*_o, None)
         dt = time.perf_counter() - t0
         # `anneal` devuelve (n_T, 6, replicas) POR dispositivo, asi que las
         # replicas se reunen concatenando por el ULTIMO eje. Aplanar el eje
         # principal mezclaria temperaturas con observables, que es justo el
         # error que `reduce_obs` advierte en su docstring.
         obs = np.concatenate(list(np.asarray(obs)), axis=-1)
-        _guarda(nm, obs, np.asarray(snaps)[0][-1], q["temps"], dt, REPLICAS)
+        # the vector is (n_dev, n_T, por_dev, 3); the replicas live on axis 1
+        # of each device's slice, so they rejoin there and nowhere else
+        mv = (None if mvec is None
+              else np.concatenate(list(np.asarray(mvec)), axis=1))
+        _guarda(nm, obs, np.asarray(snaps)[0][-1], q["temps"], dt, REPLICAS,
+                mv)
 
 else:
     for i, nm in enumerate(nombres):
         q = _arma(i, REPLICAS)
         sp = S.init_spins(jax.random.PRNGKey(SEMILLA + i), geo, REPLICAS)
         if usar_triton:
-            ann = TH.build_anneal_full(geo, BY=4, num_warps=4)
+            ann = TH.build_anneal_full(geo, BY=4, num_warps=4,
+                                       with_mvec=True)
             f = jax.jit(lambda s: ann(s, SEMILLA + i, q["betas"], q["par"],
                                       q["k1"], N_TERM, N_MED))
             arg = TH.planar(sp)
@@ -423,9 +445,11 @@ else:
             arg = sp
         f = f.lower(arg).compile()          # compila sin ejecutar
         t0 = time.perf_counter()
-        obs, final, snaps = jax.block_until_ready(f(arg))
+        _o = jax.block_until_ready(f(arg))
+        obs, final, snaps, mvec = _o if (usar_triton or eng_mvec) \
+            else (*_o, None)
         dt = time.perf_counter() - t0
-        _guarda(nm, obs, snaps[-1], q["temps"], dt, REPLICAS)
+        _guarda(nm, obs, snaps[-1], q["temps"], dt, REPLICAS, mvec)
 
 print(f"\ntotal: {(time.perf_counter()-t_total)/60:.2f} min para "
       f"{N_ESTADOS} estado(s)")
@@ -520,6 +544,57 @@ with open("resultados.json", "w") as f:
                    motor="optimizado" if usar_triton else "estandar",
                    resultados=salida, transiciones=transiciones), f, indent=1)
 print("\nguardado resultados.json")
+
+# ══════════════════════════════════════════════════════════════════════════
+#  LOS ESTADOS, UN .npz POR ESTADO
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Hasta aqui lo unico que sobrevivia a la corrida eran las curvas YA
+# promediadas sobre replicas, mas una sola imagen (la capa media de la replica
+# 0 en la ultima temperatura). El registro por replica se perdia.
+#
+# Cada archivo lleva:
+#
+#   parametros    (7,)        los siete del estado, en el orden de PARAMETROS:
+#                             Jex2, Jex3, Jex4, Kan1, KanS, Hex, KDM
+#   M             (10000, 3)  la magnetizacion media, una fila por
+#                             (temperatura, replica): 200 x 50 = 10000
+#   temperaturas  (200,)      la escalera
+#
+# El tercero es redundante -- la escalera es fija y reconstruible -- pero sin
+# el no hay forma de saber que fila es que temperatura sin leer este comentario,
+# y un archivo que necesita su documentacion para interpretarse no sirve de
+# archivo. El orden de las filas es TEMPERATURA MAYOR, replica menor: la fila
+# k corresponde a la temperatura k // REPLICAS y la replica k % REPLICAS.
+#
+# Que es M. No es una configuracion instantanea: es el promedio sobre los
+# N_MED barridos de medicion de esa temperatura, para esa replica. Es decir un
+# promedio termico, uno por replica, no una muestra suelta.
+
+import os
+
+guardados = []
+for nm in nombres:
+    mv = mvectores.get(nm)
+    if mv is None:
+        print(f"  {nm}: sin vector de magnetizacion "
+              f"(lo da el motor optimizado, y aqui corrio el estandar)")
+        continue
+    i = nombres.index(nm)
+    nT, nR, _ = mv.shape
+    M = mv.reshape(nT * nR, 3).astype(np.float32)
+    fn = f"estado_{nm}.npz"
+    np.savez_compressed(
+        fn,
+        parametros=np.asarray(P[i], np.float32),
+        M=M,
+        temperaturas=np.asarray(salida[nm]["T"], np.float32))
+    guardados.append(fn)
+    print(f"  {fn}  parametros {(7,)}  M {M.shape}  "
+          f"({nT} T x {nR} replicas)  {os.path.getsize(fn)/1024:.0f} KB")
+
+if guardados:
+    print(f"\nguardados {len(guardados)} .npz")
 '''
 
 FIGURA_CELL = r'''# Las curvas termodinámicas de cada estado al enfriar.
