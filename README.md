@@ -6,7 +6,7 @@ This repository contains the code for two complementary papers:
 
 | | Paper | Task | Status |
 |---|---|---|---|
-| 📄 | *Regression-Based Explainable DL for Estimating Hamiltonian Parameters from Magnetic Nanodot Images* | **Inverse:** image → parameters | Published: https://www.sciencedirect.com/science/article/pii/S0264127526013912 |
+| 📄 | *Regression-Based Explainable DL for Estimating Hamiltonian Parameters from Magnetic Nanodot Images* | **Inverse:** image → parameters | Published: 10.1016/j.matdes.2026.116816 |
 | 📝 | *Image-Driven Estimation of Magnetic Configurations in Nanodots* | **Direct:** parameters → image | In preparation |
 
 ---
