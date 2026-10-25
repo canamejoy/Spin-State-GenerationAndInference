@@ -555,17 +555,20 @@ print("\nguardado resultados.json")
 #
 # Cada archivo lleva:
 #
-#   parametros    (7,)        los siete del estado, en el orden de PARAMETROS:
-#                             Jex2, Jex3, Jex4, Kan1, KanS, Hex, KDM
-#   M             (10000, 3)  la magnetizacion media, una fila por
-#                             (temperatura, replica): 200 x 50 = 10000
-#   temperaturas  (200,)      la escalera
+#   parametros    (7,)           los siete del estado, en el orden de
+#                                PARAMETROS: Jex2, Jex3, Jex4, Kan1, KanS,
+#                                Hex, KDM
+#   M             (50, 200, 3)   la magnetizacion media, indexada
+#                                [replica, temperatura, componente]
+#   temperaturas  (200,)         la escalera, que indexa el eje 1 de M
 #
-# El tercero es redundante -- la escalera es fija y reconstruible -- pero sin
-# el no hay forma de saber que fila es que temperatura sin leer este comentario,
-# y un archivo que necesita su documentacion para interpretarse no sirve de
-# archivo. El orden de las filas es TEMPERATURA MAYOR, replica menor: la fila
-# k corresponde a la temperatura k // REPLICAS y la replica k % REPLICAS.
+# La forma es (replicas, temperaturas, 3) y no una lista plana de 10000 filas
+# a proposito: asi no hay ningun orden que documentar. M[r] es la curva de
+# enfriamiento COMPLETA de la replica r, M[:, t] son las 50 replicas a la
+# temperatura t, y temperaturas[t] dice cual es esa temperatura. Una lista
+# plana obliga a recordar si el orden era por temperatura o por replica, y ese
+# es justo el tipo de detalle que se pierde entre quien escribe el archivo y
+# quien lo lee.
 #
 # Que es M. No es una configuracion instantanea: es el promedio sobre los
 # N_MED barridos de medicion de esa temperatura, para esa replica. Es decir un
@@ -582,7 +585,9 @@ for nm in nombres:
         continue
     i = nombres.index(nm)
     nT, nR, _ = mv.shape
-    M = mv.reshape(nT * nR, 3).astype(np.float32)
+    # el motor lo entrega (temperatura, replica, 3); se transpone, no se
+    # aplana, para que el archivo no tenga un orden que haya que explicar
+    M = np.transpose(mv, (1, 0, 2)).astype(np.float32)
     fn = f"estado_{nm}.npz"
     np.savez_compressed(
         fn,
@@ -590,8 +595,9 @@ for nm in nombres:
         M=M,
         temperaturas=np.asarray(salida[nm]["T"], np.float32))
     guardados.append(fn)
-    print(f"  {fn}  parametros {(7,)}  M {M.shape}  "
-          f"({nT} T x {nR} replicas)  {os.path.getsize(fn)/1024:.0f} KB")
+    print(f"  {fn}  parametros (7,)  M {M.shape} "
+          f"[replica, temperatura, componente]  "
+          f"{os.path.getsize(fn)/1024:.0f} KB")
 
 if guardados:
     print(f"\nguardados {len(guardados)} .npz")
