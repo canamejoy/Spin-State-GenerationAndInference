@@ -226,8 +226,9 @@ The 8 free parameters of the extended Heisenberg Hamiltonian (with $\tilde{J}_1 
 
 - J. Méndez-Rondón — AI-LAB/Signal Processing and Recognition Group, Universidad Nacional de Colombia
 - C. Canamejoy-Alegría — Signal Processing and Recognition Group, Universidad Nacional de Colombia
-- J. Agudelo-Giraldo — Departamento de Física y Matemáticas, Universidad Autónoma de Manizales
-- J. Montes-Monsalve — Dirección Académica, Universidad Nacional de Colombia, Sede La Paz
+- M. García-Quimbayo — Signal Processing and Recognition Group, Universidad Nacional de Colombia
 - A. Álvarez-Meza — AI-LAB/Signal Processing and Recognition Group, Universidad Nacional de Colombia
+- J. Montes-Monsalve — Dirección Académica, Universidad Nacional de Colombia, Sede La Paz
+- J. Agudelo-Giraldo — Departamento de Física y Matemáticas, Universidad Autónoma de Manizales
 
 **Funding:** Hermes 62642, Universidad Nacional de Colombia; Code 111908, Minciencias (951-2024).
