@@ -31,7 +31,27 @@ item marked against what has actually been run.
 | `cvae-8params.ipynb` | CVAE conditioned on all 8 Hamiltonian parameters. |
 | `cvae_xception_retrain.ipynb` / `cvae_vit_retrain.ipynb` | Both CVAEs retrained on 100% of the dataset. |
 
-## 2. Inverse model — `section2-inverse/cuadernillos/`
+## 2. Inverse model — `section2-inverse/` (PaperInverseProblemEstimation)
+
+> Original repository: <https://github.com/deathperminut/PaperInverseProblemEstimation>
+
+### Reproducibility notebooks (`section2-inverse/`)
+
+| Folder | Notebook | What it did |
+|---|---|---|
+| `01_data_generation/` | `monte_carlo_simulation.ipynb` | GPU-accelerated Monte Carlo simulation (JAX) generating the labelled $\{s_z, \boldsymbol{\theta}\}$ pairs. |
+| `02_models/` | `cnn_baseline.ipynb` | Baseline convolutional regression network. |
+| `02_models/` | `resnet50.ipynb` | ResNet-50 regression head. |
+| `02_models/` | `densenet121.ipynb` | DenseNet-121 regression head. |
+| `02_models/` | `xception.ipynb` | Xception regression network. |
+| `02_models/` | `vision_transformer.ipynb` | Vision Transformer (ViT) regression head. |
+| `03_results/` | `dataset_analysis.ipynb` | Statistical distribution and correlation analysis of the dataset. |
+| `03_results/` | `model_metrics.ipynb` | Quantitative metrics ($R^2$, MAE, RMSE) per parameter across models. |
+| `03_results/` | `model_comparison.ipynb` | Comparative benchmarks between the 5 regression architectures. |
+| `03_results/` | `rams_interpretability.ipynb` | Regression Activation Maps (RAMs) attribution analysis. |
+| `03_results/` | `interpretability_benchmark.ipynb` | Benchmark of RAMs against LIME and SHAP. |
+
+### Historical cuadernillos (`section2-inverse/cuadernillos/`)
 
 | Notebook | What it did |
 |---|---|

@@ -54,8 +54,11 @@ This project addresses both directions with a closed **cycle**:
 │   ├── evaluacion/                    #   cross-model comparison, robustness
 │   └── docs/04_direct_problem.md
 │
-├── section2-inverse/                  # Inverse problem: image → params
-│   ├── cuadernillos/                  #   Xception
+├── section2-inverse/                  # Inverse problem: image → params (PaperInverseProblemEstimation)
+│   ├── 01_data_generation/            #   Monte Carlo simulation (JAX GPU)
+│   ├── 02_models/                     #   CNN baseline, ResNet-50, DenseNet-121, Xception, ViT
+│   ├── 03_results/                    #   Metrics, comparison, RAMs interpretability
+│   ├── cuadernillos/                  #   Historical Xception notebooks & PyTorch port
 │   └── docs/03_inverse_problem.md
 │
 ├── section3-cycle/                    # End-to-end cycle: θ → DDPM → Xception → θ̂

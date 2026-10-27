@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software and the associated paper."
+title: "Regression-Based Explainable Deep Learning for Estimating Hamiltonian Parameters from Magnetic Nanodot Images"
+type: software
+authors:
+  - family-names: "Méndez Rondón"
+    given-names: "Juan Sebastián"
+    email: "jumendezro@unal.edu.co"
+    affiliation: "Universidad Nacional de Colombia"
+  # TODO: add co-authors here (given-names / family-names / affiliation)
+repository-code: "https://github.com/deathperminut/PaperInverseProblemEstimation"
+license: MIT
+keywords:
+  - magnetic nanodots
+  - inverse problem
+  - Hamiltonian parameter estimation
+  - explainable deep learning
+  - regression activation maps
+  - Monte Carlo simulation
+  - skyrmions
