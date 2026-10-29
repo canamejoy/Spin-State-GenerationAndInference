@@ -64,13 +64,17 @@ PARAMS_CELL = r'''# ════════════════════
 PARAMETROS = [
     # [ Jex2, Jex3, Jex4,  Kan1  , KanS ,  Hex   ,  KDM   ]
     [  0.0,  0.0,  0.0,  0.2867,  0.0 ,  0.7691,  0.6535],  # uniform
-    [  0.0,  0.0,  0.0,  0.1770,  0.139,  0.4830,  0.8800],  # helical
-    [  0.0,  0.0,  0.0,  0.3500,  0.0 ,  0.2000,  0.9500],  # points
-    [  0.0,  0.0,  0.0,  0.1000,  0.200,  0.9000,  0.3000],  # lines
+    # Por defecto va UN estado, que es una escalera completa y ya son ~15 min
+    # en dos T4. Los otros tres estan listos: quita el '#' de la linea que
+    # quieras y el cuadernillo cuenta los arreglos solo, sin tocar nada mas.
+    # [  0.0,  0.0,  0.0,  0.1770,  0.139,  0.4830,  0.8800],  # helical
+    # [  0.0,  0.0,  0.0,  0.3500,  0.0 ,  0.2000,  0.9500],  # points
+    # [  0.0,  0.0,  0.0,  0.1000,  0.200,  0.9000,  0.3000],  # lines
 ]
 
 # Nombres para las tablas y las figuras. Si se deja vacío se numeran solos.
-NOMBRES = ["uniform", "helical", "points", "lines"]
+NOMBRES = ["uniform"]        # anade el nombre al descomentar su fila
+# NOMBRES = ["uniform", "helical", "points", "lines"]
 
 # ══════════════════════════════════════════════════════════════════════════
 #  LA GEOMETRÍA
